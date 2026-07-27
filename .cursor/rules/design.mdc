@@ -1,0 +1,34 @@
+---
+description: Compact native IDE-style UI conventions for dssh
+alwaysApply: true
+---
+
+# dssh Design Language
+
+## Intent
+- Build a compact, native Windows/macOS developer tool—closer to VS Code, Cursor, JetBrains, Zed, or Notepad++ than a dashboard or marketing site.
+- Prioritize task content, information density, predictable interaction, and fast feedback over decoration.
+
+## Use the existing system
+- Reuse shared UI components from `src/ui/`, layout primitives, and tokens/classes in `src/theme/global.css`.
+- Use semantic CSS variables so light and dark themes both work. Do not introduce literal colors unless defining a new theme token.
+- Use the existing `Icon` component with outlined, single-color 16px or 18px icons; do not add filled or decorative iconography.
+
+## Layout and hierarchy
+- Prefer the desktop structure: title bar, compact toolbar, activity/sidebar navigation, main content, and status feedback.
+- Prefer trees, tables, split views, toolbars, context menus, and inline forms. Keep related controls near the content they affect.
+- Use 8px spacing increments, 14px body text, concise labels, and small headings. Avoid large empty regions and oversized headings.
+- Use 1px separators and restrained 4px radii. Avoid cards, heavy borders, drop shadows, hero sections, and floating marketing-style panels.
+
+## Controls and states
+- Toolbar actions are transparent until hover. Use filled primary actions only for the single most important action in a focused workflow.
+- Make hover, focus, disabled, loading, selected, error, and destructive states visually distinct without relying on color alone.
+- Add accessible labels for icon-only buttons; preserve keyboard navigation and native text-selection/context-menu behavior where appropriate.
+- Confirm destructive or irreversible actions, and keep cancellation/close actions visible in dialogs.
+
+## Motion
+- Keep transitions subtle and functional (about 150ms): opacity, color, or small positional changes only.
+- Do not use bounce, scale, large movement, or animation that delays input.
+
+## Design check
+- Before finishing UI work, ask: Does it feel like an IDE panel? Is the main task visible first? Can the user understand available actions and states without extra decoration?

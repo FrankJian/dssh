@@ -1,0 +1,2 @@
+-- Proxy columns are added idempotently by ProfileRepository::ensure_columns,
+-- matching the project’s compatibility approach for existing databases.

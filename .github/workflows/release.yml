@@ -1,0 +1,134 @@
+name: Release
+
+# 打 tag 触发（tag 必须形如 v<版本>，且与 src-tauri/Cargo.toml、tauri.conf.json 一致）。
+# 例如：git tag v0.4.10 && git push origin v0.4.10
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 校验 tag 与项目内版本号一致，不一致直接失败，避免误发。
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: Verify tag and project versions
+        shell: bash
+        run: |
+          cargo_version=$(grep -m1 -E '^version[[:space:]]*=' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          tauri_version=$(node -p "require('./src-tauri/tauri.conf.json').version ?? ''")
+          tag="${GITHUB_REF_NAME#v}"
+
+          echo "Cargo.toml : $cargo_version"
+          echo "tauri.conf : ${tauri_version:-(继承 Cargo.toml)}"
+          echo "Git tag    : $tag"
+
+          if [[ -z "$cargo_version" ]]; then
+            echo "::error::无法从 src-tauri/Cargo.toml 解析版本号。"
+            exit 1
+          fi
+          # tauri.conf.json 未显式写 version 时会继承 Cargo.toml，此时跳过比对。
+          if [[ -n "$tauri_version" && "$tauri_version" != "$cargo_version" ]]; then
+            echo "::error::tauri.conf.json 版本 '$tauri_version' 与 Cargo.toml '$cargo_version' 不一致。"
+            exit 1
+          fi
+          if [[ "$tag" != "$cargo_version" ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' 与 Cargo.toml 版本 '$cargo_version' 不一致，请修正后重新打 tag。"
+            exit 1
+          fi
+
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            rust_targets: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - name: Windows x64
+            os: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload to draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 更新包签名密钥（仓库 Settings → Secrets and variables → Actions）。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # 密钥若为空密码可不配置：Actions 会传入空字符串，不会触发交互式提示。
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: dssh v${{ needs.validate.outputs.version }}
+          releaseBody: |
+            dssh v${{ needs.validate.outputs.version }}（macOS Apple Silicon / macOS Intel / Windows x64）。
+            安装包见下方 assets；已安装的版本可在「设置 → 关于 → 检查更新」内自动升级。
+          # 先发草稿：矩阵各平台都上传完成后再由 publish job 统一发布，
+          # 避免更新器在构建过程中读到只含部分平台的 latest.json。
+          releaseDraft: true
+          prerelease: false
+          # 生成并上传 latest.json（多平台矩阵会自动合并各自的签名条目）。
+          uploadUpdaterJson: true
+          # 同时存在 NSIS 与 MSI 时，latest.json 使用 NSIS 的 setup.exe。
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      # 取消草稿后，releases/latest/download/latest.json 才能被更新器解析到。
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"

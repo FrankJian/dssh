@@ -1,0 +1,61 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+# Claude Code: share project config, keep per-machine local overrides out
+.claude/settings.local.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Rust / Cargo (backend build output)
+/target
+src-tauri/target
+**/*.rs.bk
+
+# Tauri generated artifacts
+src-tauri/gen/schemas
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Updater signing key — the PUBLIC key (.pub) is safe to commit (it's already
+# embedded in tauri.conf.json); the PRIVATE key must stay out of the repo.
+# Store it in GitHub Secrets (TAURI_SIGNING_PRIVATE_KEY) for CI releases,
+# and keep a local backup in a password manager or encrypted vault.
+release/updater/*.key
+# (release/updater/*.key.pub is intentionally NOT ignored — it's public data)
+
+# Old manual-publish artifacts; releases are now fully managed by GitHub Actions
+release/latest.json
+
+# Local databases (SSH profiles are stored in the OS app-data dir at runtime)
+*.db
+*.sqlite
+*.sqlite3
+
+# Misc build / packaging output
+*.exe
+*.msi
+*.app
+*.dmg
