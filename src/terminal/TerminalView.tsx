@@ -4,7 +4,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalSize } from "../models";
-import { isMacOS } from "../platform";
+import { hasPrimaryModifier, isAppShortcut } from "../app/shortcuts";
 import {
   clampFontSize,
   COPY_ON_SELECT_DEFAULT,
@@ -169,10 +169,17 @@ export function TerminalView({
         return true;
       }
 
+      // Shortcuts owned by the app window (e.g. the ⌘K/Ctrl+K palette) must not
+      // be consumed here: xterm would call stopPropagation() and the global
+      // listener would never fire. Returning false makes xterm skip the key.
+      if (isAppShortcut(event)) {
+        return false;
+      }
+
       // App-level shortcuts use the platform's primary modifier: Cmd on macOS,
       // Ctrl elsewhere. This keeps Ctrl free for the shell on macOS (e.g. Ctrl+C
       // must interrupt, not copy), while preserving familiar bindings on Windows.
-      const primaryMod = isMacOS ? event.metaKey : event.ctrlKey;
+      const primaryMod = hasPrimaryModifier(event);
 
       if (primaryMod) {
         if (event.key === "+" || event.key === "=") {

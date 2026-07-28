@@ -41,6 +41,7 @@ import { isMacOS } from "../platform";
 import { ActivityBar, type ActivityId, type RightPanelId } from "./ActivityBar";
 import { AppLayout } from "./AppLayout";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
+import { isCommandPaletteShortcut } from "./shortcuts";
 import { useWorkspace } from "./useWorkspace";
 import { WorkspaceTabStrip, type WorkspaceTabItem } from "./WorkspaceTabStrip";
 import type { ProfileDraft, ProfileEditorMode } from "../ssh/profileTypes";
@@ -298,7 +299,7 @@ function App() {
   // ⌘K / Ctrl+K toggles the command palette; Escape leaves zen mode.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
         setIsPaletteOpen((open) => !open);
       } else if (event.key === "Escape" && zenMode) {

@@ -1,6 +1,6 @@
 [package]
 name = "dssh"
-version = "0.4.11"
+version = "0.4.12"
 description = "A lightweight cross-platform SSH manager"
 authors = ["Jian-Frank Xie"]
 edition = "2024"
