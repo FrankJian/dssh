@@ -45,6 +45,7 @@ export type IconName =
   | "power"
   | "refresh"
   | "restore"
+  | "save"
   | "search"
   | "send"
   | "sessions"
@@ -58,6 +59,7 @@ export type IconName =
   | "sun"
   | "system"
   | "terminalTool"
+  | "tree"
   | "toolbox"
   | "trash"
   | "unplug"
@@ -159,6 +161,15 @@ export function Icon({ name, ...props }: IconProps) {
           <path d="M12 10v6M9 13h6" />
         </>
       ) : null}
+      {name === "tree" ? (
+        <>
+          <rect height="5" rx="1" width="7" x="3" y="3" />
+          <rect height="5" rx="1" width="7" x="14" y="10" />
+          <rect height="5" rx="1" width="7" x="14" y="17" />
+          <path d="M10 5.5h2a2 2 0 0 1 2 2V19" />
+          <path d="M14 12.5h-2" />
+        </>
+      ) : null}
       {name === "database" ? (
         <>
           <ellipse cx="12" cy="5" rx="8" ry="3" />
@@ -233,6 +244,12 @@ export function Icon({ name, ...props }: IconProps) {
           <path d="M12 4v11" />
           <path d="m7 11 5 5 5-5" />
           <path d="M5 20h14" />
+        </>
+      ) : null}
+      {name === "save" ? (
+        <>
+          <path d="M5 3h12l3 3v15H5V3Z" />
+          <path d="M8 3v6h8V3M8 21v-7h8v7" />
         </>
       ) : null}
       {name === "upload" ? (

@@ -1,20 +1,37 @@
 import { listen } from "@tauri-apps/api/event";
 import { invokeCommand } from "./tauri";
 
-export const SFTP_DOWNLOAD_PROGRESS_EVENT = "sftp://download-progress";
+export const SFTP_TRANSFER_PROGRESS_EVENT = "sftp://transfer-progress";
 
-export interface SftpDownloadProgress {
+export interface SftpTransferProgress {
+  operationId: string;
   profileId: string;
+  direction: "delete" | "download" | "upload";
+  name: string;
   path: string;
   transferred: number;
   total: number | null;
   done: boolean;
 }
 
-export function onSftpDownloadProgress(handler: (progress: SftpDownloadProgress) => void) {
-  return listen<SftpDownloadProgress>(SFTP_DOWNLOAD_PROGRESS_EVENT, (event) =>
+export function onSftpTransferProgress(handler: (progress: SftpTransferProgress) => void) {
+  return listen<SftpTransferProgress>(SFTP_TRANSFER_PROGRESS_EVENT, (event) =>
     handler(event.payload),
   );
+}
+
+/** @deprecated Prefer the direction-aware `onSftpTransferProgress`. */
+export function onSftpDownloadProgress(handler: (progress: SftpTransferProgress) => void) {
+  return onSftpTransferProgress((progress) => {
+    if (progress.direction === "download") {
+      handler(progress);
+    }
+  });
+}
+
+export function createSftpOperationId(direction: "delete" | "download" | "upload") {
+  const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `sftp-${direction}-${suffix}`;
 }
 
 export interface SftpEntry {
@@ -39,6 +56,32 @@ export interface SftpImageFile {
   dataUrl: string;
 }
 
+export interface SftpFileInfo {
+  path: string;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  modified: number | null;
+  permissions: number | null;
+  user: string | null;
+  group: string | null;
+}
+
+export interface SftpDeletePreview {
+  path: string;
+  files: number;
+  directories: number;
+  symlinks: number;
+  paths: string[];
+  truncated: boolean;
+}
+
+export interface SftpDeleteResult {
+  deleted: number;
+  total: number;
+  cancelled: boolean;
+}
+
 export function sftpHome(profileId: string) {
   return invokeCommand<string>("sftp_home", { profileId });
 }
@@ -59,16 +102,31 @@ export function sftpReadImage(profileId: string, remotePath: string) {
   return invokeCommand<SftpImageFile>("sftp_read_image", { profileId, remotePath });
 }
 
-export function sftpDownload(profileId: string, remotePath: string, localPath: string) {
-  return invokeCommand<void>("sftp_download", { profileId, remotePath, localPath });
+export function sftpDownload(
+  profileId: string,
+  remotePath: string,
+  localPath: string,
+  operationId = createSftpOperationId("download"),
+) {
+  return invokeCommand<void>("sftp_download", { profileId, remotePath, localPath, operationId });
 }
 
-export function sftpDownloadDir(profileId: string, remotePath: string, localPath: string) {
-  return invokeCommand<void>("sftp_download_dir", { profileId, remotePath, localPath });
+export function sftpDownloadDir(
+  profileId: string,
+  remotePath: string,
+  localPath: string,
+  operationId = createSftpOperationId("download"),
+) {
+  return invokeCommand<void>("sftp_download_dir", { profileId, remotePath, localPath, operationId });
 }
 
-export function sftpUpload(profileId: string, localPath: string, remotePath: string) {
-  return invokeCommand<void>("sftp_upload", { profileId, localPath, remotePath });
+export function sftpUpload(
+  profileId: string,
+  localPath: string,
+  remotePath: string,
+  operationId = createSftpOperationId("upload"),
+) {
+  return invokeCommand<void>("sftp_upload", { profileId, localPath, remotePath, operationId });
 }
 
 export function sftpCreateDir(profileId: string, parentPath: string, name: string) {
@@ -89,6 +147,38 @@ export function sftpDeleteFile(profileId: string, remotePath: string) {
 
 export function sftpDeleteEmptyDir(profileId: string, remotePath: string) {
   return invokeCommand<void>("sftp_delete_empty_dir", { profileId, remotePath });
+}
+
+export function sftpFileInfo(profileId: string, remotePath: string) {
+  return invokeCommand<SftpFileInfo>("sftp_file_info", { profileId, remotePath });
+}
+
+export function sftpSetPermissions(profileId: string, remotePath: string, permissions: number) {
+  return invokeCommand<void>("sftp_set_permissions", { profileId, remotePath, permissions });
+}
+
+export function sftpMoveEntries(profileId: string, sources: string[], targetDir: string) {
+  return invokeCommand<string[]>("sftp_move_entries", { profileId, sources, targetDir });
+}
+
+export function sftpDeletePreview(profileId: string, remotePath: string) {
+  return invokeCommand<SftpDeletePreview>("sftp_delete_preview", { profileId, remotePath });
+}
+
+export function sftpDeleteRecursive(
+  profileId: string,
+  remotePath: string,
+  operationId = createSftpOperationId("delete"),
+) {
+  return invokeCommand<SftpDeleteResult>("sftp_delete_recursive", {
+    profileId,
+    remotePath,
+    operationId,
+  });
+}
+
+export function sftpCancelOperation(operationId: string) {
+  return invokeCommand<void>("sftp_cancel_operation", { operationId });
 }
 
 export function sftpDisconnect(profileId: string) {

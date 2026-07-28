@@ -2476,6 +2476,59 @@ button {
   background: var(--bg-panel);
 }
 
+.remote-file-tree.is-drag-over {
+  outline: 1px solid var(--accent-border);
+  outline-offset: -1px;
+}
+
+.remote-file-tree__dropzone {
+  position: absolute;
+  z-index: 5;
+  inset: 38px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  border: 1px dashed var(--accent-border);
+  background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
+  color: var(--accent-strong);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.remote-file-tree__drag-preview {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  max-width: 240px;
+  height: 27px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-soft);
+  color: var(--text-strong);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.remote-file-tree__drag-preview > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-file-tree__drag-preview > strong {
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--btn-primary-fg);
+  font-size: 10px;
+  text-align: center;
+}
+
 .remote-file-tree__toolbar {
   display: flex;
   height: 38px;
@@ -2560,6 +2613,8 @@ button {
   color: var(--text-base);
   font-size: 12.5px;
   text-align: left;
+  touch-action: none;
+  user-select: none;
 }
 
 .remote-file-tree__entry {
@@ -2583,6 +2638,48 @@ button.remote-file-tree__row:hover {
 button.remote-file-tree__row--file[data-active="true"] {
   background: var(--bg-selected);
   color: var(--text-strong);
+}
+
+button.remote-file-tree__row[data-selected="true"] {
+  background: var(--bg-selected);
+  color: var(--text-strong);
+}
+
+.remote-file-tree__selection-toolbar {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.remote-file-tree__selection-toolbar > span {
+  margin-right: auto;
+}
+
+.remote-file-tree__selection-toolbar button {
+  height: 23px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.remote-file-tree__selection-toolbar button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.remote-file-tree__selection-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .remote-file-tree__transfer {
@@ -2626,6 +2723,13 @@ button.remote-file-tree__row--file[data-active="true"] {
 
 button.remote-file-tree__row--root:hover {
   background: var(--bg-hover);
+}
+
+button.remote-file-tree__row--directory[data-remote-drop-target="true"],
+button.remote-file-tree__row--root[data-remote-drop-target="true"] {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--accent-strong);
 }
 
 .remote-file-tree__row > svg {
@@ -2683,8 +2787,50 @@ button.remote-file-tree__row--root:hover {
 }
 
 .remote-file-tree__transfer-status {
+  display: grid;
+  gap: 5px;
   margin: 0;
-  padding: 8px 12px 0;
+  padding: 8px 12px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.remote-file-tree__transfer-status > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.remote-file-tree__progress-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+}
+
+.remote-file-tree__progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.remote-file-tree__cancel-operation {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.remote-file-tree__cancel-operation:hover {
+  text-decoration: underline;
+}
+
+.remote-file-tree__transfer-summary {
+  margin: 0;
+  padding: 8px 12px 2px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -2775,6 +2921,45 @@ button.remote-file-tree__row--root:hover {
 .remote-file-tree__confirm h2,
 .remote-file-tree__confirm p {
   margin: 0;
+}
+
+.remote-file-tree__delete-preview {
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px !important;
+}
+
+.remote-file-tree__properties {
+  margin-top: 10px;
+}
+
+.remote-file-tree__properties p {
+  overflow-wrap: anywhere;
+}
+
+.remote-file-tree__properties label {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.remote-file-tree__properties input {
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font-family: var(--font-mono);
+}
+
+.remote-file-tree__properties input:focus {
+  border-color: var(--accent-border);
 }
 
 .remote-file-tree__confirm h2 {
@@ -2921,9 +3106,13 @@ button.remote-file-tree__row--root:hover {
 }
 
 .remote-file-editor__status {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   color: var(--text-faint);
-  font-size: 11.5px;
 }
 
 .remote-file-editor__status.is-dirty {
@@ -2931,10 +3120,13 @@ button.remote-file-tree__row--root:hover {
 }
 
 .remote-file-editor__save {
+  display: inline-flex;
+  width: 26px;
   height: 26px;
   flex: 0 0 auto;
-  padding: 0 10px;
-  font-size: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .remote-file-editor__preview-toggle,

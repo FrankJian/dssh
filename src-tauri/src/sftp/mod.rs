@@ -1,8 +1,15 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use russh::{ChannelMsg, client};
-use russh_sftp::{client::SftpSession, protocol::OpenFlags};
+use russh_sftp::{
+    client::SftpSession,
+    protocol::{FileAttributes, OpenFlags},
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::{
@@ -18,16 +25,32 @@ use crate::{
     ssh::session_manager::{SshClient, authenticate, ssh_error},
 };
 
-pub const SFTP_DOWNLOAD_PROGRESS_EVENT: &str = "sftp://download-progress";
+pub const SFTP_TRANSFER_PROGRESS_EVENT: &str = "sftp://transfer-progress";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DownloadProgress {
+struct TransferProgress {
+    operation_id: String,
     profile_id: String,
+    direction: TransferDirection,
+    name: String,
     path: String,
     transferred: u64,
     total: Option<u64>,
     done: bool,
+}
+
+struct TransferContext<'a> {
+    operation_id: &'a str,
+    profile_id: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum TransferDirection {
+    Download,
+    Upload,
+    Delete,
 }
 
 /// Emit progress at most every ~256 KiB (and always on completion) to avoid
@@ -68,6 +91,38 @@ pub struct SftpImageFile {
     pub data_url: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpFileInfo {
+    pub path: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub size: u64,
+    pub modified: Option<i64>,
+    pub permissions: Option<u32>,
+    pub user: Option<String>,
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpDeletePreview {
+    pub path: String,
+    pub files: usize,
+    pub directories: usize,
+    pub symlinks: usize,
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpDeleteResult {
+    pub deleted: usize,
+    pub total: usize,
+    pub cancelled: bool,
+}
+
 struct SftpConn {
     // Keeping the client handle alive keeps the underlying SSH connection (and
     // therefore the SFTP channel stream) open.
@@ -78,6 +133,7 @@ struct SftpConn {
 #[derive(Clone)]
 pub struct SftpManager {
     conns: Arc<Mutex<HashMap<String, Arc<SftpConn>>>>,
+    cancelled_operations: Arc<Mutex<HashSet<String>>>,
     host_keys: Arc<HostKeyVerifier>,
 }
 
@@ -85,6 +141,7 @@ impl SftpManager {
     pub fn new(host_keys: Arc<HostKeyVerifier>) -> Self {
         Self {
             conns: Arc::new(Mutex::new(HashMap::new())),
+            cancelled_operations: Arc::new(Mutex::new(HashSet::new())),
             host_keys,
         }
     }
@@ -171,6 +228,7 @@ impl SftpManager {
         profile: &SshProfile,
         remote_path: &str,
         local_path: &str,
+        operation_id: &str,
     ) -> AppResult<()> {
         let conn = self.connection(profile).await?;
         let total = conn
@@ -179,6 +237,10 @@ impl SftpManager {
             .await
             .ok()
             .and_then(|meta| meta.size);
+        let transfer = TransferContext {
+            operation_id,
+            profile_id: &profile.id,
+        };
 
         let result = async {
             let mut remote = conn.sftp.open(remote_path).await.map_err(sftp_error)?;
@@ -189,7 +251,15 @@ impl SftpManager {
             let mut buffer = vec![0u8; 64 * 1024];
             let mut transferred: u64 = 0;
             let mut last_emitted: u64 = 0;
-            emit_progress(app, &profile.id, remote_path, 0, total, false);
+            emit_progress(
+                app,
+                &transfer,
+                TransferDirection::Download,
+                remote_path,
+                0,
+                total,
+                false,
+            );
             loop {
                 let read = remote.read(&mut buffer).await.map_err(write_error)?;
                 if read == 0 {
@@ -199,11 +269,27 @@ impl SftpManager {
                 transferred += read as u64;
                 if transferred - last_emitted >= PROGRESS_STEP {
                     last_emitted = transferred;
-                    emit_progress(app, &profile.id, remote_path, transferred, total, false);
+                    emit_progress(
+                        app,
+                        &transfer,
+                        TransferDirection::Download,
+                        remote_path,
+                        transferred,
+                        total,
+                        false,
+                    );
                 }
             }
             file.flush().await.map_err(write_error)?;
-            emit_progress(app, &profile.id, remote_path, transferred, total, true);
+            emit_progress(
+                app,
+                &transfer,
+                TransferDirection::Download,
+                remote_path,
+                transferred,
+                total,
+                true,
+            );
             Ok(())
         }
         .await;
@@ -222,6 +308,7 @@ impl SftpManager {
         profile: &SshProfile,
         remote_path: &str,
         local_path: &str,
+        operation_id: &str,
     ) -> AppResult<()> {
         let (parent, base) = split_parent(remote_path)?;
         let conn = self.connection(profile).await?;
@@ -233,6 +320,7 @@ impl SftpManager {
 
         let result = stream_exec_to_file(
             app,
+            operation_id,
             &profile.id,
             remote_path,
             &conn._handle,
@@ -248,16 +336,26 @@ impl SftpManager {
 
     pub async fn upload(
         &self,
+        app: &AppHandle,
         profile: &SshProfile,
         local_path: &str,
         remote_path: &str,
+        operation_id: &str,
     ) -> AppResult<()> {
-        let data = tokio::fs::read(local_path)
+        let total = tokio::fs::metadata(local_path)
             .await
-            .map_err(|error| AppError::new("sftp_upload_error", error.to_string()))?;
+            .map_err(|error| AppError::new("sftp_upload_error", error.to_string()))?
+            .len();
 
         let conn = self.connection(profile).await?;
+        let transfer = TransferContext {
+            operation_id,
+            profile_id: &profile.id,
+        };
         let result = async {
+            let mut local = File::open(local_path)
+                .await
+                .map_err(|error| AppError::new("sftp_upload_error", error.to_string()))?;
             let mut file = conn
                 .sftp
                 .open_with_flags(
@@ -266,8 +364,51 @@ impl SftpManager {
                 )
                 .await
                 .map_err(sftp_error)?;
-            file.write_all(&data).await.map_err(sftp_error)?;
+            let mut buffer = vec![0u8; 64 * 1024];
+            let mut transferred = 0;
+            let mut last_emitted = 0;
+            emit_progress(
+                app,
+                &transfer,
+                TransferDirection::Upload,
+                remote_path,
+                0,
+                Some(total),
+                false,
+            );
+            loop {
+                let read = local
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|error| AppError::new("sftp_upload_error", error.to_string()))?;
+                if read == 0 {
+                    break;
+                }
+                file.write_all(&buffer[..read]).await.map_err(sftp_error)?;
+                transferred += read as u64;
+                if transferred - last_emitted >= PROGRESS_STEP {
+                    last_emitted = transferred;
+                    emit_progress(
+                        app,
+                        &transfer,
+                        TransferDirection::Upload,
+                        remote_path,
+                        transferred,
+                        Some(total),
+                        false,
+                    );
+                }
+            }
             file.shutdown().await.map_err(sftp_error)?;
+            emit_progress(
+                app,
+                &transfer,
+                TransferDirection::Upload,
+                remote_path,
+                transferred,
+                Some(total),
+                true,
+            );
             Ok(())
         }
         .await;
@@ -486,6 +627,248 @@ impl SftpManager {
         result
     }
 
+    pub async fn file_info(
+        &self,
+        profile: &SshProfile,
+        remote_path: &str,
+    ) -> AppResult<SftpFileInfo> {
+        let conn = self.connection(profile).await?;
+        let result = async {
+            let metadata = conn
+                .sftp
+                .symlink_metadata(remote_path)
+                .await
+                .map_err(sftp_error)?;
+            let canonical = conn
+                .sftp
+                .canonicalize(remote_path)
+                .await
+                .map(|path| normalize_dir(&path))
+                .unwrap_or_else(|_| normalize_dir(remote_path));
+            Ok(SftpFileInfo {
+                path: canonical,
+                is_dir: metadata.is_dir(),
+                is_symlink: metadata.file_type().is_symlink(),
+                size: metadata.size.unwrap_or(0),
+                modified: metadata.mtime.map(i64::from),
+                permissions: metadata.permissions,
+                user: metadata.user,
+                group: metadata.group,
+            })
+        }
+        .await;
+        if result.is_err() {
+            self.drop_connection(&profile.id).await;
+        }
+        result
+    }
+
+    pub async fn set_permissions(
+        &self,
+        profile: &SshProfile,
+        remote_path: &str,
+        permissions: u32,
+    ) -> AppResult<()> {
+        if permissions > 0o7777 {
+            return Err(AppError::new(
+                "sftp_invalid_permissions",
+                "权限必须是有效的八进制值。",
+            ));
+        }
+        let conn = self.connection(profile).await?;
+        let mut metadata = FileAttributes::empty();
+        metadata.permissions = Some(permissions);
+        let result = conn
+            .sftp
+            .set_metadata(remote_path, metadata)
+            .await
+            .map_err(sftp_error);
+        if result.is_err() {
+            self.drop_connection(&profile.id).await;
+        }
+        result
+    }
+
+    pub async fn move_entries(
+        &self,
+        profile: &SshProfile,
+        sources: &[String],
+        target_dir: &str,
+    ) -> AppResult<Vec<String>> {
+        if sources.is_empty() {
+            return Err(AppError::new("sftp_move_error", "请选择要移动的文件。"));
+        }
+        let conn = self.connection(profile).await?;
+        let target_meta = conn
+            .sftp
+            .symlink_metadata(target_dir)
+            .await
+            .map_err(sftp_error)?;
+        if !target_meta.is_dir() || target_meta.file_type().is_symlink() {
+            return Err(AppError::new("sftp_move_error", "目标必须是普通目录。"));
+        }
+        let target = conn
+            .sftp
+            .canonicalize(target_dir)
+            .await
+            .map(|path| normalize_dir(&path))
+            .unwrap_or_else(|_| normalize_dir(target_dir));
+        let mut seen = HashSet::new();
+        let mut moves = Vec::with_capacity(sources.len());
+        for source in sources {
+            let source = non_root_path(source)?;
+            if !seen.insert(source.to_string()) {
+                continue;
+            }
+            let metadata = conn
+                .sftp
+                .symlink_metadata(source)
+                .await
+                .map_err(sftp_error)?;
+            let name = path_name(source);
+            let destination = join_path(&target, name);
+            if destination == source || (metadata.is_dir() && is_descendant(&destination, source)) {
+                return Err(AppError::new(
+                    "sftp_move_error",
+                    "不能移动到自身或其子目录。",
+                ));
+            }
+            if conn.sftp.symlink_metadata(&destination).await.is_ok() {
+                return Err(AppError::new(
+                    "sftp_move_conflict",
+                    format!("目标已存在同名项目：{destination}"),
+                ));
+            }
+            moves.push((source.to_string(), destination));
+        }
+        for (source, destination) in &moves {
+            conn.sftp
+                .rename(source, destination)
+                .await
+                .map_err(sftp_error)?;
+        }
+        Ok(moves
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect())
+    }
+
+    pub async fn delete_preview(
+        &self,
+        profile: &SshProfile,
+        remote_path: &str,
+    ) -> AppResult<SftpDeletePreview> {
+        let conn = self.connection(profile).await?;
+        let target = self.safe_recursive_target(&conn, remote_path).await?;
+        let plan = collect_delete_plan(&conn.sftp, &target).await?;
+        Ok(delete_preview(&target, &plan))
+    }
+
+    pub async fn delete_recursive(
+        &self,
+        app: &AppHandle,
+        profile: &SshProfile,
+        remote_path: &str,
+        operation_id: &str,
+    ) -> AppResult<SftpDeleteResult> {
+        let conn = self.connection(profile).await?;
+        let target = self.safe_recursive_target(&conn, remote_path).await?;
+        let plan = collect_delete_plan(&conn.sftp, &target).await?;
+        let total = plan.len() as u64;
+        let transfer = TransferContext {
+            operation_id,
+            profile_id: &profile.id,
+        };
+        self.cancelled_operations.lock().await.remove(operation_id);
+        emit_progress(
+            app,
+            &transfer,
+            TransferDirection::Delete,
+            &target,
+            0,
+            Some(total),
+            false,
+        );
+        let mut deleted = 0usize;
+        for item in &plan {
+            if self
+                .cancelled_operations
+                .lock()
+                .await
+                .contains(operation_id)
+            {
+                self.cancelled_operations.lock().await.remove(operation_id);
+                return Ok(SftpDeleteResult {
+                    deleted,
+                    total: plan.len(),
+                    cancelled: true,
+                });
+            }
+            let result = if item.is_dir {
+                conn.sftp.remove_dir(&item.path).await
+            } else {
+                conn.sftp.remove_file(&item.path).await
+            };
+            result.map_err(sftp_error)?;
+            deleted += 1;
+            emit_progress(
+                app,
+                &transfer,
+                TransferDirection::Delete,
+                &target,
+                deleted as u64,
+                Some(total),
+                deleted == plan.len(),
+            );
+        }
+        self.cancelled_operations.lock().await.remove(operation_id);
+        Ok(SftpDeleteResult {
+            deleted,
+            total: plan.len(),
+            cancelled: false,
+        })
+    }
+
+    pub async fn cancel_operation(&self, operation_id: &str) {
+        self.cancelled_operations
+            .lock()
+            .await
+            .insert(operation_id.to_string());
+    }
+
+    async fn safe_recursive_target(&self, conn: &SftpConn, remote_path: &str) -> AppResult<String> {
+        let source = non_root_path(remote_path)?;
+        let source_metadata = conn
+            .sftp
+            .symlink_metadata(source)
+            .await
+            .map_err(sftp_error)?;
+        // A symlink is deleted as the link itself. Canonicalizing it would follow
+        // its target and could turn a link deletion into a recursive deletion.
+        let target = if source_metadata.file_type().is_symlink() {
+            normalize_dir(source)
+        } else {
+            conn.sftp
+                .canonicalize(source)
+                .await
+                .map(|path| normalize_dir(&path))
+                .map_err(sftp_error)?
+        };
+        let home = conn
+            .sftp
+            .canonicalize(".")
+            .await
+            .map(|path| normalize_dir(&path))
+            .map_err(sftp_error)?;
+        if target == "/" || target == home {
+            return Err(AppError::new(
+                "sftp_protected_path",
+                "不能递归删除根目录或远程主目录。",
+            ));
+        }
+        Ok(target)
+    }
+
     pub async fn disconnect(&self, profile_id: &str) {
         self.drop_connection(profile_id).await;
     }
@@ -523,6 +906,7 @@ async fn open_connection(
 /// Run a command over an exec channel and stream its stdout into a local file.
 async fn stream_exec_to_file(
     app: &AppHandle,
+    operation_id: &str,
     profile_id: &str,
     remote_path: &str,
     handle: &client::Handle<SshClient>,
@@ -539,8 +923,20 @@ async fn stream_exec_to_file(
     let mut stderr: Vec<u8> = Vec::new();
     let mut transferred: u64 = 0;
     let mut last_emitted: u64 = 0;
+    let transfer = TransferContext {
+        operation_id,
+        profile_id,
+    };
     // The compressed size is unknown up front, so total stays None (indeterminate).
-    emit_progress(app, profile_id, remote_path, 0, None, false);
+    emit_progress(
+        app,
+        &transfer,
+        TransferDirection::Download,
+        remote_path,
+        0,
+        None,
+        false,
+    );
 
     while let Some(msg) = channel.wait().await {
         match msg {
@@ -549,7 +945,15 @@ async fn stream_exec_to_file(
                 transferred += data.len() as u64;
                 if transferred - last_emitted >= PROGRESS_STEP {
                     last_emitted = transferred;
-                    emit_progress(app, profile_id, remote_path, transferred, None, false);
+                    emit_progress(
+                        app,
+                        &transfer,
+                        TransferDirection::Download,
+                        remote_path,
+                        transferred,
+                        None,
+                        false,
+                    );
                 }
             }
             ChannelMsg::ExtendedData { ref data, .. } => {
@@ -574,28 +978,148 @@ async fn stream_exec_to_file(
         ));
     }
 
-    emit_progress(app, profile_id, remote_path, transferred, None, true);
+    emit_progress(
+        app,
+        &transfer,
+        TransferDirection::Download,
+        remote_path,
+        transferred,
+        None,
+        true,
+    );
     Ok(())
 }
 
 fn emit_progress(
     app: &AppHandle,
-    profile_id: &str,
+    transfer: &TransferContext<'_>,
+    direction: TransferDirection,
     path: &str,
     transferred: u64,
     total: Option<u64>,
     done: bool,
 ) {
     let _ = app.emit(
-        SFTP_DOWNLOAD_PROGRESS_EVENT,
-        DownloadProgress {
-            profile_id: profile_id.to_string(),
+        SFTP_TRANSFER_PROGRESS_EVENT,
+        TransferProgress {
+            operation_id: transfer.operation_id.to_string(),
+            profile_id: transfer.profile_id.to_string(),
+            direction,
+            name: transfer_name(path),
             path: path.to_string(),
             transferred,
             total,
             done,
         },
     );
+}
+
+fn transfer_name(path: &str) -> String {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+const MAX_DELETE_ENTRIES: usize = 10_000;
+const MAX_DELETE_DEPTH: usize = 64;
+const MAX_DELETE_PREVIEW_PATHS: usize = 100;
+
+struct DeletePlanItem {
+    path: String,
+    is_dir: bool,
+    is_symlink: bool,
+}
+
+async fn collect_delete_plan(sftp: &SftpSession, root: &str) -> AppResult<Vec<DeletePlanItem>> {
+    let mut stack = vec![(root.to_string(), true, 0usize)];
+    let mut plan = Vec::new();
+    let mut discovered = 0usize;
+    while let Some((path, visit_children, depth)) = stack.pop() {
+        if visit_children {
+            discovered += 1;
+        }
+        if discovered > MAX_DELETE_ENTRIES {
+            return Err(AppError::new(
+                "sftp_delete_limit",
+                "目录条目超过 10000，无法安全递归删除。",
+            ));
+        }
+        if depth > MAX_DELETE_DEPTH {
+            return Err(AppError::new(
+                "sftp_delete_limit",
+                "目录层级超过 64，无法安全递归删除。",
+            ));
+        }
+        if !visit_children {
+            plan.push(DeletePlanItem {
+                path,
+                is_dir: true,
+                is_symlink: false,
+            });
+            continue;
+        }
+        let metadata = sftp.symlink_metadata(&path).await.map_err(sftp_error)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            plan.push(DeletePlanItem {
+                path,
+                is_dir: false,
+                is_symlink: metadata.file_type().is_symlink(),
+            });
+            continue;
+        }
+        let entries = sftp.read_dir(&path).await.map_err(sftp_error)?;
+        stack.push((path.clone(), false, depth));
+        for entry in entries {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            stack.push((join_path(&path, &name), true, depth + 1));
+        }
+    }
+    Ok(plan)
+}
+
+fn delete_preview(path: &str, plan: &[DeletePlanItem]) -> SftpDeletePreview {
+    let mut files = 0;
+    let mut directories = 0;
+    let mut symlinks = 0;
+    for item in plan {
+        if item.is_symlink {
+            symlinks += 1;
+        } else if item.is_dir {
+            directories += 1;
+        } else {
+            files += 1;
+        }
+    }
+    SftpDeletePreview {
+        path: path.to_string(),
+        files,
+        directories,
+        symlinks,
+        paths: plan
+            .iter()
+            .take(MAX_DELETE_PREVIEW_PATHS)
+            .map(|item| item.path.clone())
+            .collect(),
+        truncated: plan.len() > MAX_DELETE_PREVIEW_PATHS,
+    }
+}
+
+fn path_name(path: &str) -> &str {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+}
+
+fn is_descendant(path: &str, ancestor: &str) -> bool {
+    let prefix = format!("{}/", ancestor.trim_end_matches('/'));
+    path.starts_with(&prefix)
 }
 
 /// Split an absolute path into its parent directory and base name for `tar -C`.
@@ -702,5 +1226,47 @@ fn normalize_dir(path: &str) -> String {
         path.trim_end_matches('/').to_string()
     } else {
         path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DeletePlanItem, delete_preview, is_descendant};
+
+    #[test]
+    fn delete_preview_counts_symlinks_without_treating_them_as_directories() {
+        let plan = vec![
+            DeletePlanItem {
+                path: "/tmp/link".to_string(),
+                is_dir: false,
+                is_symlink: true,
+            },
+            DeletePlanItem {
+                path: "/tmp/file".to_string(),
+                is_dir: false,
+                is_symlink: false,
+            },
+            DeletePlanItem {
+                path: "/tmp/dir".to_string(),
+                is_dir: true,
+                is_symlink: false,
+            },
+        ];
+        let preview = delete_preview("/tmp", &plan);
+        assert_eq!(preview.files, 1);
+        assert_eq!(preview.directories, 1);
+        assert_eq!(preview.symlinks, 1);
+    }
+
+    #[test]
+    fn descendant_check_does_not_match_sibling_prefixes() {
+        assert!(is_descendant(
+            "/home/user/project/src",
+            "/home/user/project"
+        ));
+        assert!(!is_descendant(
+            "/home/user/project-old",
+            "/home/user/project"
+        ));
     }
 }

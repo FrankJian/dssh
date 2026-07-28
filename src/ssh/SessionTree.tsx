@@ -184,14 +184,14 @@ export function SessionTree({
                       </button>
                     ) : null}
                     {node.kind === "ssh" && node.profile ? (
-                      <button
-                        className="session-child"
-                        onClick={() => onOpenFileList(node)}
-                        type="button"
-                      >
-                        <Icon name="folder" height="15" width="15" />
-                        <span>文件列表</span>
-                      </button>
+                    <button
+                      className="session-child"
+                      onClick={() => onOpenFileList(node)}
+                      type="button"
+                    >
+                      <Icon name="tree" height="15" width="15" />
+                      <span>文件列表</span>
+                    </button>
                     ) : null}
 
                     <div className="session-child__sep" />

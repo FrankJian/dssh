@@ -234,6 +234,13 @@ export function RemoteFileEditor({
     }
     return activeIsDirty ? "未保存" : "已保存";
   }, [activeDocument, activeImage?.isLoading, activeIsDirty, activeIsImage]);
+  const statusIcon = activeIsImage
+    ? "fileImage"
+    : activeDocument?.isLoading || activeDocument?.isSaving
+      ? "refresh"
+      : activeIsDirty
+        ? "edit"
+        : "check";
 
   function updateContent(content: string) {
     if (!activePath) {
@@ -388,7 +395,15 @@ export function RemoteFileEditor({
 
       <div className="remote-file-editor__toolbar">
         <span className="remote-file-editor__path" title={activePath ?? undefined}>{activePath ?? title}</span>
-        <span className={`remote-file-editor__status${activeIsDirty ? " is-dirty" : ""}`}>{status}</span>
+        {status ? (
+          <span
+            aria-label={status}
+            className={`remote-file-editor__status${activeIsDirty ? " is-dirty" : ""}`}
+            title={status}
+          >
+            <Icon name={statusIcon} height="16" width="16" />
+          </span>
+        ) : null}
         {isMarkdownPath(activePath) ? (
           <button
             aria-label={markdownPreviewPath === activePath ? "关闭 Markdown 预览" : "显示 Markdown 预览"}
@@ -402,12 +417,14 @@ export function RemoteFileEditor({
           </button>
         ) : null}
         <button
+          aria-label="保存"
           className="button button--primary remote-file-editor__save"
           disabled={activeIsImage || !activeIsDirty || activeDocument?.isSaving}
           onClick={() => void saveActiveFile()}
+          title="保存"
           type="button"
         >
-          保存
+          <Icon name="save" height="15" width="15" />
         </button>
       </div>
 
