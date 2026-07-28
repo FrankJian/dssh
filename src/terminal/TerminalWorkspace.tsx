@@ -24,6 +24,7 @@ interface TerminalWorkspaceProps {
   hasProfiles: boolean;
   onCreateProfile: () => void;
   onFontSizeChange: (size: number) => void;
+  onOpenHostTools: () => void;
   onOpenPortForward: () => void;
   onReconnect: () => void;
   onCancelReconnect: () => void;
@@ -48,6 +49,7 @@ export function TerminalWorkspace({
   hasProfiles,
   onCreateProfile,
   onFontSizeChange,
+  onOpenHostTools,
   onOpenPortForward,
   onReconnect,
   onCancelReconnect,
@@ -80,6 +82,17 @@ export function TerminalWorkspace({
               </button>
             ) : null}
             <div className="session-bar__spacer" />
+            {canForward ? (
+              <button
+                className="session-bar__action"
+                aria-label="主机工具"
+                onClick={onOpenHostTools}
+                title="主机工具"
+                type="button"
+              >
+                <Icon name="toolbox" height="16" width="16" />
+              </button>
+            ) : null}
             <button
               className="session-bar__action"
               aria-label="重新连接"

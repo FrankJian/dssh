@@ -73,6 +73,7 @@ interface SessionTreeProps {
   onNewTerminal: (node: SessionNode) => void;
   onOpenSftp: (profile: SshProfile) => void;
   onOpenForward: (node: SessionNode) => void;
+  onOpenFileList: (node: SessionNode) => void;
   onCloseSession: (sessionId: string) => void;
   onDisconnectNode: (node: SessionNode) => void;
   onConnectProfile: (profile: SshProfile) => void;
@@ -95,6 +96,7 @@ export function SessionTree({
   onNewTerminal,
   onOpenSftp,
   onOpenForward,
+  onOpenFileList,
   onCloseSession,
   onDisconnectNode,
   onConnectProfile,
@@ -179,6 +181,16 @@ export function SessionTree({
                       >
                         <Icon name="forward" height="15" width="15" />
                         <span>端口转发</span>
+                      </button>
+                    ) : null}
+                    {node.kind === "ssh" && node.profile ? (
+                      <button
+                        className="session-child"
+                        onClick={() => onOpenFileList(node)}
+                        type="button"
+                      >
+                        <Icon name="folder" height="15" width="15" />
+                        <span>文件列表</span>
                       </button>
                     ) : null}
 

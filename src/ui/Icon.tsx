@@ -17,6 +17,7 @@ export type IconName =
   | "copy"
   | "database"
   | "edit"
+  | "eye"
   | "externalWindow"
   | "file"
   | "fileArchive"
@@ -91,6 +92,12 @@ export function Icon({ name, ...props }: IconProps) {
         <>
           <path d="M12 20h9" />
           <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
+        </>
+      ) : null}
+      {name === "eye" ? (
+        <>
+          <path d="M2.8 12s3.3-6 9.2-6 9.2 6 9.2 6-3.3 6-9.2 6-9.2-6-9.2-6Z" />
+          <circle cx="12" cy="12" r="2.7" />
         </>
       ) : null}
       {name === "moon" ? <path d="M20 15.4A8 8 0 0 1 8.6 4 7 7 0 1 0 20 15.4Z" /> : null}

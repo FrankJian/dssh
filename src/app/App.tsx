@@ -22,6 +22,8 @@ import { useS3Profiles } from "../s3/useS3Profiles";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { FileBrowser } from "../sftp/FileBrowser";
+import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
+import { RemoteFileTree } from "../sftp/RemoteFileTree";
 import { ProfileEditor } from "../ssh/ProfileEditor";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
@@ -30,6 +32,7 @@ import { useProfiles } from "../ssh/useProfiles";
 import { useRecentConnections } from "../ssh/useRecentConnections";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
+import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
@@ -203,6 +206,11 @@ function App() {
   } = useWorkspace();
   const { recentIds, recordUse } = useRecentConnections();
   const panes = usePaneLayout();
+  // A compact remote tree can be docked alongside one SSH terminal. It is a
+  // workspace presentation state, not a separate tab or an additional shell.
+  const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
+  const [openRemoteFilePaths, setOpenRemoteFilePaths] = useState<string[]>([]);
+  const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
 
   // Terminal wallpaper: the chosen file is read once into a data URL and handed
   // to CSS. An unreadable/removed file silently falls back to no background.
@@ -317,6 +325,18 @@ function App() {
       setActiveSessionId(panes.focusedPaneId);
     }
   }, [panes.focusedPaneId, setActiveSessionId]);
+
+  // Closing/disconnecting the target session also closes its adjacent tree.
+  useEffect(() => {
+    setFileTreeSessionId((current) =>
+      current && sessions.some((session) => session.id === current) ? current : null,
+    );
+  }, [sessions]);
+
+  useEffect(() => {
+    setOpenRemoteFilePaths([]);
+    setActiveRemoteFilePath(null);
+  }, [fileTreeSessionId]);
 
   // Host-key trust (TOFU): queue first-use prompts; warn loudly on a changed key.
   useEffect(() => {
@@ -473,6 +493,9 @@ function App() {
   function handleClosePane(sessionId: string) {
     const remaining = (panes.layout?.sessionIds ?? []).filter((id) => id !== sessionId);
     void closeSession(sessionId);
+    if (fileTreeSessionId === sessionId) {
+      setFileTreeSessionId(null);
+    }
     panes.removePane(sessionId);
     const next = remaining[0];
     if (next) {
@@ -483,6 +506,7 @@ function App() {
 
   // --- Session-tree node actions -------------------------------------------
   function handleFocusTerminal(sessionId: string) {
+    setFileTreeSessionId(null);
     setActiveSessionId(sessionId);
     focusTerminal();
   }
@@ -506,7 +530,52 @@ function App() {
     }
   }
 
+  function handleOpenFileListForNode(node: SessionNode) {
+    if (node.kind !== "ssh" || !node.profile) {
+      return;
+    }
+    // Prefer the terminal already focused for this host; otherwise use its
+    // first terminal. The file tree is intentionally paired with one shell.
+    const session =
+      node.sessions.find((item) => item.id === activeSessionId) ?? node.sessions[0];
+    if (!session) {
+      return;
+    }
+    panes.resetPanes();
+    setActiveSessionId(session.id);
+    setFileTreeSessionId(session.id);
+    showTerminalSurface();
+  }
+
+  function handleOpenRemoteFile(path: string) {
+    setOpenRemoteFilePaths((current) => (current.includes(path) ? current : [...current, path]));
+    setActiveRemoteFilePath(path);
+  }
+
+  function handleCloseRemoteFile(path: string) {
+    setOpenRemoteFilePaths((current) => {
+      const next = current.filter((item) => item !== path);
+      setActiveRemoteFilePath((active) => {
+        if (active !== path) {
+          return active;
+        }
+        return next[next.length - 1] ?? null;
+      });
+      return next;
+    });
+  }
+
+  function handleRenameRemoteFile(oldPath: string, newPath: string) {
+    setOpenRemoteFilePaths((current) =>
+      current.map((path) => (path === oldPath ? newPath : path)),
+    );
+    setActiveRemoteFilePath((current) => (current === oldPath ? newPath : current));
+  }
+
   async function handleDisconnectNode(node: SessionNode) {
+    if (node.sessions.some((session) => session.id === fileTreeSessionId)) {
+      setFileTreeSessionId(null);
+    }
     for (const session of node.sessions) {
       await closeSession(session.id);
     }
@@ -614,8 +683,12 @@ function App() {
 
   function handleSelectTab(tab: WorkspaceTabItem) {
     if (tab.kind === "sftp") {
+      setFileTreeSessionId(null);
       focusSftpTab(tab.id);
       return;
+    }
+    if (tab.id !== fileTreeSessionId) {
+      setFileTreeSessionId(null);
     }
     focusTerminal();
     if (panes.layout?.sessionIds.includes(tab.id)) {
@@ -634,6 +707,9 @@ function App() {
     } else if (panes.layout?.sessionIds.includes(tab.id)) {
       handleClosePane(tab.id);
     } else {
+      if (tab.id === fileTreeSessionId) {
+        setFileTreeSessionId(null);
+      }
       void closeSession(tab.id);
     }
   }
@@ -668,6 +744,7 @@ function App() {
           onNewTerminal={handleNewTerminalForNode}
           onOpenSftp={handleOpenSftpForProfile}
           onOpenForward={handleOpenForwardForNode}
+          onOpenFileList={handleOpenFileListForNode}
           onCloseSession={closeSession}
           onDisconnectNode={handleDisconnectNode}
           onConnectProfile={handleConnectProfile}
@@ -691,6 +768,42 @@ function App() {
         targetLabel={activeSession ? activeSessionLabel || activeSession.title : null}
       />
     ) : null;
+
+  const fileTreeProfile =
+    fileTreeSessionId && fileTreeSessionId === activeSessionId && activeSession?.kind === "ssh"
+      ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
+      : null;
+
+  const terminalSurface = (
+    <TerminalWorkspace
+      activeSession={activeSession}
+      activeSessionLabel={activeSessionLabel}
+      canForward={canForward}
+      copyOnSelect={copyOnSelect}
+      fontFamily={fontFamily}
+      fontSize={fontSize}
+      getBacklog={getBacklog}
+      gpuAcceleration={gpuAcceleration}
+      backgroundAlpha={terminalBgOpacity / 100}
+      hasWallpaper={Boolean(terminalBgDataUrl)}
+      rightClick={rightClick}
+      hasProfiles={profiles.length > 0}
+      onCreateProfile={openCreateProfile}
+      onFontSizeChange={setFontSize}
+      onOpenHostTools={() => toggleRightPanel("hosttools")}
+      onOpenPortForward={handleOpenPortForward}
+      onReconnect={handleReconnectActiveSession}
+      onCancelReconnect={() => {
+        if (activeSession) {
+          cancelReconnect(activeSession.id);
+        }
+      }}
+      onResize={resizeActiveSession}
+      onStartLocalSession={handleStartLocalSession}
+      onWrite={writeToActiveSession}
+      subscribeOutput={subscribeOutput}
+    />
+  );
 
   let mainSurface: ReactNode;
   if (isConnections) {
@@ -738,6 +851,36 @@ function App() {
         />
       </div>
     );
+  } else if (fileTreeProfile) {
+    mainSurface = (
+      <TerminalFileLayout
+        fileTree={
+          <RemoteFileTree
+            activeFilePath={activeRemoteFilePath}
+            onClose={() => setFileTreeSessionId(null)}
+            onFileRemoved={handleCloseRemoteFile}
+            onFileRenamed={handleRenameRemoteFile}
+            onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
+            profileId={fileTreeProfile.id}
+          />
+        }
+        terminal={
+          activeRemoteFilePath ? (
+            <RemoteFileEditor
+              activePath={activeRemoteFilePath}
+              filePaths={openRemoteFilePaths}
+              key={fileTreeProfile.id}
+              onCloseFile={handleCloseRemoteFile}
+              onSelectFile={setActiveRemoteFilePath}
+              onShowTerminal={() => setActiveRemoteFilePath(null)}
+              profileId={fileTreeProfile.id}
+            />
+          ) : (
+            terminalSurface
+          )
+        }
+      />
+    );
   } else if (panes.layout) {
     mainSurface = (
       <PaneGrid
@@ -762,35 +905,7 @@ function App() {
       />
     );
   } else {
-    mainSurface = (
-      <TerminalWorkspace
-        activeSession={activeSession}
-        activeSessionLabel={activeSessionLabel}
-        canForward={canForward}
-        copyOnSelect={copyOnSelect}
-        fontFamily={fontFamily}
-        fontSize={fontSize}
-        getBacklog={getBacklog}
-        gpuAcceleration={gpuAcceleration}
-        backgroundAlpha={terminalBgOpacity / 100}
-        hasWallpaper={Boolean(terminalBgDataUrl)}
-        rightClick={rightClick}
-        hasProfiles={profiles.length > 0}
-        onCreateProfile={openCreateProfile}
-        onFontSizeChange={setFontSize}
-        onOpenPortForward={handleOpenPortForward}
-        onReconnect={handleReconnectActiveSession}
-        onCancelReconnect={() => {
-          if (activeSession) {
-            cancelReconnect(activeSession.id);
-          }
-        }}
-        onResize={resizeActiveSession}
-        onStartLocalSession={handleStartLocalSession}
-        onWrite={writeToActiveSession}
-        subscribeOutput={subscribeOutput}
-      />
-    );
+    mainSurface = terminalSurface;
   }
 
   function buildPaletteItems(): PaletteItem[] {

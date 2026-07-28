@@ -64,13 +64,6 @@ export function ActivityBar({
         >
           <Icon name="bot" />
         </IconButton>
-        <IconButton
-          active={rightPanel === "hosttools"}
-          label="主机工具"
-          onClick={() => onToggleRightPanel("hosttools")}
-        >
-          <Icon name="toolbox" />
-        </IconButton>
       </div>
       <div className="activity-bar__bottom">
         <IconButton label="新建本地终端" onClick={onNewLocalTerminal}>

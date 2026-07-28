@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalSize } from "../models";
 import { hasPrimaryModifier, isAppShortcut } from "../app/shortcuts";
@@ -43,6 +43,11 @@ const welcomeOutput = [
   "",
 ];
 
+const transparentTerminalTheme: ITheme = {
+  ...terminalTheme,
+  background: "rgba(20, 20, 28, 0)",
+};
+
 export function TerminalView({
   getBacklog,
   subscribeOutput,
@@ -58,8 +63,9 @@ export function TerminalView({
   hasWallpaper = false,
   sessionId,
 }: TerminalViewProps) {
-  // A wallpaper needs the terminal to let it through, and any alpha < 1 is by
-  // definition translucent; either case requires xterm's transparency path.
+  // A wallpaper needs the terminal canvas to let the CSS-rendered image and
+  // overlay through, and any alpha < 1 needs to reveal the app beneath it.
+  // In both cases xterm must use its transparent-canvas rendering path.
   const transparent = hasWallpaper || backgroundAlpha < 1;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -129,9 +135,10 @@ export function TerminalView({
       lineHeight: 1.18,
       scrollback: 5000,
       tabStopWidth: 4,
-      theme: transparent
-        ? { ...terminalTheme, background: `rgba(20, 20, 28, ${backgroundAlpha})` }
-        : terminalTheme,
+      // CSS owns the terminal background layer so wallpaper and opacity work
+      // consistently with both the DOM and WebGL renderers. xterm only paints
+      // text/cursor/selection over that layer while transparency is enabled.
+      theme: transparent ? transparentTerminalTheme : terminalTheme,
     });
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
@@ -329,7 +336,17 @@ export function TerminalView({
       lastSizeRef.current = null;
       resizeFrameRef.current = null;
     };
-  }, [sessionId, transparent, backgroundAlpha]);
+  }, [sessionId, transparent]);
+
+  // Opacity is drawn by the CSS surface, but xterm's WebGL canvas retains its
+  // prior theme across Fast Refresh. Reapply the transparent theme whenever the
+  // slider changes so the text area and its padded edge always share one layer.
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (transparent && terminal) {
+      terminal.options.theme = transparentTerminalTheme;
+    }
+  }, [backgroundAlpha, transparent]);
 
   // Toggle GPU (WebGL) rendering on the live terminal. Loading the WebGL addon
   // switches xterm's renderer to the GPU; disposing it (or losing the WebGL
@@ -395,6 +412,7 @@ export function TerminalView({
   return (
     <div
       className="terminal-view"
+      data-wallpaper={hasWallpaper ? "true" : "false"}
       onMouseDown={() => {
         terminalRef.current?.focus();
       }}
