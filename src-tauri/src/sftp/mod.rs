@@ -262,6 +262,9 @@ impl SftpManager {
                 false,
             );
             loop {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
                 let read = remote.read(&mut buffer).await.map_err(write_error)?;
                 if read == 0 {
                     break;
@@ -295,7 +298,10 @@ impl SftpManager {
         }
         .await;
 
-        if result.is_err() {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code != "sftp_cancelled")
+        {
             self.drop_connection(&profile.id).await;
         }
         result
@@ -378,6 +384,9 @@ impl SftpManager {
                 false,
             );
             loop {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
                 let read = local
                     .read(&mut buffer)
                     .await
@@ -414,7 +423,10 @@ impl SftpManager {
         }
         .await;
 
-        if result.is_err() {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code != "sftp_cancelled")
+        {
             self.drop_connection(&profile.id).await;
         }
         result
@@ -448,6 +460,9 @@ impl SftpManager {
             let mut pending_dirs = vec![(root, remote_path.to_string())];
             let mut files = Vec::new();
             while let Some((local_dir, remote_dir)) = pending_dirs.pop() {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
                 let mut directory = fs::read_dir(&local_dir)
                     .await
                     .map_err(local_file_transfer_error)?;
@@ -476,6 +491,9 @@ impl SftpManager {
             }
 
             for (local_file, remote_file) in files {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
                 self.upload(
                     app,
                     profile,
@@ -488,7 +506,10 @@ impl SftpManager {
             Ok(())
         }
         .await;
-        if result.is_err() {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code != "sftp_cancelled")
+        {
             self.drop_connection(&profile.id).await;
         }
         result
@@ -512,8 +533,14 @@ impl SftpManager {
                 .map_err(local_file_transfer_error)?;
             let mut pending_dirs = vec![(remote_path.to_string(), root)];
             while let Some((remote_dir, local_dir)) = pending_dirs.pop() {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
                 let listing = self.list(profile, &remote_dir).await?;
                 for entry in listing.entries {
+                    if self.operation_cancelled(operation_id).await {
+                        return Err(operation_cancelled_error());
+                    }
                     let local_child = local_child_path(&local_dir, &entry.name)?;
                     if entry.is_symlink {
                         return Err(AppError::new(
@@ -541,7 +568,10 @@ impl SftpManager {
             Ok(())
         }
         .await;
-        if result.is_err() {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code != "sftp_cancelled")
+        {
             self.drop_connection(&profile.id).await;
         }
         result
@@ -964,6 +994,10 @@ impl SftpManager {
             .insert(operation_id.to_string());
     }
 
+    async fn operation_cancelled(&self, operation_id: &str) -> bool {
+        self.cancelled_operations.lock().await.remove(operation_id)
+    }
+
     async fn safe_recursive_target(&self, conn: &SftpConn, remote_path: &str) -> AppResult<String> {
         let source = non_root_path(remote_path)?;
         let source_metadata = conn
@@ -1277,6 +1311,10 @@ fn sftp_error(error: impl std::fmt::Display) -> AppError {
 
 fn local_file_transfer_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("sftp_local_transfer_error", error.to_string())
+}
+
+fn operation_cancelled_error() -> AppError {
+    AppError::new("sftp_cancelled", "传输已取消。")
 }
 
 async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> AppResult<()> {

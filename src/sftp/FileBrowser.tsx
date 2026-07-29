@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   createSftpOperationId,
   onSftpTransferProgress,
   sftpDownload,
   sftpDownloadTree,
+  sftpCancelOperation,
   sftpHome,
   sftpList,
   sftpLocalHome,
@@ -32,6 +34,7 @@ interface TransferState {
 }
 
 interface TransferSummary {
+  cancelled: boolean;
   completed: number;
   failed: number;
   total: number;
@@ -127,6 +130,7 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
   const [transferSummary, setTransferSummary] = useState<TransferSummary | null>(null);
   const [isTransferring, setIsTransferring] = useState(false);
   const operationIdRef = useRef<string | null>(null);
+  const cancelRequestedRef = useRef(false);
 
   const loadRemote = useCallback(async (path: string) => {
     if (!profileId) return;
@@ -225,6 +229,7 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
     refresh: () => Promise<void>,
   ) {
     setIsTransferring(true);
+    cancelRequestedRef.current = false;
     setError(null);
     setTransferSummary(null);
     let completed = 0;
@@ -232,6 +237,7 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
     let firstError: string | null = null;
     try {
       for (const [index, entry] of entries.entries()) {
+        if (cancelRequestedRef.current) break;
         const operationId = createSftpOperationId(direction);
         operationIdRef.current = operationId;
         setTransfer({
@@ -244,6 +250,7 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
           await transferOne(entry, operationId);
           completed += 1;
         } catch (reason) {
+          if (cancelRequestedRef.current) break;
           failed += 1;
           firstError ??= reason instanceof Error ? reason.message : "传输失败。";
         }
@@ -256,8 +263,18 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
     } finally {
       operationIdRef.current = null;
       setTransfer(null);
-      setTransferSummary({ completed, failed, total: entries.length });
+      setTransferSummary({ cancelled: cancelRequestedRef.current, completed, failed, total: entries.length });
       setIsTransferring(false);
+    }
+  }
+
+  function cancelTransfer() {
+    cancelRequestedRef.current = true;
+    const operationId = operationIdRef.current;
+    if (operationId) {
+      void sftpCancelOperation(operationId).catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "取消传输失败。");
+      });
     }
   }
 
@@ -277,15 +294,37 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
 
   async function downloadSelected() {
     if (!profileId || selectedRemote.length === 0 || !localPath || isTransferring) return;
-    const conflicts = selectedRemote.filter((entry) => localEntries.some((local) => local.name === entry.name));
+    let picked: string | string[] | null;
+    try {
+      picked = await open({
+        defaultPath: localPath,
+        directory: true,
+        multiple: false,
+        title: "选择下载目录",
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法打开下载目录选择器。");
+      return;
+    }
+    const destination = Array.isArray(picked) ? picked[0] : picked;
+    if (!destination) return;
+    let destinationListing;
+    try {
+      destinationListing = await sftpLocalList(destination);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法读取所选下载目录。");
+      return;
+    }
+    const destinationPath = destinationListing.path;
+    const conflicts = selectedRemote.filter((entry) => destinationListing.entries.some((local) => local.name === entry.name));
     if (conflicts.length > 0 && !window.confirm(`本机目录中已有 ${conflicts.length} 个同名项目，文件将覆盖、目录将合并。继续吗？`)) return;
     await runBatch(
       "download",
       selectedRemote,
       (entry, operationId) => entry.isDir
-        ? sftpDownloadTree(profileId, entry.path, joinLocal(localPath, entry.name), operationId)
-        : sftpDownload(profileId, entry.path, joinLocal(localPath, entry.name), operationId),
-      () => loadLocal(localPath),
+        ? sftpDownloadTree(profileId, entry.path, joinLocal(destinationPath, entry.name), operationId)
+        : sftpDownload(profileId, entry.path, joinLocal(destinationPath, entry.name), operationId),
+      () => loadLocal(destinationPath),
     );
   }
 
@@ -356,11 +395,15 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
               style={{ width: transfer.total ? `${Math.min(100, transfer.transferred / transfer.total * 100)}%` : "45%" }}
             />
           </div>
+          <button className="sftp-dual-browser__cancel" onClick={cancelTransfer} type="button">
+            取消传输
+          </button>
         </div>
       ) : null}
       {transferSummary ? (
         <p className="sftp-dual-browser__summary">
-          传输完成：成功 {transferSummary.completed}，失败 {transferSummary.failed}，共 {transferSummary.total} 项。
+          {transferSummary.cancelled ? "传输已取消：" : "传输完成："}
+          成功 {transferSummary.completed}，失败 {transferSummary.failed}，共 {transferSummary.total} 项。
         </p>
       ) : null}
       {onOpenInTerminal && remotePath ? (

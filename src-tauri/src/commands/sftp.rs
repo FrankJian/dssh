@@ -57,16 +57,30 @@ fn local_home_path() -> AppResult<PathBuf> {
         .ok_or_else(|| AppError::new("local_file_error", "无法确定本机主目录。"))
 }
 
+fn local_display_path(path: &std::path::Path) -> String {
+    let value = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{unc_path}");
+        }
+        if let Some(normal_path) = value.strip_prefix(r"\\?\") {
+            return normal_path.to_string();
+        }
+    }
+    value.into_owned()
+}
+
 #[tauri::command]
 pub async fn sftp_local_home() -> AppResult<String> {
-    Ok(local_home_path()?.to_string_lossy().into_owned())
+    Ok(local_display_path(&local_home_path()?))
 }
 
 #[tauri::command]
 pub async fn sftp_local_roots() -> AppResult<Vec<LocalRoot>> {
     let home = local_home_path()?;
     let mut roots = vec![LocalRoot {
-        path: home.to_string_lossy().into_owned(),
+        path: local_display_path(&home),
         label: "主目录".to_string(),
     }];
 
@@ -117,7 +131,7 @@ pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
             .and_then(|duration| i64::try_from(duration.as_secs()).ok());
         entries.push(LocalFileEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
-            path: path.to_string_lossy().into_owned(),
+            path: local_display_path(&path),
             is_dir: file_type.is_dir(),
             is_symlink: file_type.is_symlink(),
             size: metadata.len(),
@@ -130,7 +144,7 @@ pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
     Ok(LocalListing {
-        path: canonical.to_string_lossy().into_owned(),
+        path: local_display_path(&canonical),
         entries,
     })
 }
