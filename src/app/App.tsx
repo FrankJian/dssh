@@ -1022,7 +1022,7 @@ function App() {
         onRightPanelWidthChange={setRightPanelWidth}
         titleBar={
           <div className={`titlebar${isMacOS ? " titlebar--mac" : ""}`}>
-            <div className="titlebar__brand">dssh</div>
+            {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
             <div className="titlebar__drag" data-tauri-drag-region />
             {/* macOS shows the native traffic-light controls, so we only render
                 our own minimize/maximize/close buttons on Windows and Linux. */}

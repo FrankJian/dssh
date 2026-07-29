@@ -333,14 +333,14 @@ button {
   background: var(--bg-panel);
 }
 
-.titlebar__brand {
-  display: flex;
-  align-items: center;
-  padding: 0 12px 0 2px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.titlebar__app-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 2px;
+  object-fit: contain;
 }
 
 
@@ -5517,6 +5517,7 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 }
 
 .sftp-dual-browser__cancel {
+  grid-column: 1 / -1;
   justify-self: end;
   padding: 2px 6px;
   border: 0;
