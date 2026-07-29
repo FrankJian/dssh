@@ -48,6 +48,25 @@ export interface SftpListing {
   entries: SftpEntry[];
 }
 
+export interface LocalFileEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  modified: number | null;
+}
+
+export interface LocalListing {
+  path: string;
+  entries: LocalFileEntry[];
+}
+
+export interface LocalRoot {
+  path: string;
+  label: string;
+}
+
 export interface SftpTextFile {
   content: string;
 }
@@ -90,6 +109,18 @@ export function sftpList(profileId: string, path: string) {
   return invokeCommand<SftpListing>("sftp_list", { profileId, path });
 }
 
+export function sftpLocalHome() {
+  return invokeCommand<string>("sftp_local_home");
+}
+
+export function sftpLocalRoots() {
+  return invokeCommand<LocalRoot[]>("sftp_local_roots");
+}
+
+export function sftpLocalList(path: string) {
+  return invokeCommand<LocalListing>("sftp_local_list", { path });
+}
+
 export function sftpReadText(profileId: string, remotePath: string) {
   return invokeCommand<SftpTextFile>("sftp_read_text", { profileId, remotePath });
 }
@@ -120,6 +151,15 @@ export function sftpDownloadDir(
   return invokeCommand<void>("sftp_download_dir", { profileId, remotePath, localPath, operationId });
 }
 
+export function sftpDownloadTree(
+  profileId: string,
+  remotePath: string,
+  localPath: string,
+  operationId = createSftpOperationId("download"),
+) {
+  return invokeCommand<void>("sftp_download_tree", { profileId, remotePath, localPath, operationId });
+}
+
 export function sftpUpload(
   profileId: string,
   localPath: string,
@@ -127,6 +167,15 @@ export function sftpUpload(
   operationId = createSftpOperationId("upload"),
 ) {
   return invokeCommand<void>("sftp_upload", { profileId, localPath, remotePath, operationId });
+}
+
+export function sftpUploadDir(
+  profileId: string,
+  localPath: string,
+  remotePath: string,
+  operationId = createSftpOperationId("upload"),
+) {
+  return invokeCommand<void>("sftp_upload_dir", { profileId, localPath, remotePath, operationId });
 }
 
 export function sftpCreateDir(profileId: string, parentPath: string, name: string) {

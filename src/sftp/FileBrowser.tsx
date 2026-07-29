@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
-  onSftpDownloadProgress,
+  createSftpOperationId,
+  onSftpTransferProgress,
   sftpDownload,
-  sftpDownloadDir,
+  sftpDownloadTree,
   sftpHome,
   sftpList,
+  sftpLocalHome,
+  sftpLocalList,
+  sftpLocalRoots,
   sftpUpload,
+  sftpUploadDir,
+  type LocalFileEntry,
+  type LocalRoot,
   type SftpEntry,
 } from "../services/sftpService";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
-import { SectionHeader } from "../ui/SectionHeader";
 
 interface FileBrowserProps {
   profileId: string | null;
@@ -20,716 +24,413 @@ interface FileBrowserProps {
   onOpenInTerminal?: (dir: string) => void;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(value >= 10 || Number.isInteger(value) ? 0 : 1)} ${units[unitIndex]}`;
+interface TransferState {
+  direction: "download" | "upload";
+  name: string;
+  transferred: number;
+  total: number | null;
 }
 
-function parentPath(path: string): string {
-  if (path === "/" || path === "") {
-    return "/";
+interface TransferSummary {
+  completed: number;
+  failed: number;
+  total: number;
+}
+
+interface PaneEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  modified: number | null;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
   }
+  return `${value.toFixed(value >= 10 || Number.isInteger(value) ? 0 : 1)} ${units[unit]}`;
+}
+
+function remoteParent(path: string): string {
+  if (path === "/" || !path) return "/";
   const trimmed = path.replace(/\/+$/, "");
   const index = trimmed.lastIndexOf("/");
-  if (index <= 0) {
-    return "/";
-  }
+  return index <= 0 ? "/" : trimmed.slice(0, index);
+}
+
+function localParent(path: string): string {
+  if (/^[a-zA-Z]:[\\/]?$/.test(path)) return path;
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (index === 2 && /^[a-zA-Z]:/.test(trimmed)) return `${trimmed.slice(0, 2)}\\`;
+  if (index <= 0) return trimmed.slice(0, 1) || path;
   return trimmed.slice(0, index);
 }
 
-function baseName(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
+function joinRemote(directory: string, name: string): string {
+  return directory === "/" ? `/${name}` : `${directory.replace(/\/+$/, "")}/${name}`;
 }
 
-function joinRemote(dir: string, name: string): string {
-  return dir === "/" ? `/${name}` : `${dir.replace(/\/+$/, "")}/${name}`;
+function joinLocal(directory: string, name: string): string {
+  const separator = directory.includes("\\") ? "\\" : "/";
+  return `${directory.replace(/[\\/]+$/, "")}${separator}${name}`;
 }
 
-/** Split a raw path input into the directory to list and the prefix to match. */
-function splitPathValue(value: string, fallbackDir: string): { dir: string; prefix: string } {
-  const slash = value.lastIndexOf("/");
-  if (slash === -1) {
-    return { dir: fallbackDir || "/", prefix: value };
+function selectionAfterClick(
+  entries: PaneEntry[],
+  selected: Set<string>,
+  anchor: string | null,
+  path: string,
+  event: ReactMouseEvent<HTMLButtonElement>,
+): Set<string> {
+  if (event.shiftKey && anchor) {
+    const start = entries.findIndex((entry) => entry.path === anchor);
+    const end = entries.findIndex((entry) => entry.path === path);
+    if (start >= 0 && end >= 0) {
+      return new Set(entries.slice(Math.min(start, end), Math.max(start, end) + 1).map((entry) => entry.path));
+    }
   }
-  if (slash === 0) {
-    return { dir: "/", prefix: value.slice(1) };
+  if (event.metaKey || event.ctrlKey) {
+    const next = new Set(selected);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    return next;
   }
-  return { dir: value.slice(0, slash), prefix: value.slice(slash + 1) };
+  return new Set([path]);
 }
 
+/** WinSCP-style two-pane SFTP workspace. Remote operations remain inside the
+ * verified Rust SFTP client; local paths are only listed after user navigation. */
 export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
-  const [currentPath, setCurrentPath] = useState<string>("");
-  const [pathInput, setPathInput] = useState<string>("");
-  const [entries, setEntries] = useState<SftpEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isBusy, setIsBusy] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<SftpEntry[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: SftpEntry } | null>(
-    null,
-  );
-  const [progress, setProgress] = useState<{
-    name: string;
-    transferred: number;
-    total: number | null;
-  } | null>(null);
-  const progressPathRef = useRef<string | null>(null);
-  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const suggestSeq = useRef(0);
-  const dirCacheRef = useRef<Map<string, SftpEntry[]>>(new Map());
-  const activeItemRef = useRef<HTMLButtonElement | null>(null);
-  const panelRef = useRef<HTMLElement | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const activeProfileRef = useRef(profileId);
-  activeProfileRef.current = profileId;
-  const dragStateRef = useRef({ currentPath, isBusy, profileId });
-  dragStateRef.current = { currentPath, isBusy, profileId };
+  const [remotePath, setRemotePath] = useState("");
+  const [remoteInput, setRemoteInput] = useState("");
+  const [remoteEntries, setRemoteEntries] = useState<SftpEntry[]>([]);
+  const [localPath, setLocalPath] = useState("");
+  const [localInput, setLocalInput] = useState("");
+  const [localEntries, setLocalEntries] = useState<LocalFileEntry[]>([]);
+  const [localRoots, setLocalRoots] = useState<LocalRoot[]>([]);
+  const [selectedRemotePaths, setSelectedRemotePaths] = useState<Set<string>>(new Set());
+  const [selectedLocalPaths, setSelectedLocalPaths] = useState<Set<string>>(new Set());
+  const [remoteAnchor, setRemoteAnchor] = useState<string | null>(null);
+  const [localAnchor, setLocalAnchor] = useState<string | null>(null);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+  const [loadingLocal, setLoadingLocal] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [transfer, setTransfer] = useState<TransferState | null>(null);
+  const [transferSummary, setTransferSummary] = useState<TransferSummary | null>(null);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const operationIdRef = useRef<string | null>(null);
 
-  const closeSuggestions = useCallback(() => {
-    setShowSuggestions(false);
-    setHighlightIndex(-1);
-    if (suggestTimer.current) {
-      clearTimeout(suggestTimer.current);
-      suggestTimer.current = null;
+  const loadRemote = useCallback(async (path: string) => {
+    if (!profileId) return;
+    setLoadingRemote(true);
+    setError(null);
+    try {
+      const listing = await sftpList(profileId, path);
+      setRemotePath(listing.path);
+      setRemoteInput(listing.path);
+      setRemoteEntries(listing.entries);
+      setSelectedRemotePaths(new Set());
+      setRemoteAnchor(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "读取服务器目录失败。");
+    } finally {
+      setLoadingRemote(false);
+    }
+  }, [profileId]);
+
+  const loadLocal = useCallback(async (path: string) => {
+    setLoadingLocal(true);
+    setError(null);
+    try {
+      const listing = await sftpLocalList(path);
+      setLocalPath(listing.path);
+      setLocalInput(listing.path);
+      setLocalEntries(listing.entries);
+      setSelectedLocalPaths(new Set());
+      setLocalAnchor(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "读取本机目录失败。");
+    } finally {
+      setLoadingLocal(false);
     }
   }, []);
 
-  const fetchSuggestions = useCallback(
-    (value: string) => {
-      if (!profileId) {
-        return;
-      }
-      const { dir, prefix } = splitPathValue(value, currentPath);
-      const lowerPrefix = prefix.toLowerCase();
-
-      const applyMatches = (entries: SftpEntry[]) => {
-        const matches = entries
-          .filter((entry) => entry.isDir && entry.name.toLowerCase().startsWith(lowerPrefix))
-          .slice(0, 100);
-        setSuggestions(matches);
-        setShowSuggestions(matches.length > 0);
-        setHighlightIndex(-1);
-      };
-
-      // Serve from cache instantly so drilling down feels immediate.
-      const cached = dirCacheRef.current.get(dir);
-      if (cached) {
-        applyMatches(cached);
-        return;
-      }
-
-      const seq = suggestSeq.current + 1;
-      suggestSeq.current = seq;
-      sftpList(profileId, dir)
-        .then((listing) => {
-          dirCacheRef.current.set(dir, listing.entries);
-          if (seq !== suggestSeq.current) {
-            return;
-          }
-          applyMatches(listing.entries);
-        })
-        .catch(() => {
-          if (seq !== suggestSeq.current) {
-            return;
-          }
-          setSuggestions([]);
-          setShowSuggestions(false);
-        });
-    },
-    [currentPath, profileId],
-  );
-
-  function handlePathInputChange(value: string) {
-    setPathInput(value);
-    if (suggestTimer.current) {
-      clearTimeout(suggestTimer.current);
-      suggestTimer.current = null;
-    }
-    // Show the next level immediately when a separator is typed or the target
-    // directory is already cached; otherwise debounce the network lookup.
-    const { dir } = splitPathValue(value, currentPath);
-    if (value.endsWith("/") || dirCacheRef.current.has(dir)) {
-      fetchSuggestions(value);
-    } else {
-      suggestTimer.current = setTimeout(() => fetchSuggestions(value), 120);
-    }
-  }
-
-  // After Tab: append the chosen directory + "/" and immediately suggest its
-  // children, letting the user keep drilling down from the keyboard.
-  function acceptSuggestion(entry: SftpEntry) {
-    const next = `${entry.path.replace(/\/+$/, "")}/`;
-    setPathInput(next);
-    setHighlightIndex(-1);
-    fetchSuggestions(next);
-  }
-
-  // Warm the cache with the immediate subdirectories so drilling in is instant.
-  // Runs sequentially in the background to avoid flooding the SFTP channel.
-  const preloadChildren = useCallback(
-    (entries: SftpEntry[]) => {
-      const id = profileId;
-      if (!id) {
-        return;
-      }
-      const targets = entries
-        .filter((entry) => entry.isDir && !dirCacheRef.current.has(entry.path))
-        .slice(0, 16);
-      let chain = Promise.resolve();
-      for (const entry of targets) {
-        chain = chain.then(() => {
-          if (activeProfileRef.current !== id || dirCacheRef.current.has(entry.path)) {
-            return;
-          }
-          return sftpList(id, entry.path)
-            .then((listing) => {
-              if (activeProfileRef.current === id) {
-                dirCacheRef.current.set(listing.path, listing.entries);
-              }
-            })
-            .catch(() => {});
-        });
-      }
-    },
-    [profileId],
-  );
-
-  const loadPath = useCallback(
-    async (path: string, options?: { force?: boolean }) => {
-      if (!profileId) {
-        return;
-      }
-      // Serve from cache for instant navigation unless a refresh is forced.
-      const cached = options?.force ? undefined : dirCacheRef.current.get(path);
-      if (cached) {
-        setCurrentPath(path);
-        setPathInput(path);
-        setEntries(cached);
-        setErrorMessage(null);
-        preloadChildren(cached);
-        return;
-      }
-      setIsLoading(true);
-      setErrorMessage(null);
-      try {
-        const listing = await sftpList(profileId, path);
-        dirCacheRef.current.set(listing.path, listing.entries);
-        setCurrentPath(listing.path);
-        setPathInput(listing.path);
-        setEntries(listing.entries);
-        preloadChildren(listing.entries);
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "读取目录失败。");
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [preloadChildren, profileId],
-  );
-
-  function pickSuggestion(entry: SftpEntry) {
-    closeSuggestions();
-    setPathInput(entry.path);
-    void loadPath(entry.path);
-  }
-
   useEffect(() => {
-    const unlisten = onSftpDownloadProgress((event) => {
-      if (event.profileId !== profileId || event.path !== progressPathRef.current) {
-        return;
-      }
-      setProgress((current) =>
-        current
-          ? { ...current, transferred: event.transferred, total: event.total ?? current.total }
-          : current,
-      );
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [profileId]);
-
-  useEffect(() => {
-    if (highlightIndex >= 0) {
-      activeItemRef.current?.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightIndex]);
-
-  useEffect(() => {
-    if (!contextMenu) {
+    let cancelled = false;
+    if (!profileId) {
+      setRemotePath("");
+      setRemoteInput("");
+      setRemoteEntries([]);
       return;
     }
-    const close = () => setContextMenu(null);
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextMenu(null);
-      }
-    };
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [contextMenu]);
-
-  useLayoutEffect(() => {
-    if (!contextMenu || !contextMenuRef.current) {
-      return;
-    }
-    const margin = 8;
-    const rect = contextMenuRef.current.getBoundingClientRect();
-    const x = Math.max(margin, Math.min(contextMenu.x, window.innerWidth - rect.width - margin));
-    const y = Math.max(margin, Math.min(contextMenu.y, window.innerHeight - rect.height - margin));
-    if (x !== contextMenu.x || y !== contextMenu.y) {
-      setContextMenu((current) => (current ? { ...current, x, y } : null));
-    }
-  }, [contextMenu]);
+    void sftpHome(profileId)
+      .then((path) => { if (!cancelled) void loadRemote(path); })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "连接服务器文件系统失败。");
+      });
+    return () => { cancelled = true; };
+  }, [loadRemote, profileId]);
 
   useEffect(() => {
     let cancelled = false;
-    dirCacheRef.current.clear();
-    if (!profileId) {
-      setEntries([]);
-      setCurrentPath("");
-      setPathInput("");
-      setErrorMessage(null);
-      return;
-    }
-
-    setIsLoading(true);
-    setErrorMessage(null);
-    sftpHome(profileId)
-      .then((home) => sftpList(profileId, home))
-      .then((listing) => {
-        if (cancelled) {
-          return;
-        }
-        dirCacheRef.current.set(listing.path, listing.entries);
-        setCurrentPath(listing.path);
-        setPathInput(listing.path);
-        setEntries(listing.entries);
-        preloadChildren(listing.entries);
+    void Promise.all([sftpLocalHome(), sftpLocalRoots()])
+      .then(([home, roots]) => {
+        if (cancelled) return;
+        setLocalRoots(roots);
+        void loadLocal(home);
       })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "连接文件系统失败。");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "读取本机主目录失败。");
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [preloadChildren, profileId]);
-
-  function handleOpenEntry(entry: SftpEntry) {
-    if (entry.isDir) {
-      void loadPath(entry.path);
-    } else {
-      void handleDownload(entry);
-    }
-  }
-
-  async function handleDownload(entry: SftpEntry) {
-    if (!profileId || isBusy) {
-      return;
-    }
-    try {
-      const destination = await save({ defaultPath: entry.name });
-      if (!destination) {
-        return;
-      }
-      setIsBusy(true);
-      setErrorMessage(null);
-      progressPathRef.current = entry.path;
-      setProgress({ name: entry.name, transferred: 0, total: entry.size });
-      await sftpDownload(profileId, entry.path, destination);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "下载文件失败。");
-    } finally {
-      setIsBusy(false);
-      progressPathRef.current = null;
-      setProgress(null);
-    }
-  }
-
-  // Directories are packed into a gzip'd tarball on the server, then streamed down.
-  async function handleDownloadDir(entry: SftpEntry) {
-    if (!profileId || isBusy) {
-      return;
-    }
-    try {
-      const destination = await save({
-        defaultPath: `${entry.name}.tar.gz`,
-        filters: [{ extensions: ["tar.gz", "tgz"], name: "Gzip 压缩包" }],
-      });
-      if (!destination) {
-        return;
-      }
-      setIsBusy(true);
-      setErrorMessage(null);
-      progressPathRef.current = entry.path;
-      setProgress({ name: `${entry.name}.tar.gz`, transferred: 0, total: null });
-      await sftpDownloadDir(profileId, entry.path, destination);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "下载目录失败。");
-    } finally {
-      setIsBusy(false);
-      progressPathRef.current = null;
-      setProgress(null);
-    }
-  }
-
-  function handleDownloadEntry(entry: SftpEntry) {
-    if (entry.isDir) {
-      void handleDownloadDir(entry);
-    } else {
-      void handleDownload(entry);
-    }
-  }
-
-  const uploadFiles = useCallback(
-    async (files: string[]) => {
-      const { currentPath: dir, isBusy: busy, profileId: id } = dragStateRef.current;
-      if (!id || busy || files.length === 0) {
-        return;
-      }
-      setIsBusy(true);
-      setErrorMessage(null);
-      try {
-        for (const file of files) {
-          await sftpUpload(id, file, joinRemote(dir, baseName(file)));
-        }
-        dirCacheRef.current.delete(dir);
-        await loadPath(dir, { force: true });
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "上传文件失败。");
-      } finally {
-        setIsBusy(false);
-      }
-    },
-    [loadPath],
-  );
-
-  async function handleUpload() {
-    if (!profileId || isBusy) {
-      return;
-    }
-    const selected = await open({ multiple: true, title: "选择要上传的文件" });
-    if (!selected) {
-      return;
-    }
-    await uploadFiles(Array.isArray(selected) ? selected : [selected]);
-  }
+    return () => { cancelled = true; };
+  }, [loadLocal]);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
+    const unlisten = onSftpTransferProgress((progress) => {
+      if (progress.operationId !== operationIdRef.current) return;
+      setTransfer((current) => current ? {
+        ...current,
+        transferred: progress.transferred,
+        total: progress.total ?? current.total,
+      } : current);
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, []);
 
-    function isInsidePanel(position: { x: number; y: number }) {
-      const element = panelRef.current;
-      if (!element) {
-        return false;
+  const selectedRemote = remoteEntries.filter((entry) => selectedRemotePaths.has(entry.path));
+  const selectedLocal = localEntries.filter((entry) => selectedLocalPaths.has(entry.path));
+
+  function selectRemote(entry: PaneEntry, event: ReactMouseEvent<HTMLButtonElement>) {
+    setSelectedRemotePaths((current) => selectionAfterClick(remoteEntries, current, remoteAnchor, entry.path, event));
+    if (!event.shiftKey) setRemoteAnchor(entry.path);
+  }
+
+  function selectLocal(entry: PaneEntry, event: ReactMouseEvent<HTMLButtonElement>) {
+    setSelectedLocalPaths((current) => selectionAfterClick(localEntries, current, localAnchor, entry.path, event));
+    if (!event.shiftKey) setLocalAnchor(entry.path);
+  }
+
+  async function runBatch(
+    direction: "download" | "upload",
+    entries: PaneEntry[],
+    transferOne: (entry: PaneEntry, operationId: string) => Promise<void>,
+    refresh: () => Promise<void>,
+  ) {
+    setIsTransferring(true);
+    setError(null);
+    setTransferSummary(null);
+    let completed = 0;
+    let failed = 0;
+    let firstError: string | null = null;
+    try {
+      for (const [index, entry] of entries.entries()) {
+        const operationId = createSftpOperationId(direction);
+        operationIdRef.current = operationId;
+        setTransfer({
+          direction,
+          name: entries.length > 1 ? `${entry.name}（${index + 1}/${entries.length}）` : entry.name,
+          transferred: 0,
+          total: entry.isDir ? null : entry.size,
+        });
+        try {
+          await transferOne(entry, operationId);
+          completed += 1;
+        } catch (reason) {
+          failed += 1;
+          firstError ??= reason instanceof Error ? reason.message : "传输失败。";
+        }
       }
-      const rect = element.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const x = position.x / dpr;
-      const y = position.y / dpr;
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      await refresh();
+      if (firstError) setError(firstError);
+    } catch (reason) {
+      firstError ??= reason instanceof Error ? reason.message : "刷新目录失败。";
+      setError(firstError);
+    } finally {
+      operationIdRef.current = null;
+      setTransfer(null);
+      setTransferSummary({ completed, failed, total: entries.length });
+      setIsTransferring(false);
     }
+  }
 
-    void getCurrentWebview()
-      .onDragDropEvent((event) => {
-        const payload = event.payload;
-        if (payload.type === "enter" || payload.type === "over") {
-          setIsDragOver(isInsidePanel(payload.position));
-        } else if (payload.type === "leave") {
-          setIsDragOver(false);
-        } else if (payload.type === "drop") {
-          const inside = isInsidePanel(payload.position);
-          setIsDragOver(false);
-          if (inside && payload.paths.length > 0) {
-            void uploadFiles(payload.paths);
-          }
-        }
-      })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      });
+  async function uploadSelected() {
+    if (!profileId || selectedLocal.length === 0 || !remotePath || isTransferring) return;
+    const conflicts = selectedLocal.filter((entry) => remoteEntries.some((remote) => remote.name === entry.name));
+    if (conflicts.length > 0 && !window.confirm(`服务器目录中已有 ${conflicts.length} 个同名项目，文件将覆盖、目录将合并。继续吗？`)) return;
+    await runBatch(
+      "upload",
+      selectedLocal,
+      (entry, operationId) => entry.isDir
+        ? sftpUploadDir(profileId, entry.path, joinRemote(remotePath, entry.name), operationId)
+        : sftpUpload(profileId, entry.path, joinRemote(remotePath, entry.name), operationId),
+      () => loadRemote(remotePath),
+    );
+  }
 
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [uploadFiles]);
-
-  const atRoot = currentPath === "/" || currentPath === "";
+  async function downloadSelected() {
+    if (!profileId || selectedRemote.length === 0 || !localPath || isTransferring) return;
+    const conflicts = selectedRemote.filter((entry) => localEntries.some((local) => local.name === entry.name));
+    if (conflicts.length > 0 && !window.confirm(`本机目录中已有 ${conflicts.length} 个同名项目，文件将覆盖、目录将合并。继续吗？`)) return;
+    await runBatch(
+      "download",
+      selectedRemote,
+      (entry, operationId) => entry.isDir
+        ? sftpDownloadTree(profileId, entry.path, joinLocal(localPath, entry.name), operationId)
+        : sftpDownload(profileId, entry.path, joinLocal(localPath, entry.name), operationId),
+      () => loadLocal(localPath),
+    );
+  }
 
   return (
-    <aside
-      className={`sidebar${isDragOver && profileId ? " is-drag-over" : ""}`}
-      aria-label="文件列表"
-      ref={panelRef}
-    >
-      {isDragOver && profileId ? (
-        <div className="file-browser__dropzone">松开鼠标上传到当前目录</div>
-      ) : null}
-      <div className="sidebar__top">
-        <SectionHeader title="文件列表" />
-        <div className="file-browser__toolbar">
-          <IconButton
-            disabled={!profileId || isBusy}
-            label="刷新"
-            onClick={() => {
-              dirCacheRef.current.clear();
-              void loadPath(currentPath, { force: true });
-            }}
-          >
-            <Icon name="refresh" />
-          </IconButton>
-          <IconButton
-            className="icon-button--primary"
-            disabled={!profileId || isBusy}
-            label="上传文件"
-            onClick={() => void handleUpload()}
-          >
-            <Icon name="upload" />
-          </IconButton>
-        </div>
-      </div>
-
-      {!profileId ? (
-        <div className="file-browser__hint">请先连接一个 SSH 会话，然后在此浏览远程文件。</div>
-      ) : (
-        <>
-          <form
-            className="file-browser__path"
-            onSubmit={(event) => {
-              event.preventDefault();
-              closeSuggestions();
-              const target = pathInput.trim();
-              if (target) {
-                void loadPath(target);
-              }
-            }}
-          >
-            <IconButton
-              disabled={atRoot || isLoading}
-              label="上一级"
-              onClick={() => void loadPath(parentPath(currentPath))}
-            >
-              <Icon name="arrowUp" />
-            </IconButton>
-            <input
-              aria-label="目录路径"
-              className="file-browser__path-input"
-              disabled={isLoading || isBusy}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
-              onChange={(event) => handlePathInputChange(event.currentTarget.value)}
-              onFocus={() => fetchSuggestions(pathInput)}
-              onKeyDown={(event) => {
-                if (!showSuggestions || suggestions.length === 0) {
-                  if (event.key === "Escape") {
-                    closeSuggestions();
-                  }
-                  return;
-                }
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setHighlightIndex((index) => Math.min(index + 1, suggestions.length - 1));
-                } else if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setHighlightIndex((index) => Math.max(index - 1, 0));
-                } else if (event.key === "Tab") {
-                  event.preventDefault();
-                  const target = suggestions[highlightIndex >= 0 ? highlightIndex : 0];
-                  if (target) {
-                    acceptSuggestion(target);
-                  }
-                } else if (event.key === "Enter") {
-                  if (highlightIndex >= 0) {
-                    event.preventDefault();
-                    pickSuggestion(suggestions[highlightIndex]);
-                  }
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  closeSuggestions();
-                }
-              }}
-              placeholder="输入路径，Tab 逐级补全"
-              spellCheck={false}
-              value={pathInput}
-            />
-            {showSuggestions && suggestions.length > 0 ? (
-              <ul className="file-browser__suggestions" role="listbox">
-                {suggestions.map((entry, index) => (
-                  <li key={entry.path}>
-                    <button
-                      className={`file-browser__suggestion${
-                        index === highlightIndex ? " is-active" : ""
-                      }`}
-                      onClick={() => pickSuggestion(entry)}
-                      onMouseDown={(event) => event.preventDefault()}
-                    onMouseEnter={() => setHighlightIndex(index)}
-                    ref={index === highlightIndex ? activeItemRef : undefined}
-                    role="option"
-                    aria-selected={index === highlightIndex}
-                    type="button"
-                  >
-                      <Icon className="file-row__icon" name="folder" />
-                      <span className="file-browser__suggestion-name" title={entry.path}>
-                        {entry.name}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </form>
-
-          {errorMessage ? <div className="sidebar__error">{errorMessage}</div> : null}
-
-          {progress ? (
-            <div className="file-browser__progress">
-              <div className="file-browser__progress-label">
-                <span className="file-browser__progress-name" title={progress.name}>
-                  下载 {progress.name}
-                </span>
-                <span className="file-browser__progress-size">
-                  {formatSize(progress.transferred)}
-                  {progress.total != null ? ` / ${formatSize(progress.total)}` : ""}
-                </span>
-              </div>
-              <div className="file-browser__progress-track">
-                <div
-                  className="file-browser__progress-bar"
-                  data-indeterminate={progress.total == null}
-                  style={
-                    progress.total != null && progress.total > 0
-                      ? {
-                          width: `${Math.min(
-                            100,
-                            Math.round((progress.transferred / progress.total) * 100),
-                          )}%`,
-                        }
-                      : undefined
-                  }
-                />
-              </div>
-            </div>
-          ) : null}
-
-          <div className="file-list" role="list">
-            {isLoading ? (
-              <div className="file-list__empty">正在加载...</div>
-            ) : entries.length > 0 ? (
-              entries.map((entry) => (
-                <div
-                  className="file-row"
-                  key={entry.path}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setContextMenu({ x: event.clientX, y: event.clientY, entry });
-                  }}
-                  onDoubleClick={() => handleOpenEntry(entry)}
-                  role="listitem"
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleOpenEntry(entry);
-                    }
-                  }}
-                >
-                  <Icon className="file-row__icon" name={entry.isDir ? "folder" : "file"} />
-                  <span className="file-row__name" title={entry.name}>
-                    {entry.name}
-                  </span>
-                  {entry.isDir ? null : (
-                    <>
-                      <span className="file-row__meta">{formatSize(entry.size)}</span>
-                      <IconButton
-                        disabled={isBusy}
-                        label="下载"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleDownload(entry);
-                        }}
-                      >
-                        <Icon name="download" />
-                      </IconButton>
-                    </>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="file-list__empty">此目录为空。</div>
-            )}
-          </div>
-        </>
-      )}
-      {contextMenu ? (
-        <div
-          className="context-menu"
-          ref={contextMenuRef}
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-          role="menu"
+    <section className="sftp-dual-browser" aria-label="SFTP 双栏文件管理器">
+      <Pane
+        entries={remoteEntries}
+        isLoading={loadingRemote}
+        onEnter={(entry) => entry.isDir && void loadRemote(entry.path)}
+        onPathSubmit={() => remoteInput.trim() && void loadRemote(remoteInput.trim())}
+        onRefresh={() => remotePath && void loadRemote(remotePath)}
+        onSelect={selectRemote}
+        onUp={() => void loadRemote(remoteParent(remotePath))}
+        path={remoteInput}
+        selectedPaths={selectedRemotePaths}
+        setPath={setRemoteInput}
+        side="remote"
+        title="服务器"
+        upDisabled={!remotePath || remotePath === "/" || loadingRemote}
+      />
+      <div className="sftp-dual-browser__transfer" aria-label="文件传输操作">
+        <button
+          aria-label="上传所选本机项目到服务器"
+          className="sftp-dual-browser__transfer-button"
+          disabled={selectedLocal.length === 0 || isTransferring}
+          onClick={() => void uploadSelected()}
+          title="上传到服务器"
+          type="button"
         >
-          {onOpenInTerminal ? (
-            <button
-              className="context-menu__item"
-              onClick={() => {
-                const entry = contextMenu.entry;
-                setContextMenu(null);
-                onOpenInTerminal(entry.isDir ? entry.path : parentPath(entry.path));
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="terminalTool" height="15" width="15" />
-              <span>{contextMenu.entry.isDir ? "在终端中进入此目录" : "在终端中进入所在目录"}</span>
-            </button>
-          ) : null}
+          <Icon name="arrowLeft" height="18" width="18" />
+        </button>
+        <button
+          aria-label="下载所选服务器项目到本机"
+          className="sftp-dual-browser__transfer-button"
+          disabled={selectedRemote.length === 0 || isTransferring}
+          onClick={() => void downloadSelected()}
+          title="下载到本机"
+          type="button"
+        >
+          <Icon name="arrowRight" height="18" width="18" />
+        </button>
+      </div>
+      <Pane
+        entries={localEntries}
+        isLoading={loadingLocal}
+        onEnter={(entry) => entry.isDir && void loadLocal(entry.path)}
+        onPathSubmit={() => localInput.trim() && void loadLocal(localInput.trim())}
+        onRefresh={() => localPath && void loadLocal(localPath)}
+        onRootSelect={(path) => void loadLocal(path)}
+        onSelect={selectLocal}
+        onUp={() => void loadLocal(localParent(localPath))}
+        path={localInput}
+        roots={localRoots}
+        selectedPaths={selectedLocalPaths}
+        setPath={setLocalInput}
+        side="local"
+        title="本机"
+        upDisabled={!localPath || loadingLocal}
+      />
+      {error ? <p className="sftp-dual-browser__error">{error}</p> : null}
+      {transfer ? (
+        <div className="sftp-dual-browser__progress">
+          <span>{transfer.direction === "upload" ? "上传" : "下载"} {transfer.name}</span>
+          <span>{formatSize(transfer.transferred)}{transfer.total === null ? "" : ` / ${formatSize(transfer.total)}`}</span>
+          <div className="sftp-dual-browser__progress-track">
+            <div
+              className="sftp-dual-browser__progress-value"
+              style={{ width: transfer.total ? `${Math.min(100, transfer.transferred / transfer.total * 100)}%` : "45%" }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {transferSummary ? (
+        <p className="sftp-dual-browser__summary">
+          传输完成：成功 {transferSummary.completed}，失败 {transferSummary.failed}，共 {transferSummary.total} 项。
+        </p>
+      ) : null}
+      {onOpenInTerminal && remotePath ? (
+        <button className="sftp-dual-browser__terminal" onClick={() => onOpenInTerminal(remotePath)} type="button">
+          <Icon name="terminalTool" height="14" width="14" />
+          <span>在终端中打开服务器目录</span>
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+interface PaneProps {
+  entries: PaneEntry[];
+  isLoading: boolean;
+  onEnter: (entry: PaneEntry) => void;
+  onPathSubmit: () => void;
+  onRefresh: () => void;
+  onRootSelect?: (path: string) => void;
+  onSelect: (entry: PaneEntry, event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onUp: () => void;
+  path: string;
+  roots?: LocalRoot[];
+  selectedPaths: Set<string>;
+  setPath: (path: string) => void;
+  side: "local" | "remote";
+  title: string;
+  upDisabled: boolean;
+}
+
+function Pane({ entries, isLoading, onEnter, onPathSubmit, onRefresh, onRootSelect, onSelect, onUp, path, roots, selectedPaths, setPath, side, title, upDisabled }: PaneProps) {
+  const rootValue = roots?.some((root) => root.path === path) ? path : "";
+  return (
+    <section className="sftp-dual-browser__pane" aria-label={`${title}文件列表`}>
+      <header className="sftp-dual-browser__pane-header">
+        <span><Icon name={side === "remote" ? "ssh" : "monitor"} height="15" width="15" />{title}</span>
+        <div>
+          {selectedPaths.size > 0 ? <span className="sftp-dual-browser__selection-count">已选 {selectedPaths.size}</span> : null}
+          <IconButton disabled={upDisabled} label="上一级目录" onClick={onUp}><Icon name="arrowUp" /></IconButton>
+          <IconButton disabled={isLoading} label="刷新" onClick={onRefresh}><Icon name="refresh" /></IconButton>
+        </div>
+      </header>
+      <form className="sftp-dual-browser__path" onSubmit={(event) => { event.preventDefault(); onPathSubmit(); }}>
+        {roots && onRootSelect ? (
+          <select aria-label="本机常用位置" onChange={(event) => event.currentTarget.value && onRootSelect(event.currentTarget.value)} value={rootValue}>
+            <option disabled value="">位置</option>
+            {roots.map((root) => <option key={root.path} value={root.path}>{root.label}</option>)}
+          </select>
+        ) : null}
+        <input aria-label={`${title}路径`} onChange={(event) => setPath(event.currentTarget.value)} spellCheck={false} value={path} />
+      </form>
+      <div aria-multiselectable="true" className="sftp-dual-browser__list" role="listbox">
+        {isLoading ? <p>正在读取…</p> : entries.length === 0 ? <p>此目录为空。</p> : entries.map((entry) => (
           <button
-            className="context-menu__item"
-            disabled={isBusy}
-            onClick={() => {
-              const entry = contextMenu.entry;
-              setContextMenu(null);
-              handleDownloadEntry(entry);
-            }}
-            role="menuitem"
+            aria-selected={selectedPaths.has(entry.path)}
+            className="sftp-dual-browser__row"
+            data-selected={selectedPaths.has(entry.path)}
+            key={entry.path}
+            onClick={(event) => onSelect(entry, event)}
+            onDoubleClick={() => onEnter(entry)}
+            role="option"
+            title={`${entry.path}（按 Ctrl/⌘ 或 Shift 多选）`}
             type="button"
           >
-            <Icon name="download" height="15" width="15" />
-            <span>{contextMenu.entry.isDir ? "打包下载" : "下载"}</span>
+            <Icon name={entry.isDir ? "folder" : "file"} height="16" width="16" />
+            <span>{entry.name}</span>
+            <small>{entry.isDir ? "" : formatSize(entry.size)}</small>
           </button>
-        </div>
-      ) : null}
-    </aside>
+        ))}
+      </div>
+    </section>
   );
 }

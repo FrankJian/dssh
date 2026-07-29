@@ -766,6 +766,7 @@ function App() {
       <HostToolsPanel
         profileId={activeSession?.kind === "ssh" ? activeSession.profileId : null}
         targetLabel={activeSession ? activeSessionLabel || activeSession.title : null}
+        onClose={() => setRightPanel(null)}
       />
     ) : null;
 

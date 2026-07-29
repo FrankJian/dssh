@@ -388,6 +388,7 @@ button {
   height: 100%;
   flex-direction: column;
   background: var(--bg-panel);
+  container-type: inline-size;
 }
 
 .host-tools__header {
@@ -396,19 +397,22 @@ button {
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-toolbar);
 }
 
 .host-tools__title {
   display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .host-tools__title > svg {
@@ -417,7 +421,9 @@ button {
 
 .host-tools__target {
   overflow: hidden;
+  min-width: 0;
   max-width: 180px;
+  flex: 1 1 120px;
   color: var(--text-muted);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -500,8 +506,11 @@ button {
 
 .host-tools__head-actions {
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .host-tools__refresh {
@@ -529,6 +538,71 @@ button {
 .host-tools__refresh:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.host-tools__interval {
+  display: inline-flex;
+  height: 26px;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.host-tools__interval:focus-within,
+.host-tools__interval:hover {
+  border-color: var(--border-subtle);
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.host-tools__interval select {
+  width: 78px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@container (max-width: 460px) {
+  .host-tools__title-label {
+    display: none;
+  }
+
+  .host-tools__target {
+    max-width: 120px;
+  }
+
+  .host-tools__interval {
+    gap: 2px;
+    padding: 0 3px;
+  }
+
+  .host-tools__interval > svg {
+    display: none;
+  }
+}
+
+@container (max-width: 360px) {
+  .host-tools__target {
+    display: none;
+  }
+
+  .host-tools__interval select {
+    width: 68px;
+  }
+}
+
+@container (max-width: 310px) {
+  .host-tools__interval {
+    display: none;
+  }
 }
 
 .host-tools__body {
@@ -1090,6 +1164,11 @@ button {
   min-width: 0;
   min-height: 0;
   flex: 1;
+}
+
+.sftp-tab > .sftp-dual-browser {
+  width: 100%;
+  flex: 1 1 auto;
 }
 
 .sftp-tab .sidebar {
@@ -5175,6 +5254,286 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 
 .file-browser__path-input:disabled {
   color: var(--text-muted);
+}
+
+/* ===== SFTP dual-pane file manager ===== */
+.sftp-dual-browser {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(300px, 1fr) 46px minmax(300px, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  background: var(--bg-panel);
+}
+
+.sftp-dual-browser__pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+
+.sftp-dual-browser__pane:first-child {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.sftp-dual-browser__pane-header {
+  display: flex;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-toolbar);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sftp-dual-browser__pane-header > span,
+.sftp-dual-browser__pane-header > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sftp-dual-browser__pane-header > div {
+  min-width: 0;
+}
+
+.sftp-dual-browser__selection-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.sftp-dual-browser__pane-header .icon-button {
+  width: 25px;
+  height: 25px;
+}
+
+.sftp-dual-browser__path {
+  display: flex;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel-muted);
+}
+
+.sftp-dual-browser__path input {
+  width: 100%;
+  min-width: 0;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.sftp-dual-browser__path select {
+  width: 76px;
+  height: 25px;
+  flex: 0 0 auto;
+  margin-right: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sftp-dual-browser__path select:focus {
+  border-color: var(--accent-border);
+}
+
+.sftp-dual-browser__path input:focus {
+  border-color: var(--accent-border);
+}
+
+.sftp-dual-browser__list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0 8px;
+}
+
+.sftp-dual-browser__list > p {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sftp-dual-browser__row {
+  display: flex;
+  width: 100%;
+  height: 27px;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sftp-dual-browser__row:hover {
+  background: var(--bg-hover);
+}
+
+.sftp-dual-browser__row[data-selected="true"] {
+  background: var(--bg-selected);
+  color: var(--text-strong);
+}
+
+.sftp-dual-browser__row > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.sftp-dual-browser__row > span {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-dual-browser__row > small {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.sftp-dual-browser__transfer {
+  display: flex;
+  min-height: 0;
+  grid-column: 2;
+  grid-row: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-panel-muted);
+}
+
+.sftp-dual-browser__transfer-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.sftp-dual-browser__transfer-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.sftp-dual-browser__transfer-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.sftp-dual-browser__error,
+.sftp-dual-browser__progress,
+.sftp-dual-browser__summary,
+.sftp-dual-browser__terminal {
+  grid-column: 1 / -1;
+}
+
+.sftp-dual-browser__summary {
+  margin: 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel-muted);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.sftp-dual-browser__error {
+  margin: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.sftp-dual-browser__progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel-muted);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.sftp-dual-browser__progress > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-dual-browser__progress-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+}
+
+.sftp-dual-browser__progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.sftp-dual-browser__terminal {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-toolbar);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.sftp-dual-browser__terminal:hover {
+  background: var(--bg-hover);
+  color: var(--accent-strong);
 }
 
 .file-list {

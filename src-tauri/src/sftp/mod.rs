@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    path::{Component, Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -13,7 +14,7 @@ use russh_sftp::{
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    fs::File,
+    fs::{self, File},
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
 };
@@ -413,6 +414,133 @@ impl SftpManager {
         }
         .await;
 
+        if result.is_err() {
+            self.drop_connection(&profile.id).await;
+        }
+        result
+    }
+
+    /// Recursively copy a local directory into `remote_path`. Existing target
+    /// directories are merged and files of the same name are replaced, matching
+    /// the ordinary single-file upload semantics.
+    pub async fn upload_dir(
+        &self,
+        app: &AppHandle,
+        profile: &SshProfile,
+        local_path: &str,
+        remote_path: &str,
+        operation_id: &str,
+    ) -> AppResult<()> {
+        let root = PathBuf::from(local_path);
+        let metadata = fs::symlink_metadata(&root)
+            .await
+            .map_err(local_file_transfer_error)?;
+        if !metadata.is_dir() {
+            return Err(AppError::new(
+                "sftp_upload_error",
+                "上传目录的本机路径不是目录。",
+            ));
+        }
+
+        let conn = self.connection(profile).await?;
+        let result = async {
+            ensure_remote_dir(&conn.sftp, remote_path).await?;
+            let mut pending_dirs = vec![(root, remote_path.to_string())];
+            let mut files = Vec::new();
+            while let Some((local_dir, remote_dir)) = pending_dirs.pop() {
+                let mut directory = fs::read_dir(&local_dir)
+                    .await
+                    .map_err(local_file_transfer_error)?;
+                while let Some(entry) = directory
+                    .next_entry()
+                    .await
+                    .map_err(local_file_transfer_error)?
+                {
+                    let file_type = entry.file_type().await.map_err(local_file_transfer_error)?;
+                    let local_child = entry.path();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if file_type.is_symlink() {
+                        return Err(AppError::new(
+                            "sftp_upload_error",
+                            format!("目录上传不支持符号链接：{}", local_child.display()),
+                        ));
+                    }
+                    let remote_child = join_path(&remote_dir, &name);
+                    if file_type.is_dir() {
+                        ensure_remote_dir(&conn.sftp, &remote_child).await?;
+                        pending_dirs.push((local_child, remote_child));
+                    } else if file_type.is_file() {
+                        files.push((local_child, remote_child));
+                    }
+                }
+            }
+
+            for (local_file, remote_file) in files {
+                self.upload(
+                    app,
+                    profile,
+                    &local_file.to_string_lossy(),
+                    &remote_file,
+                    operation_id,
+                )
+                .await?;
+            }
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            self.drop_connection(&profile.id).await;
+        }
+        result
+    }
+
+    /// Recursively copy a remote directory into `local_path` through SFTP.
+    /// This avoids shelling out remotely, so it uses the normal TOFU-verified
+    /// SFTP connection on all supported servers.
+    pub async fn download_tree(
+        &self,
+        app: &AppHandle,
+        profile: &SshProfile,
+        remote_path: &str,
+        local_path: &str,
+        operation_id: &str,
+    ) -> AppResult<()> {
+        let result = async {
+            let root = PathBuf::from(local_path);
+            fs::create_dir_all(&root)
+                .await
+                .map_err(local_file_transfer_error)?;
+            let mut pending_dirs = vec![(remote_path.to_string(), root)];
+            while let Some((remote_dir, local_dir)) = pending_dirs.pop() {
+                let listing = self.list(profile, &remote_dir).await?;
+                for entry in listing.entries {
+                    let local_child = local_child_path(&local_dir, &entry.name)?;
+                    if entry.is_symlink {
+                        return Err(AppError::new(
+                            "sftp_download_error",
+                            format!("目录下载不支持符号链接：{}", entry.path),
+                        ));
+                    }
+                    if entry.is_dir {
+                        fs::create_dir_all(&local_child)
+                            .await
+                            .map_err(local_file_transfer_error)?;
+                        pending_dirs.push((entry.path, local_child));
+                    } else {
+                        self.download(
+                            app,
+                            profile,
+                            &entry.path,
+                            &local_child.to_string_lossy(),
+                            operation_id,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        .await;
         if result.is_err() {
             self.drop_connection(&profile.id).await;
         }
@@ -1145,6 +1273,40 @@ fn shell_quote(value: &str) -> String {
 
 fn sftp_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("sftp_error", error.to_string())
+}
+
+fn local_file_transfer_error(error: impl std::fmt::Display) -> AppError {
+    AppError::new("sftp_local_transfer_error", error.to_string())
+}
+
+async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> AppResult<()> {
+    match sftp.metadata(path).await {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(AppError::new(
+            "sftp_upload_error",
+            format!("远程目标已存在且不是目录：{path}"),
+        )),
+        Err(_) => match sftp.create_dir(path).await {
+            Ok(()) => Ok(()),
+            Err(create_error) => match sftp.metadata(path).await {
+                Ok(metadata) if metadata.is_dir() => Ok(()),
+                _ => Err(sftp_error(create_error)),
+            },
+        },
+    }
+}
+
+fn local_child_path(parent: &Path, name: &str) -> AppResult<PathBuf> {
+    let child = Path::new(name);
+    if child.components().count() != 1
+        || !matches!(child.components().next(), Some(Component::Normal(_)))
+    {
+        return Err(AppError::new(
+            "sftp_download_error",
+            format!("远程条目名称不安全，无法写入本机：{name}"),
+        ));
+    }
+    Ok(parent.join(child))
 }
 
 fn sftp_text_error(error: impl std::fmt::Display) -> AppError {

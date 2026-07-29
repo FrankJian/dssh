@@ -2,10 +2,13 @@ import type { SVGProps } from "react";
 
 export type IconName =
   | "arrowUp"
+  | "arrowLeft"
+  | "arrowRight"
   | "arrowDownRight"
   | "bell"
   | "bot"
   | "check"
+  | "clock"
   | "bucket"
   | "chevron-down"
   | "chevron-right"
@@ -88,6 +91,14 @@ export function Icon({ name, ...props }: IconProps) {
         <>
           <rect height="12" rx="2" width="18" x="3" y="4" />
           <path d="M8 20h8M12 16v4" />
+        </>
+      ) : null}
+      {name === "arrowLeft" ? <path d="M19 12H5m6-6-6 6 6 6" /> : null}
+      {name === "arrowRight" ? <path d="M5 12h14m-6-6 6 6-6 6" /> : null}
+      {name === "clock" ? (
+        <>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M12 7v5l3.5 2" />
         </>
       ) : null}
       {name === "edit" ? (

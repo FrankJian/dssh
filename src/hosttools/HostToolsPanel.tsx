@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostTool, HostToolsSnapshot } from "../models/hosttools";
 import { hostToolsSnapshot } from "../services/hostToolsService";
 import { Icon } from "../ui/Icon";
@@ -9,7 +9,18 @@ interface HostToolsPanelProps {
   profileId: string | null;
   /** Label of the connection the tools target, or null when none is active. */
   targetLabel: string | null;
+  /** Closes the containing right dock. */
+  onClose: () => void;
 }
+
+type RefreshInterval = 0 | 15 | 30 | 60;
+
+const REFRESH_INTERVALS: { value: RefreshInterval; label: string }[] = [
+  { value: 0, label: "不自动刷新" },
+  { value: 15, label: "每 15 秒" },
+  { value: 30, label: "每 30 秒" },
+  { value: 60, label: "每分钟" },
+];
 
 const TOOLS: { id: HostTool; label: string; icon: IconName }[] = [
   { id: "monitor", label: "监控", icon: "gauge" },
@@ -25,40 +36,75 @@ const TOOLS: { id: HostTool; label: string; icon: IconName }[] = [
  * renders them as structured tables, falling back to raw output when a parser
  * yields nothing.
  */
-export function HostToolsPanel({ profileId, targetLabel }: HostToolsPanelProps) {
+export function HostToolsPanel({ profileId, targetLabel, onClose }: HostToolsPanelProps) {
   const [tool, setTool] = useState<HostTool>("monitor");
   const [snapshot, setSnapshot] = useState<HostToolsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(0);
+  const loadInFlightRef = useRef(false);
+  const queuedLoadRef = useRef(false);
+  const latestLoadRef = useRef<() => Promise<void>>(null);
+  const currentTargetRef = useRef({ profileId, tool });
+  currentTargetRef.current = { profileId, tool };
 
   const load = useCallback(async () => {
     if (!profileId) {
       return;
     }
+    if (loadInFlightRef.current) {
+      queuedLoadRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = true;
+    const requestedProfileId = profileId;
+    const requestedTool = tool;
+    const isCurrentTarget = () => currentTargetRef.current.profileId === requestedProfileId
+      && currentTargetRef.current.tool === requestedTool;
     setIsLoading(true);
     setError(null);
     try {
       const result = await hostToolsSnapshot(profileId, tool);
-      setSnapshot(result);
+      if (isCurrentTarget()) {
+        setSnapshot(result);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "获取主机信息失败。");
-      setSnapshot(null);
+      if (isCurrentTarget()) {
+        setError(err instanceof Error ? err.message : "获取主机信息失败。");
+        setSnapshot(null);
+      }
     } finally {
+      loadInFlightRef.current = false;
       setIsLoading(false);
+      if (queuedLoadRef.current) {
+        queuedLoadRef.current = false;
+        void latestLoadRef.current?.();
+      }
     }
   }, [profileId, tool]);
 
+  latestLoadRef.current = load;
+
   useEffect(() => {
     setSnapshot(null);
+    setError(null);
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!profileId || refreshInterval === 0) {
+      return;
+    }
+    const timer = window.setInterval(() => void load(), refreshInterval * 1_000);
+    return () => window.clearInterval(timer);
+  }, [load, profileId, refreshInterval]);
 
   return (
     <section className="host-tools" aria-label="主机工具">
       <div className="host-tools__header">
         <div className="host-tools__title">
           <Icon name="toolbox" height="16" width="16" />
-          主机工具
+          <span className="host-tools__title-label">主机工具</span>
         </div>
         <div className="host-tools__head-actions">
           {targetLabel ? <span className="host-tools__target">{targetLabel}</span> : null}
@@ -71,6 +117,27 @@ export function HostToolsPanel({ profileId, targetLabel }: HostToolsPanelProps) 
             type="button"
           >
             <Icon name="refresh" height="15" width="15" />
+          </button>
+          <label className="host-tools__interval" title="定时刷新">
+            <Icon name="clock" height="15" width="15" />
+            <select
+              aria-label="定时刷新频率"
+              onChange={(event) => setRefreshInterval(Number(event.currentTarget.value) as RefreshInterval)}
+              value={refreshInterval}
+            >
+              {REFRESH_INTERVALS.map((interval) => (
+                <option key={interval.value} value={interval.value}>{interval.label}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            aria-label="关闭主机工具"
+            className="host-tools__refresh"
+            onClick={onClose}
+            title="关闭"
+            type="button"
+          >
+            <Icon name="close" height="16" width="16" />
           </button>
         </div>
       </div>
@@ -219,18 +286,40 @@ function HostToolsContent({ snapshot }: { snapshot: HostToolsSnapshot }) {
     if (snapshot.logs.length === 0) {
       return <RawBlock raw={snapshot.raw} />;
     }
-    return (
-      <div className="host-tools__logs">
-        {snapshot.logs.map((line, index) => (
-          <div className="host-tools__log-line" key={index}>
-            {line}
-          </div>
-        ))}
-      </div>
-    );
+    return <HostToolsLogs lines={snapshot.logs} />;
   }
 
   return <RawBlock raw={snapshot.raw} />;
+}
+
+function HostToolsLogs({ lines }: { lines: string[] }) {
+  const logsRef = useRef<HTMLDivElement | null>(null);
+
+  // A refreshed snapshot represents the newest tail of the remote log, so the
+  // latest line should always be the visible anchor rather than the old scroll
+  // position from the previous snapshot.
+  useLayoutEffect(() => {
+    const logs = logsRef.current;
+    const scrollContainer = logs?.closest<HTMLElement>(".host-tools__body");
+    const scrollToLatest = () => {
+      if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    };
+    scrollToLatest();
+    // The right dock can finish its flex layout after the snapshot commits.
+    // Repeat on the next frame so the true content height is used on refresh.
+    const frame = window.requestAnimationFrame(scrollToLatest);
+    return () => window.cancelAnimationFrame(frame);
+  }, [lines]);
+
+  return (
+    <div className="host-tools__logs" ref={logsRef}>
+      {lines.map((line, index) => (
+        <div className="host-tools__log-line" key={index}>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function RawBlock({ raw }: { raw: string }) {

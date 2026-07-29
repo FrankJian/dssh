@@ -1,3 +1,6 @@
+use std::{path::PathBuf, time::UNIX_EPOCH};
+
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::{
@@ -15,6 +18,120 @@ fn require_profile(state: &AppState, profile_id: &str) -> AppResult<SshProfile> 
             "profile_not_found",
             format!("SSH profile '{profile_id}' does not exist."),
         )
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFileEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    is_symlink: bool,
+    size: u64,
+    modified: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalListing {
+    path: String,
+    entries: Vec<LocalFileEntry>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRoot {
+    path: String,
+    label: String,
+}
+
+fn local_error(error: impl std::fmt::Display) -> AppError {
+    AppError::new("local_file_error", error.to_string())
+}
+
+fn local_home_path() -> AppResult<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::new("local_file_error", "无法确定本机主目录。"))
+}
+
+#[tauri::command]
+pub async fn sftp_local_home() -> AppResult<String> {
+    Ok(local_home_path()?.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn sftp_local_roots() -> AppResult<Vec<LocalRoot>> {
+    let home = local_home_path()?;
+    let mut roots = vec![LocalRoot {
+        path: home.to_string_lossy().into_owned(),
+        label: "主目录".to_string(),
+    }];
+
+    #[cfg(windows)]
+    {
+        for letter in b'A'..=b'Z' {
+            let path = format!("{}:\\", char::from(letter));
+            if std::fs::metadata(&path).is_ok() {
+                roots.push(LocalRoot {
+                    label: format!("{} 盘", char::from(letter)),
+                    path,
+                });
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    if roots[0].path != "/" {
+        roots.push(LocalRoot {
+            path: "/".to_string(),
+            label: "文件系统".to_string(),
+        });
+    }
+
+    Ok(roots)
+}
+
+#[tauri::command]
+pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
+    let requested = if path.trim().is_empty() {
+        local_home_path()?
+    } else {
+        PathBuf::from(path.trim())
+    };
+    let canonical = tokio::fs::canonicalize(&requested)
+        .await
+        .map_err(local_error)?;
+    let mut directory = tokio::fs::read_dir(&canonical).await.map_err(local_error)?;
+    let mut entries = Vec::new();
+    while let Some(entry) = directory.next_entry().await.map_err(local_error)? {
+        let path = entry.path();
+        let file_type = entry.file_type().await.map_err(local_error)?;
+        let metadata = entry.metadata().await.map_err(local_error)?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| i64::try_from(duration.as_secs()).ok());
+        entries.push(LocalFileEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            path: path.to_string_lossy().into_owned(),
+            is_dir: file_type.is_dir(),
+            is_symlink: file_type.is_symlink(),
+            size: metadata.len(),
+            modified,
+        });
+    }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(LocalListing {
+        path: canonical.to_string_lossy().into_owned(),
+        entries,
     })
 }
 
@@ -103,6 +220,22 @@ pub async fn sftp_download_dir(
 }
 
 #[tauri::command]
+pub async fn sftp_download_tree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    remote_path: String,
+    local_path: String,
+    operation_id: String,
+) -> AppResult<()> {
+    let profile = require_profile(&state, &profile_id)?;
+    let manager = state.sftp.clone();
+    manager
+        .download_tree(&app, &profile, &remote_path, &local_path, &operation_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn sftp_upload(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -115,6 +248,22 @@ pub async fn sftp_upload(
     let manager = state.sftp.clone();
     manager
         .upload(&app, &profile, &local_path, &remote_path, &operation_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn sftp_upload_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    local_path: String,
+    remote_path: String,
+    operation_id: String,
+) -> AppResult<()> {
+    let profile = require_profile(&state, &profile_id)?;
+    let manager = state.sftp.clone();
+    manager
+        .upload_dir(&app, &profile, &local_path, &remote_path, &operation_id)
         .await
 }
 
