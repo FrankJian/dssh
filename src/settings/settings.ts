@@ -47,6 +47,7 @@ export const terminalRightClickKey = "dssh.terminal.rightClick";
 export const terminalGpuKey = "dssh.terminal.gpuAcceleration";
 export const terminalBgImageKey = "dssh.terminal.bgImage";
 export const terminalBgOpacityKey = "dssh.terminal.bgOpacity";
+export const terminalWorkspaceInsetKey = "dssh.terminal.workspaceInset";
 export const s3UploadConcurrencyKey = "dssh.s3.uploadConcurrency";
 export const s3DownloadConcurrencyKey = "dssh.s3.downloadConcurrency";
 
@@ -81,6 +82,19 @@ export const TERMINAL_BG_OPACITY_MAX = 100;
 export function clampBgOpacity(value: number): number {
   if (!Number.isFinite(value)) return TERMINAL_BG_OPACITY_DEFAULT;
   return Math.min(TERMINAL_BG_OPACITY_MAX, Math.max(TERMINAL_BG_OPACITY_MIN, Math.round(value)));
+}
+
+/** Shared right/bottom breathing room around terminal workspaces, in pixels. */
+export const TERMINAL_WORKSPACE_INSET_DEFAULT = 4;
+export const TERMINAL_WORKSPACE_INSET_MIN = 0;
+export const TERMINAL_WORKSPACE_INSET_MAX = 24;
+
+export function clampTerminalWorkspaceInset(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_WORKSPACE_INSET_DEFAULT;
+  return Math.min(
+    TERMINAL_WORKSPACE_INSET_MAX,
+    Math.max(TERMINAL_WORKSPACE_INSET_MIN, Math.round(value)),
+  );
 }
 
 export type RightClickAction = "none" | "menu" | "paste" | "pasteOrCopy";

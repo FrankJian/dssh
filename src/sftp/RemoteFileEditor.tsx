@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  EDITOR_LANGUAGE_OPTIONS,
+  languageForPath,
+  languageLabel,
+  MonacoRemoteEditor,
+} from "./MonacoRemoteEditor";
 import { sftpReadImage, sftpReadText, sftpWriteText } from "../services/sftpService";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/ToastHost";
@@ -56,11 +62,20 @@ function isMarkdownPath(path: string | null): boolean {
   return Boolean(path && ["md", "markdown"].includes(path.split(".").pop()?.toLowerCase() ?? ""));
 }
 
+function isKnownBinaryPath(path: string | null): boolean {
+  return Boolean(path && [
+    "7z", "apk", "bin", "bz2", "class", "db", "dmg", "dll", "doc", "docx", "ear", "exe", "gz", "iso",
+    "jar", "msi", "o", "odp", "ods", "odt", "pdf", "pyc", "rar", "so", "tar", "tgz", "war", "woff", "woff2",
+    "xls", "xlsx", "xz", "zip", "zst",
+  ].includes(path.split(".").pop()?.toLowerCase() ?? ""));
+}
+
 const DEFAULT_PREVIEW_WIDTH = 420;
 const MIN_PREVIEW_WIDTH = 260;
 const MAX_PREVIEW_WIDTH = 720;
 
-/** A deliberately small, text-only remote editor for files selected in the tree. */
+/** Remote-file editor shell: tabs, SFTP save flow and non-text previews stay
+ * here while Monaco owns only the editable text surface. */
 export function RemoteFileEditor({
   activePath,
   filePaths,
@@ -75,15 +90,28 @@ export function RemoteFileEditor({
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenu | null>(null);
   const [markdownPreviewPath, setMarkdownPreviewPath] = useState<string | null>(null);
   const [previewWidth, setPreviewWidth] = useState(DEFAULT_PREVIEW_WIDTH);
+  const [languageOverrides, setLanguageOverrides] = useState<Record<string, string>>({});
   const documentsRef = useRef(documents);
   documentsRef.current = documents;
   const imagesRef = useRef(images);
   imagesRef.current = images;
 
   useEffect(() => {
+    // Each SFTP profile has an independent remote namespace. Clear cached
+    // documents before the profile-specific read effects run so a same-path
+    // file is never shown with content from the previous host.
+    documentsRef.current = {};
+    imagesRef.current = {};
+    setDocuments({});
+    setImages({});
+    setLanguageOverrides({});
+    setMarkdownPreviewPath(null);
+  }, [profileId]);
+
+  useEffect(() => {
     // Do not depend on `documents`: marking a file as loading updates that
     // state, and would otherwise rerun this effect and cancel its own request.
-    if (!activePath || isImagePath(activePath) || documentsRef.current[activePath]) {
+    if (!activePath || isImagePath(activePath) || isKnownBinaryPath(activePath) || documentsRef.current[activePath]) {
       return;
     }
     let cancelled = false;
@@ -180,6 +208,15 @@ export function RemoteFileEditor({
   }, [filePaths]);
 
   useEffect(() => {
+    setLanguageOverrides((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([path]) => filePaths.includes(path)),
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+  }, [filePaths]);
+
+  useEffect(() => {
     if (!tabContextMenu) {
       return;
     }
@@ -217,11 +254,17 @@ export function RemoteFileEditor({
   const activeDocument = activePath ? documents[activePath] : undefined;
   const activeImage = activePath ? images[activePath] : undefined;
   const activeIsImage = isImagePath(activePath);
+  const activeIsBinary = isKnownBinaryPath(activePath);
+  const hasLoadedTextDocument = Object.values(documents).some((document) => !document.isLoading && !document.error);
   const activeIsDirty = isDirty(activeDocument);
   const title = activePath ? fileName(activePath) : "文件编辑器";
+  const autoLanguage = activePath ? languageForPath(activePath) : "plaintext";
   const status = useMemo(() => {
     if (activeIsImage) {
       return activeImage?.isLoading ? "正在读取…" : "图片预览";
+    }
+    if (activeIsBinary) {
+      return "二进制文件";
     }
     if (!activeDocument) {
       return "";
@@ -233,23 +276,36 @@ export function RemoteFileEditor({
       return "正在保存…";
     }
     return activeIsDirty ? "未保存" : "已保存";
-  }, [activeDocument, activeImage?.isLoading, activeIsDirty, activeIsImage]);
+  }, [activeDocument, activeImage?.isLoading, activeIsBinary, activeIsDirty, activeIsImage]);
   const statusIcon = activeIsImage
     ? "fileImage"
+    : activeIsBinary
+      ? "file"
     : activeDocument?.isLoading || activeDocument?.isSaving
       ? "refresh"
       : activeIsDirty
         ? "edit"
         : "check";
 
-  function updateContent(content: string) {
+  function updateContent(path: string, content: string) {
+    setDocuments((current) => ({
+      ...current,
+      [path]: { ...current[path], content, error: null },
+    }));
+  }
+
+  function setActiveLanguageOverride(languageId: string) {
     if (!activePath) {
       return;
     }
-    setDocuments((current) => ({
-      ...current,
-      [activePath]: { ...current[activePath], content, error: null },
-    }));
+    setLanguageOverrides((current) => {
+      if (languageId) {
+        return { ...current, [activePath]: languageId };
+      }
+      const next = { ...current };
+      delete next[activePath];
+      return next;
+    });
   }
 
   async function saveFile(path: string): Promise<boolean> {
@@ -358,6 +414,7 @@ export function RemoteFileEditor({
         {filePaths.map((path) => {
           const dirty = isDirty(documents[path]);
           const image = isImagePath(path);
+          const binary = isKnownBinaryPath(path);
           return (
             <div
               aria-selected={path === activePath}
@@ -375,7 +432,7 @@ export function RemoteFileEditor({
                 title={path}
                 type="button"
               >
-                <Icon name={image ? "fileImage" : "fileCode"} height="14" width="14" />
+                <Icon name={image ? "fileImage" : binary ? "file" : "fileCode"} height="14" width="14" />
                 <span>{fileName(path)}</span>
                 {dirty ? <i aria-label="未保存" className="remote-file-editor__dirty" /> : null}
               </button>
@@ -395,13 +452,26 @@ export function RemoteFileEditor({
 
       <div className="remote-file-editor__toolbar">
         <span className="remote-file-editor__path" title={activePath ?? undefined}>{activePath ?? title}</span>
+        <select
+          aria-label="编辑器语言"
+          className="remote-file-editor__language"
+          disabled={!activePath || activeIsImage || activeIsBinary || !activeDocument || activeDocument.isLoading}
+          onChange={(event) => setActiveLanguageOverride(event.currentTarget.value)}
+          title="手动选择语法高亮语言"
+          value={activePath ? languageOverrides[activePath] ?? "" : ""}
+        >
+          <option value="">自动（{languageLabel(autoLanguage)}）</option>
+          {EDITOR_LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
         {status ? (
           <span
             aria-label={status}
             className={`remote-file-editor__status${activeIsDirty ? " is-dirty" : ""}`}
             title={status}
           >
-            <Icon name={statusIcon} height="16" width="16" />
+            <Icon name={statusIcon} height="14" width="14" />
           </span>
         ) : null}
         {isMarkdownPath(activePath) ? (
@@ -413,18 +483,18 @@ export function RemoteFileEditor({
             title={markdownPreviewPath === activePath ? "关闭预览" : "显示预览"}
             type="button"
           >
-            <Icon name="eye" height="16" width="16" />
+            <Icon name="eye" height="14" width="14" />
           </button>
         ) : null}
         <button
           aria-label="保存"
           className="button button--primary remote-file-editor__save"
-          disabled={activeIsImage || !activeIsDirty || activeDocument?.isSaving}
+          disabled={activeIsImage || activeIsBinary || !activeIsDirty || activeDocument?.isSaving}
           onClick={() => void saveActiveFile()}
           title="保存"
           type="button"
         >
-          <Icon name="save" height="15" width="15" />
+          <Icon name="save" height="14" width="14" />
         </button>
       </div>
 
@@ -436,27 +506,32 @@ export function RemoteFileEditor({
         <div className="remote-file-editor__image-wrap">
           <img alt={title} className="remote-file-editor__image" src={activeImage.dataUrl} />
         </div>
+      ) : activeIsBinary ? (
+        <p className="remote-file-editor__message">该文件是二进制或压缩格式，无法在内置编辑器中预览。请下载后使用对应程序打开。</p>
       ) : activeDocument?.error ? (
         <p className="remote-file-editor__message remote-file-editor__message--error">{activeDocument.error}</p>
       ) : activeDocument?.isLoading ? (
         <p className="remote-file-editor__message">正在读取文件内容…</p>
-      ) : activeDocument ? (
-        <div className="remote-file-editor__content">
-          <textarea
-            aria-label={`${title} 的文件内容`}
-            className="remote-file-editor__textarea"
-            onChange={(event) => updateContent(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-                event.preventDefault();
-                void saveActiveFile();
-              }
-            }}
-            spellCheck={false}
-            value={activeDocument.content}
-          />
-          {markdownPreviewPath === activePath ? (
-            <>
+      ) : activeDocument ? null : (
+        <p className="remote-file-editor__message">从左侧文件列表选择一个文本文件以打开编辑器。</p>
+      )}
+      <div
+        className="remote-file-editor__content"
+        data-hidden={activeIsImage || activeIsBinary || !activeDocument || activeDocument.isLoading || Boolean(activeDocument.error)}
+      >
+        <MonacoRemoteEditor
+          activePath={activePath}
+          documents={documents}
+          filePaths={filePaths}
+          hidden={activeIsImage || activeIsBinary || !activeDocument || activeDocument.isLoading || Boolean(activeDocument.error)}
+          languageOverrides={languageOverrides}
+          onContentChange={updateContent}
+          onSave={() => void saveActiveFile()}
+          profileId={profileId}
+          shouldLoad={hasLoadedTextDocument}
+        />
+        {markdownPreviewPath === activePath && activeDocument ? (
+          <>
               <div
                 aria-label="调整 Markdown 预览宽度"
                 aria-orientation="vertical"
@@ -488,12 +563,9 @@ export function RemoteFileEditor({
                   </ReactMarkdown>
                 </div>
               </aside>
-            </>
-          ) : null}
-        </div>
-      ) : (
-        <p className="remote-file-editor__message">从左侧文件列表选择一个文本文件以打开编辑器。</p>
-      )}
+          </>
+        ) : null}
+      </div>
       {tabContextMenu ? (
         <div
           className="context-menu"

@@ -59,7 +59,7 @@ enum TransferDirection {
 const PROGRESS_STEP: u64 = 256 * 1024;
 /// Keep the in-app editor deliberately lightweight and avoid sending very
 /// large remote files through the Tauri IPC boundary.
-const MAX_EDITABLE_TEXT_BYTES: usize = 5 * 1_024 * 1_024;
+const MAX_EDITABLE_TEXT_BYTES: usize = 1_024 * 1_024 * 1_024;
 const MAX_PREVIEW_IMAGE_BYTES: usize = 10 * 1_024 * 1_024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -665,6 +665,21 @@ impl SftpManager {
     ) -> AppResult<SftpTextFile> {
         let conn = self.connection(profile).await?;
         let result = async {
+            if is_known_binary_path(remote_path) {
+                return Err(AppError::new(
+                    "sftp_text_binary",
+                    "该文件是二进制或压缩格式，无法在内置编辑器中预览。请下载后使用对应程序打开。",
+                ));
+            }
+            if let Ok(metadata) = conn.sftp.metadata(remote_path).await
+                && let Some(size) = metadata.size
+                && size > MAX_EDITABLE_TEXT_BYTES as u64
+            {
+                return Err(AppError::new(
+                    "sftp_text_too_large",
+                    "文件超过 1 GiB，无法在内置编辑器中打开。",
+                ));
+            }
             let mut remote = conn.sftp.open(remote_path).await.map_err(sftp_error)?;
             let mut data = Vec::new();
             let mut buffer = vec![0u8; 64 * 1024];
@@ -674,20 +689,20 @@ impl SftpManager {
                 if read == 0 {
                     break;
                 }
+                let chunk = &buffer[..read];
+                if (data.is_empty() && has_binary_signature(chunk)) || chunk.contains(&0) {
+                    return Err(AppError::new(
+                        "sftp_text_binary",
+                        "检测到二进制内容，无法在内置编辑器中预览。请下载后使用对应程序打开。",
+                    ));
+                }
                 if data.len() + read > MAX_EDITABLE_TEXT_BYTES {
                     return Err(AppError::new(
                         "sftp_text_too_large",
-                        "文件超过 5 MiB，无法在内置编辑器中打开。",
+                        "文件超过 1 GiB，无法在内置编辑器中打开。",
                     ));
                 }
-                data.extend_from_slice(&buffer[..read]);
-            }
-
-            if data.contains(&0) {
-                return Err(AppError::new(
-                    "sftp_text_binary",
-                    "该文件包含二进制内容，无法作为文本编辑。",
-                ));
+                data.extend_from_slice(chunk);
             }
             let content = String::from_utf8(data).map_err(|_| {
                 AppError::new(
@@ -714,7 +729,7 @@ impl SftpManager {
         if content.len() > MAX_EDITABLE_TEXT_BYTES {
             return Err(AppError::new(
                 "sftp_text_too_large",
-                "文件超过 5 MiB，无法通过内置编辑器保存。",
+                "文件超过 1 GiB，无法通过内置编辑器保存。",
             ));
         }
         if content.contains('\0') {
@@ -1351,6 +1366,68 @@ fn sftp_text_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("sftp_text_error", error.to_string())
 }
 
+fn is_known_binary_path(path: &str) -> bool {
+    matches!(
+        path.rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some(
+            "7z" | "apk"
+                | "bin"
+                | "bz2"
+                | "class"
+                | "db"
+                | "dmg"
+                | "dll"
+                | "doc"
+                | "docx"
+                | "ear"
+                | "exe"
+                | "gz"
+                | "iso"
+                | "jar"
+                | "msi"
+                | "o"
+                | "odp"
+                | "ods"
+                | "odt"
+                | "pdf"
+                | "pyc"
+                | "rar"
+                | "so"
+                | "tar"
+                | "tgz"
+                | "war"
+                | "woff"
+                | "woff2"
+                | "xls"
+                | "xlsx"
+                | "xz"
+                | "zip"
+                | "zst"
+        )
+    )
+}
+
+fn has_binary_signature(data: &[u8]) -> bool {
+    const SIGNATURES: &[&[u8]] = &[
+        b"\x1f\x8b",   // gzip / tgz
+        b"PK\x03\x04", // zip, office documents and jar
+        b"PK\x05\x06",
+        b"PK\x07\x08",
+        b"7z\xbc\xaf\x27\x1c",
+        b"Rar!\x1a\x07",
+        b"\xfd7zXZ\0", // xz
+        b"BZh",
+        b"\x28\xb5\x2f\xfd", // zstd
+        b"\x7fELF",
+        b"%PDF-",
+    ];
+    SIGNATURES
+        .iter()
+        .any(|signature| data.starts_with(signature))
+}
+
 fn remote_image_mime(path: &str) -> AppResult<&'static str> {
     match path
         .rsplit_once('.')
@@ -1431,7 +1508,9 @@ fn normalize_dir(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeletePlanItem, delete_preview, is_descendant};
+    use super::{
+        DeletePlanItem, delete_preview, has_binary_signature, is_descendant, is_known_binary_path,
+    };
 
     #[test]
     fn delete_preview_counts_symlinks_without_treating_them_as_directories() {
@@ -1468,5 +1547,14 @@ mod tests {
             "/home/user/project-old",
             "/home/user/project"
         ));
+    }
+
+    #[test]
+    fn binary_detection_rejects_archives_by_path_or_header() {
+        assert!(is_known_binary_path("/home/user/dssh.tgz"));
+        assert!(has_binary_signature(b"\x1f\x8b\x08\0"));
+        assert!(has_binary_signature(b"PK\x03\x04"));
+        assert!(!is_known_binary_path("/home/user/README.md"));
+        assert!(!has_binary_signature(b"# a UTF-8 text file\n"));
     }
 }

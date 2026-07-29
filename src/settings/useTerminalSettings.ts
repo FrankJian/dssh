@@ -18,8 +18,11 @@ import {
   terminalRightClickKey,
   terminalBgImageKey,
   terminalBgOpacityKey,
+  terminalWorkspaceInsetKey,
   clampBgOpacity,
+  clampTerminalWorkspaceInset,
   TERMINAL_BG_OPACITY_DEFAULT,
+  TERMINAL_WORKSPACE_INSET_DEFAULT,
   s3DownloadConcurrencyKey,
   s3UploadConcurrencyKey,
   S3_TRANSFER_CONCURRENCY_DEFAULT,
@@ -62,6 +65,12 @@ export function useTerminalSettings() {
     const raw = localStorage.getItem(terminalBgOpacityKey);
     return raw ? clampBgOpacity(Number.parseInt(raw, 10)) : TERMINAL_BG_OPACITY_DEFAULT;
   });
+  const [terminalWorkspaceInset, setTerminalWorkspaceInsetState] = useState<number>(() => {
+    const raw = localStorage.getItem(terminalWorkspaceInsetKey);
+    return raw
+      ? clampTerminalWorkspaceInset(Number.parseInt(raw, 10))
+      : TERMINAL_WORKSPACE_INSET_DEFAULT;
+  });
   const [s3UploadConcurrency, setS3UploadConcurrencyState] = useState<number>(() =>
     getStoredS3TransferConcurrency(s3UploadConcurrencyKey),
   );
@@ -98,6 +107,10 @@ export function useTerminalSettings() {
   }, [terminalBgOpacity]);
 
   useEffect(() => {
+    localStorage.setItem(terminalWorkspaceInsetKey, String(terminalWorkspaceInset));
+  }, [terminalWorkspaceInset]);
+
+  useEffect(() => {
     localStorage.setItem(s3UploadConcurrencyKey, String(s3UploadConcurrency));
   }, [s3UploadConcurrency]);
 
@@ -119,6 +132,10 @@ export function useTerminalSettings() {
 
   const setTerminalBgOpacity = useCallback((value: number) => {
     setTerminalBgOpacityState(clampBgOpacity(value));
+  }, []);
+
+  const setTerminalWorkspaceInset = useCallback((value: number) => {
+    setTerminalWorkspaceInsetState(clampTerminalWorkspaceInset(value));
   }, []);
 
   const setRightClick = useCallback((value: RightClickAction) => {
@@ -176,6 +193,8 @@ export function useTerminalSettings() {
     setTerminalBgImage,
     terminalBgOpacity,
     setTerminalBgOpacity,
+    terminalWorkspaceInset,
+    setTerminalWorkspaceInset,
     s3UploadConcurrency,
     setS3UploadConcurrency,
     s3DownloadConcurrency,

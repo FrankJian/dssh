@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
 
@@ -24,6 +24,38 @@ const KIND_ICON: Record<WorkspaceTabKind, IconName> = {
   local: "terminalTool",
   sftp: "folder",
 };
+
+function TabTitle({ value }: { value: string }) {
+  const containerRef = useRef<HTMLSpanElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const [scrollDistance, setScrollDistance] = useState(0);
+
+  useLayoutEffect(() => {
+    const update = () => {
+      const container = containerRef.current;
+      const text = textRef.current;
+      if (container && text) {
+        setScrollDistance(Math.max(0, text.scrollWidth - container.clientWidth));
+      }
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    if (containerRef.current) observer.observe(containerRef.current);
+    if (textRef.current) observer.observe(textRef.current);
+    return () => observer.disconnect();
+  }, [value]);
+
+  return (
+    <span
+      className={`tab__title${scrollDistance > 0 ? " is-overflowing" : ""}`}
+      ref={containerRef}
+      style={{ "--tab-title-scroll-distance": `${scrollDistance}px` } as CSSProperties}
+      title={value}
+    >
+      <span className="tab__title-text" ref={textRef}>{value}</span>
+    </span>
+  );
+}
 
 /**
  * Unified top tab strip: terminal sessions (ssh/local) and SFTP tabs render
@@ -97,7 +129,7 @@ export function WorkspaceTabStrip({
           tabIndex={0}
         >
           <Icon name={KIND_ICON[tab.kind]} height="14" width="14" />
-          <span className="tab__title">{tab.title}</span>
+          <TabTitle value={tab.title} />
           <span
             aria-label="关闭"
             className="tab__action tab__close"

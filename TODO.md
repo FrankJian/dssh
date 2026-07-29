@@ -1,91 +1,68 @@
-# dssh TODO / 后续路线
+# dssh 待办
 
-> 本文件汇总**尚未实现或有意延后**的内容，以及维护时需要注意的事项。
-> 架构约定见 [`AGENTS.md`](AGENTS.md)，功能与发布流程见 [`README.md`](README.md)。
-> 优先级：**P1 = 建议优先**，**P2 = 有价值**，**P3 = 长期/可选**。
+> 本文件**只记录尚未完成的开发项与待验收项**。已完成的阶段记录见 [`tasks.md`](tasks.md)，
+> 当前界面与机制约定见 [`spec.md`](spec.md)，架构规则见 [`AGENTS.md`](AGENTS.md)。
+>
+> 优先级：**P1 = 安全/架构优先**，**P2 = 体验与可靠性**，**P3 = 可选演进**。
 
----
+## P1：安全与连接架构
 
-## 一、延后的后端重点（都建议单独一轮 + 真实主机验证）
+### 1. 系统钥匙串迁移
 
-### 1. 共享连接多路复用池 · P1
-- **现状**：每个功能各自建立 SSH 连接——终端、SFTP、端口转发各开一条；主机工具 / AI 每次取数用 `run_ssh_command` 新开一条单发连接。
-- **目标**：一台主机一条物理 russh 连接，终端 PTY / SFTP / 转发 / 主机工具在其上多路复用 channel（`DashMap<ConnectionId, SharedConnection>` + 节点路由）。
-- **注意**：这是对**核心连接代码**的深度重写，风险最高。russh 的 `Handle` 支持在一条连接上并发开多个 channel（`channel_open_session` 取 `&self`），架构可行；但务必用真实 SSH 主机做回归（终端一旦坏 = 整个应用坏）。落地后补 `cargo test`（并发、节点路由、快照/恢复）。
-- **相关**：会话树多跳「钻入（下一跳 / 跳板）」与「另存为连接」依赖节点路由，一并在此实现。
+- 将 SSH 密码、私钥口令、S3 Secret Access Key 与 AI API Key 从 SQLite 明文迁至 macOS Keychain / Windows Credential Manager。
+- 引入 `keyring`、`zeroize` 与仅保存引用键的 `SecretStore`；实现可幂等、可回退的迁移流程。
+- 迁移前创建加密备份；完整覆盖认证、导入导出与失败恢复测试，避免凭据丢失或无法连接。
 
-### 2. 系统钥匙串（OS keychain）迁移 · P1
-- **现状**：SSH 密码 / 私钥 / 口令 / S3 SecretKey / API Key 以**明文存于 SQLite**（`app_secrets` 及 `ssh_profiles` 相关列）。`authenticate` 直接把 `secret_ref` 当明文密码用。
-- **目标**：引入 `keyring` + `zeroize`；密钥存 OS keychain（macOS Keychain / Windows Credential Manager），DB 只存引用键；提供 `migrate_secrets_to_keychain`（迁移前自动加密备份、幂等、迁移后清空明文列）。
-- **注意**：迁移出错会导致**连不上 / 丢凭据**，必须：先备份（复用现有加密导出）、逐类型迁移、保留回退路径、充分测试读写与幂等。加密导出仍可含真实凭据（从钥匙串取），YAML 明文导出继续脱敏 `******`。
+### 2. SSH 共享连接多路复用池
 
-### 3. `last_used_at` 落库 · P3
-- 现在「最近使用」用 localStorage（[`useRecentConnections`](src/ssh/useRecentConnections.ts)）。若要跨机同步，补 `006_last_used.sql` + `start_ssh_session` 时更新。
+- 让终端 PTY、SFTP、端口转发、主机工具与 AI 按主机复用同一条物理 SSH 连接、分别打开 channel。
+- 建立连接注册表、节点路由、连接断开与重连后的资源恢复策略。
+- 同时实现会话树的多跳“钻入（下一跳 / 跳板）”与“另存为连接”。
+- 此项影响核心连接路径，必须以真实主机覆盖并发 channel、断线、重连、转发和 SFTP 回归后再合入。
 
----
+## P2：可靠性与工作区体验
 
-## 二、延后的前端功能
+### 3. 远程 Explorer 真实环境回归
 
-### 4. 通知中心 · P2
-- 已有轻量 Toast（[`ui/ToastHost.tsx`](src/ui/ToastHost.tsx)）。待补：通知历史面板；把仍在用的 `window.alert/confirm`（S3/SSH 删除确认、主机密钥变更告警等）统一为一致的通知/确认组件。销毁性确认仍需阻塞式。
+- 在 macOS、Windows 和至少一台真实 SFTP 服务上验证上传、下载、拖放、批量操作、移动、递归删除及权限编辑。
+- 覆盖权限拒绝、同名冲突、网络中断、符号链接、深层目录、非 UTF-8 文件名与取消操作。
+- 依据验证结果修正各 SFTP 服务实现差异；完整边界见 [`features/remote-explorer-enhancement.md`](features/remote-explorer-enhancement.md)。
 
-### 5. 分屏增强 · P2
-- 现为**扁平**单方向分屏（[`usePaneLayout`](src/terminal/usePaneLayout.ts)，最多 4 个，一行或一列），新面板继承所在主机。
-- 待补：**嵌套分屏**（任意 H/V 树）、分屏布局随标签持久化、把某个已有会话拖入分屏。
+### 4. Monaco 编辑器跨平台验收
 
-### 6. 标签拆出独立窗口 · P3
-- ✅ 已完成：拖拽重排（顺序存于 `useWorkspace.tabOrder`）。
-- 待补：**拆出独立窗口**——需要 Tauri 多窗口 + 会话输出路由到新窗口，工作量较大；另可把标签顺序持久化到 localStorage。
+- 在 macOS、Windows 的开发环境和打包 WebView 中验证 Monaco worker、中文输入法、查找替换、手动语言选择、⌘/Ctrl+S、深浅主题与屏幕阅读器基本操作。
+- 验证多标签切换、保存/放弃关闭、图片与 Markdown 预览不回归。
+- 规格与已实现边界见 [`features/monaco-editor-integration.md`](features/monaco-editor-integration.md)。
 
-### 7. 终端外观增强 · P3
-- ✅ 已完成：背景图片（后端 `read_image_data_url` 读成 data URL，避开 asset 协议作用域）+ **背景不透明度**滑块（20–100%），调低即透出图片或应用背景。
-- 待补：**整窗对桌面透明**（需开启 Tauri 窗口透明 + macOS vibrancy）、按标签或按主机分别设置壁纸。
+### 5. 通知中心与统一确认框
 
-### 8. S3 并入主标签条 · P3
-- 现在 S3 是独立 activity + 自带子标签。可考虑并入统一顶部标签条（`WorkspaceTabStrip` 增加 `s3` tab kind），与终端 / SFTP 一致。
+- 在现有 Toast 之上提供通知历史与未读状态。
+- 将仍在使用的 `window.alert` / `window.confirm` 统一为应用内确认组件；破坏性操作必须保持显式、阻塞式确认。
 
-### 9. i18n · P3
-- 目前仅中文（UI 文案硬编码）。如需多语言，抽取文案 + 语言切换。
+### 6. 分屏增强
 
-### 10. 远程 Explorer 增强 · P2
-- **已完成**：懒加载目录树、文件上传下载、目录打包下载、新建文件 / 文件夹、重命名、右键菜单与确认流程；统一传输进度、流式上传、Explorer 本地拖放上传和串行任务汇总；多选 / 批量下载删除、同主机远端拖拽移动、递归删除预览/取消，以及属性查看和 POSIX 权限编辑。
-- **待验证**：在 macOS、Windows 与真实 SFTP 服务上覆盖权限拒绝、同名冲突、断线、符号链接和深层目录。完整安全边界见 [`features/remote-explorer-enhancement.md`](features/remote-explorer-enhancement.md)。
-- **注意**：删除目录当前只允许空目录；所有文件操作必须继续经 SFTP / TOFU 路径，禁止借终端拼接 `rm`、`mv`、`mkdir` 命令。
+- 跨重启持久化每个标签的分屏布局，并支持将已有会话拖入指定面板。
 
-### 11. Monaco 远程代码编辑器 · P2
-- **现状**：文件列表旁已有轻量文本编辑、图片预览和 Markdown 预览；SFTP 树负责远端路径、上传和下载。
-- **目标**：仅将文本编辑区域升级为 Monaco，提供代码高亮、行号、折叠、查找替换和多光标；继续由既有 SFTP 命令保存远端文件。
-- **边界**：Monaco 不替代目录树、上传下载或后续的创建 / 删除 / 重命名；它也不等同于 VS Code Workbench 或远端 LSP。完整规格见 [`features/monaco-editor-integration.md`](features/monaco-editor-integration.md)。
-- **注意**：采用 Vite ESM worker + 懒加载，必须在 macOS / Windows 打包 WebView 中验证 worker。model 使用稳定的 `dssh-sftp://` URI，关闭标签及断开会话必须 dispose。
+## P3：可选演进
 
----
+### 7. 标签独立窗口
 
-## 三、已知限制
+- 将终端或 SFTP 标签拆出为独立 Tauri 窗口，并处理会话输出、关闭和恢复的跨窗口路由。
 
-### 12. 选中文字的字重差异（GPU 渲染）
-- **现象**：开启 GPU 渲染时，选中的文字字重看起来与未选中略有不同。
-- **根因**：xterm 的 WebGL 渲染器把单元格背景色**烘焙进字形纹理**——未选中的字形在透明背景上光栅化、由着色器合成，选中单元格则生成新的图集条目并按选中色抗锯齿，两条路径的抗锯齿结果不同。DOM 渲染器不使用图集，文字节点不变，因此无此问题。xterm 未提供关闭该行为的开关。
-- **已缓解**：选中色改为与终端底色亮度接近（`#2b2550` / 非活动 `#201c38`），两次光栅化结果更接近，差异大幅降低。
-- **彻底规避**：设置 → 终端 → 渲染，关闭「启用 GPU 渲染加速」（改用 DOM 渲染，像素级一致；代价是大量输出时略慢）。设置页已注明该权衡。
-- 可选后续：给选中态单独提供「强制 DOM 渲染」策略，或跟进 xterm 上游是否提供图集背景分离选项。
+### 8. 终端外观增强
 
----
+- 支持整窗对桌面透明（Tauri 透明窗口与 macOS vibrancy）。
+- 支持按标签或按主机保存独立的终端壁纸与透明度设置。
+- 评估为 GPU 渲染下的选中文字差异提供单独的 DOM 渲染策略。
 
-## 四、维护注意事项（Caveats）
+### 9. S3 并入统一工作区标签条
 
-- **凭据仍明文**：keychain 未落地前，不要存敏感生产凭据；导出的 YAML / 加密文件妥善保管。
-- **主机工具 / AI 每次新开连接**：共享连接池落地前，频繁刷新主机工具会反复建连，属预期。
-- **重连拿到的是新 shell**：普通 SSH 连接断开后远端 shell 即销毁，重连是**新 shell**（滚屏在前端保留）；要保持会话请在远端用 tmux / mosh。
-- **前端本地态**：最近连接、标签顺序、面板宽度、禅模式、主题、活动 / 右面板选择、终端背景与更新代理都存 `localStorage`（每机独立，不入 DB、不随配置导出）。
-- **主机密钥**：信任的指纹存 `known_hosts.json`（应用数据目录）。指纹变更会被拒绝；若为预期变更（如服务器重装），手动删除该文件中对应条目后重连。
-- **`SshClient` 有状态**：任何新的 SSH 连接点都必须构造带 `HostKeyVerifier` 的 `SshClient` / `ForwardHandler`——不要再写「无条件接受主机密钥」的 handler。
-- **分屏按钮不能放进单个面板**：分屏后 `PaneGrid` 会替换 `TerminalWorkspace`，面板内的控件会随之消失。终端级动作放在顶部标签条或命令面板。
-- **更新源只有 GitHub**：`tauri.conf.json` 的 `plugins.updater.endpoints` 与 `commands/app.rs` 的 `UPDATE_ENDPOINTS` 需保持一致（后者用于逐条诊断）。网络受限时用「设置 → 关于 → 更新代理」。
+- 将 S3 从独立 activity 的子标签迁入 `WorkspaceTabStrip`，与终端、SFTP 使用一致的标签生命周期与重排交互。
 
-## 五、验证清单（改动后必跑）
+### 10. 国际化
 
-- 前端：`pnpm exec tsc --noEmit`（+ `pnpm build` 做产物校验）。
-- 后端：`cd src-tauri && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`。
-  **CI 把 clippy 警告当错误**，本地先跑一遍免得红灯。
-- 可视化：`pnpm tauri dev` 人工走查；改 Rust 会自动重编译重启。
-- 改命令 / 事件时同步 Rust serde DTO 与 TS 类型 / 服务（Tauri 载荷 camelCase）。
+- 提取当前硬编码中文文案，提供语言包与语言切换；优先覆盖中文和英文。
+
+### 11. 最近使用记录跨设备持久化
+
+- 若需要跨设备同步“最近连接”，增加 `last_used_at` 数据迁移并在启动会话时更新；当前 localStorage 方案继续作为默认本机体验。

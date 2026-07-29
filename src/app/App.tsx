@@ -12,7 +12,7 @@ import {
   type HostKeyPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
-import type { S3Profile, SshProfile } from "../models";
+import type { S3Profile, SshProfile, TerminalSession } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
 import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
@@ -34,7 +34,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
-import { usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
+import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
@@ -157,6 +157,8 @@ function App() {
     setTerminalBgImage,
     terminalBgOpacity,
     setTerminalBgOpacity,
+    terminalWorkspaceInset,
+    setTerminalWorkspaceInset,
     s3DownloadConcurrency,
     s3UploadConcurrency,
     setS3DownloadConcurrency,
@@ -211,6 +213,71 @@ function App() {
   const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
   const [openRemoteFilePaths, setOpenRemoteFilePaths] = useState<string[]>([]);
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
+  const [terminalNames, setTerminalNames] = useState<Record<string, string>>({});
+  const [paneNames, setPaneNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const activeIds = new Set(sessions.map((session) => session.id));
+    setTerminalNames((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([id]) => activeIds.has(id)));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+    setPaneNames((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([id]) => activeIds.has(id)));
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+  }, [sessions]);
+
+  function defaultTerminalName(session: TerminalSession) {
+    const terminalWindowId = panes.findLayout(session.id)?.tabSessionId ?? session.id;
+    const siblings = sessions.filter((candidate) => {
+      if (candidate.kind !== session.kind || candidate.profileId !== session.profileId) return false;
+      const layout = panes.findLayout(candidate.id);
+      return !layout || layout.tabSessionId === candidate.id;
+    });
+    return `终端 ${Math.max(0, siblings.findIndex((candidate) => candidate.id === terminalWindowId)) + 1}`;
+  }
+
+  function terminalName(session: TerminalSession) {
+    return terminalNames[session.id] ?? defaultTerminalName(session);
+  }
+
+  function defaultPaneName(sessionId: string) {
+    const layout = panes.findLayout(sessionId);
+    const index = layout ? paneSessionIds(layout).indexOf(sessionId) : -1;
+    return `Pane ${Math.max(0, index) + 1}`;
+  }
+
+  function paneName(sessionId: string) {
+    return paneNames[sessionId] ?? defaultPaneName(sessionId);
+  }
+
+  function terminalTabTitle(session: TerminalSession) {
+    const hostName = session.kind === "ssh"
+      ? profiles.find((profile) => profile.id === session.profileId)?.name ?? session.title
+      : "本地";
+    return `${terminalName(session)}（${hostName}）`;
+  }
+
+  function handleRenameTerminal(sessionId: string, name: string) {
+    setTerminalNames((current) => {
+      if (name) {
+        return { ...current, [sessionId]: name };
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  }
+
+  function handleRenamePane(sessionId: string, name: string) {
+    setPaneNames((current) => {
+      if (name) return { ...current, [sessionId]: name };
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  }
 
   // Terminal wallpaper: the chosen file is read once into a data URL and handed
   // to CSS. An unreadable/removed file silently falls back to no background.
@@ -247,6 +314,13 @@ function App() {
       terminalBgOpacity >= 100 ? "var(--terminal-bg)" : `rgba(20, 20, 28, ${terminalBgOpacity / 100})`,
     );
   }, [terminalBgDataUrl, terminalBgOpacity]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--terminal-workspace-inset",
+      `${terminalWorkspaceInset}px`,
+    );
+  }, [terminalWorkspaceInset]);
 
   const isS3 = activeActivity === "s3";
   const isConnections = activeActivity === "connections";
@@ -318,20 +392,13 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [zenMode]);
 
-  // In split mode the active session (command bar / AI / host-tools target) follows
-  // the focused pane.
-  useEffect(() => {
-    if (panes.focusedPaneId) {
-      setActiveSessionId(panes.focusedPaneId);
-    }
-  }, [panes.focusedPaneId, setActiveSessionId]);
-
   // Closing/disconnecting the target session also closes its adjacent tree.
   useEffect(() => {
     setFileTreeSessionId((current) =>
       current && sessions.some((session) => session.id === current) ? current : null,
     );
-  }, [sessions]);
+    panes.pruneSessions(new Set(sessions.map((session) => session.id)));
+  }, [panes.pruneSessions, sessions]);
 
   useEffect(() => {
     setOpenRemoteFilePaths([]);
@@ -471,7 +538,7 @@ function App() {
     if (!activeSessionId) {
       return;
     }
-    const currentId = panes.focusedPaneId ?? activeSessionId;
+    const currentId = activeSessionId;
     // The new pane mirrors the one it was split from: splitting an SSH pane
     // opens another session to the same host, so you get a second shell on the
     // server you're actually working on. Only a local pane spawns a local shell.
@@ -491,7 +558,7 @@ function App() {
   }
 
   function handleClosePane(sessionId: string) {
-    const remaining = (panes.layout?.sessionIds ?? []).filter((id) => id !== sessionId);
+    const remaining = paneSessionIds(panes.findLayout(sessionId)).filter((id) => id !== sessionId);
     void closeSession(sessionId);
     if (fileTreeSessionId === sessionId) {
       setFileTreeSessionId(null);
@@ -504,9 +571,22 @@ function App() {
     }
   }
 
+  function handleCloseTerminalWindow(tabSessionId: string) {
+    const layout = panes.findLayoutByTab(tabSessionId);
+    if (!layout) {
+      void closeSession(tabSessionId);
+      return;
+    }
+    panes.removeLayout(tabSessionId);
+    for (const sessionId of paneSessionIds(layout)) {
+      void closeSession(sessionId);
+    }
+  }
+
   // --- Session-tree node actions -------------------------------------------
   function handleFocusTerminal(sessionId: string) {
     setFileTreeSessionId(null);
+    panes.focusPane(sessionId);
     setActiveSessionId(sessionId);
     focusTerminal();
   }
@@ -541,7 +621,6 @@ function App() {
     if (!session) {
       return;
     }
-    panes.resetPanes();
     setActiveSessionId(session.id);
     setFileTreeSessionId(session.id);
     showTerminalSurface();
@@ -653,15 +732,29 @@ function App() {
 
   const sidebarWidth = isS3 ? s3PanelWidth : sessionsPanelWidth;
   const setSidebarWidth = isS3 ? setS3PanelWidth : setSessionsPanelWidth;
+  const paneTabBySession = new Map<string, string>();
+  for (const layout of panes.layouts) {
+    for (const sessionId of paneSessionIds(layout)) {
+      paneTabBySession.set(sessionId, layout.tabSessionId);
+    }
+  }
+  const activePaneLayout = panes.findLayout(activeSessionId);
+  const activeCanSplit = panes.canSplit(activeSessionId);
 
-  // The unified top strip lists terminal sessions and SFTP tabs together.
+  // Every pane tree has one terminal-window tab. Child panes never appear as
+  // independent tabs, even while another terminal window is active.
   const workspaceTabs: WorkspaceTabItem[] = [
-    ...sessions.map((session) => ({
-      id: session.id,
-      kind: session.kind === "ssh" ? ("ssh" as const) : ("local" as const),
-      title: session.title,
-      active: !isSftpActive && session.id === activeSessionId,
-    })),
+    ...sessions
+      .filter((session) => {
+        const tabSessionId = paneTabBySession.get(session.id);
+        return !tabSessionId || tabSessionId === session.id;
+      })
+      .map((session) => ({
+        id: session.id,
+        kind: session.kind === "ssh" ? ("ssh" as const) : ("local" as const),
+        title: terminalTabTitle(session),
+        active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
+      })),
     ...sftpTabs.map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
@@ -691,12 +784,16 @@ function App() {
       setFileTreeSessionId(null);
     }
     focusTerminal();
-    if (panes.layout?.sessionIds.includes(tab.id)) {
-      panes.focusPane(tab.id);
-    } else {
-      if (panes.layout) {
-        panes.resetPanes();
+    const layout = panes.findLayoutByTab(tab.id);
+    if (layout) {
+      const sessionId = paneSessionIds(layout).includes(layout.focusedPaneId)
+        ? layout.focusedPaneId
+        : paneSessionIds(layout)[0];
+      if (sessionId) {
+        panes.focusPane(sessionId);
+        setActiveSessionId(sessionId);
       }
+    } else {
       setActiveSessionId(tab.id);
     }
   }
@@ -704,8 +801,16 @@ function App() {
   function handleCloseTab(tab: WorkspaceTabItem) {
     if (tab.kind === "sftp") {
       closeSftpTab(tab.id);
-    } else if (panes.layout?.sessionIds.includes(tab.id)) {
-      handleClosePane(tab.id);
+    } else if (panes.findLayoutByTab(tab.id)) {
+      const layout = panes.findLayoutByTab(tab.id)!;
+      const sessionIds = paneSessionIds(layout);
+      if (sessionIds.includes(fileTreeSessionId ?? "")) {
+        setFileTreeSessionId(null);
+      }
+      panes.removeLayout(tab.id);
+      for (const sessionId of sessionIds) {
+        void closeSession(sessionId);
+      }
     } else {
       if (tab.id === fileTreeSessionId) {
         setFileTreeSessionId(null);
@@ -737,6 +842,9 @@ function App() {
       ) : (
         <SessionTree
           sessions={sessions}
+          terminalNames={terminalNames}
+          paneNames={paneNames}
+          paneLayouts={panes.layouts}
           activeSessionId={activeSessionId}
           isSftpActive={isSftpActive}
           profiles={profiles}
@@ -745,7 +853,10 @@ function App() {
           onOpenSftp={handleOpenSftpForProfile}
           onOpenForward={handleOpenForwardForNode}
           onOpenFileList={handleOpenFileListForNode}
-          onCloseSession={closeSession}
+          onCloseSession={handleClosePane}
+          onCloseTerminalWindow={handleCloseTerminalWindow}
+          onRenameTerminal={handleRenameTerminal}
+          onRenamePane={handleRenamePane}
           onDisconnectNode={handleDisconnectNode}
           onConnectProfile={handleConnectProfile}
           onCreateProfile={openCreateProfile}
@@ -882,17 +993,21 @@ function App() {
         }
       />
     );
-  } else if (panes.layout) {
+  } else if (activePaneLayout) {
     mainSurface = (
       <PaneGrid
-        layout={panes.layout}
-        focusedPaneId={panes.focusedPaneId}
+        layout={activePaneLayout}
+        focusedPaneId={activePaneLayout.focusedPaneId}
         sessions={sessions}
+        getPaneLabel={paneName}
         getBacklog={getBacklog}
         subscribeOutput={subscribeOutput}
         onPaneData={(id, data) => void writeToSession(id, data)}
         onPaneResize={(id, size) => void resizeSession(id, size)}
-        onFocusPane={panes.focusPane}
+        onFocusPane={(sessionId) => {
+          panes.focusPane(sessionId);
+          setActiveSessionId(sessionId);
+        }}
         onClosePane={handleClosePane}
         onRatios={panes.setRatios}
         fontSize={fontSize}
@@ -925,7 +1040,7 @@ function App() {
       { id: "act:theme-system", label: "主题：跟随系统", hint: "动作", icon: "system", run: () => setThemeMode("system") },
     ];
     if (activeSession) {
-      if (panes.canSplit) {
+      if (activeCanSplit) {
         items.push({
           id: "act:split-h",
           label: "左右分屏（同一主机）",
@@ -1071,9 +1186,9 @@ function App() {
                 <div className="tab-actions">
                   <button
                     className="tab-action"
-                    disabled={!panes.canSplit}
+                    disabled={!activeCanSplit}
                     onClick={() => void handleSplit("h")}
-                    title={panes.canSplit ? "左右分屏（同一主机）" : "已达分屏上限"}
+                    title={activeCanSplit ? "左右分屏（同一主机）" : "已达分屏上限"}
                     aria-label="左右分屏"
                     type="button"
                   >
@@ -1081,9 +1196,9 @@ function App() {
                   </button>
                   <button
                     className="tab-action"
-                    disabled={!panes.canSplit}
+                    disabled={!activeCanSplit}
                     onClick={() => void handleSplit("v")}
-                    title={panes.canSplit ? "上下分屏（同一主机）" : "已达分屏上限"}
+                    title={activeCanSplit ? "上下分屏（同一主机）" : "已达分屏上限"}
                     aria-label="上下分屏"
                     type="button"
                   >
@@ -1152,6 +1267,8 @@ function App() {
           onTerminalBgImageChange={setTerminalBgImage}
           terminalBgOpacity={terminalBgOpacity}
           onTerminalBgOpacityChange={setTerminalBgOpacity}
+          terminalWorkspaceInset={terminalWorkspaceInset}
+          onTerminalWorkspaceInsetChange={setTerminalWorkspaceInset}
           onThemeChange={setThemeMode}
           rightClick={rightClick}
           s3DownloadConcurrency={s3DownloadConcurrency}

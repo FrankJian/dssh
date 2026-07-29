@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS uses this value for the Dock label. Keep it explicit for both
+       development runs and packaged .app bundles. -->
+  <key>CFBundleDisplayName</key>
+  <string>Duo SSH</string>
+  <key>CFBundleName</key>
+  <string>Duo SSH</string>
+</dict>
+</plist>

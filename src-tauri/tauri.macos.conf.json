@@ -1,9 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "macOS": {
+      "bundleName": "Duo SSH",
+      "infoPlist": "Info.plist"
+    }
+  },
   "app": {
     "windows": [
       {
-        "title": "dssh",
+        "title": "Duo SSH",
         "width": 1100,
         "height": 720,
         "minWidth": 960,

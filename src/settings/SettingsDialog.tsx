@@ -1,5 +1,5 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AiSettingsSection } from "../ai/AiSettingsSection";
 import type { AiConfig } from "../ai/useAiConfig";
 import { AboutSection } from "./AboutSection";
@@ -25,6 +25,8 @@ import {
   S3_TRANSFER_CONCURRENCY_MIN,
   TERMINAL_BG_OPACITY_MAX,
   TERMINAL_BG_OPACITY_MIN,
+  TERMINAL_WORKSPACE_INSET_MAX,
+  TERMINAL_WORKSPACE_INSET_MIN,
   type RightClickAction,
 } from "./settings";
 
@@ -50,6 +52,8 @@ interface SettingsDialogProps {
   onTerminalBgImageChange: (value: string) => void;
   terminalBgOpacity: number;
   onTerminalBgOpacityChange: (value: number) => void;
+  terminalWorkspaceInset: number;
+  onTerminalWorkspaceInsetChange: (value: number) => void;
   s3UploadConcurrency: number;
   onS3UploadConcurrencyChange: (value: number) => void;
   s3DownloadConcurrency: number;
@@ -106,12 +110,14 @@ export function SettingsDialog({
   onRightClickChange,
   onTerminalBgImageChange,
   onTerminalBgOpacityChange,
+  onTerminalWorkspaceInsetChange,
   onThemeChange,
   rightClick,
   s3DownloadConcurrency,
   s3UploadConcurrency,
   terminalBgImage,
   terminalBgOpacity,
+  terminalWorkspaceInset,
   themeMode,
 }: SettingsDialogProps) {
   const [category, setCategory] = useState<SettingsCategory>(initialCategory ?? "appearance");
@@ -123,6 +129,9 @@ export function SettingsDialog({
   const [pendingImportText, setPendingImportText] = useState<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
+  const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingWindow, setIsDraggingWindow] = useState(false);
+  const windowRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -253,6 +262,42 @@ export function SettingsDialog({
     setDialogError(null);
   }
 
+  function beginWindowDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, select, textarea")) {
+      return;
+    }
+    const windowElement = windowRef.current;
+    if (!windowElement) {
+      return;
+    }
+    event.preventDefault();
+    const bounds = windowElement.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startOffset = windowOffset;
+    const margin = 12;
+    setIsDraggingWindow(true);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const deltaX = Math.min(
+        window.innerWidth - margin - bounds.right,
+        Math.max(margin - bounds.left, moveEvent.clientX - startX),
+      );
+      const deltaY = Math.min(
+        window.innerHeight - margin - bounds.bottom,
+        Math.max(margin - bounds.top, moveEvent.clientY - startY),
+      );
+      setWindowOffset({ x: startOffset.x + deltaX, y: startOffset.y + deltaY });
+    };
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      setIsDraggingWindow(false);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+  }
+
   async function handleCopy() {
     try {
       await navigator.clipboard?.writeText(yamlText);
@@ -264,8 +309,13 @@ export function SettingsDialog({
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="settings-window" aria-label="设置">
-        <header className="settings-window__header">
+      <section
+        aria-label="设置"
+        className={`settings-window${isDraggingWindow ? " is-dragging" : ""}`}
+        ref={windowRef}
+        style={{ transform: `translate(${windowOffset.x}px, ${windowOffset.y}px)` }}
+      >
+        <header className="settings-window__header" onPointerDown={beginWindowDrag} title="拖动以移动窗口">
           <h2>设置</h2>
           <button
             aria-label="关闭设置"
@@ -460,6 +510,24 @@ export function SettingsDialog({
                     </span>
                   </div>
                 </div>
+
+                <div className="settings-section__head">
+                  <h3>终端边距</h3>
+                  <p>控制终端工作区右侧和底部的留白，不影响终端内文字与滚动位置。</p>
+                </div>
+                <label className="settings-field">
+                  <span className="settings-field__label">
+                    右侧与底部留白：{terminalWorkspaceInset}px
+                  </span>
+                  <input
+                    className="settings-range"
+                    max={TERMINAL_WORKSPACE_INSET_MAX}
+                    min={TERMINAL_WORKSPACE_INSET_MIN}
+                    onChange={(event) => onTerminalWorkspaceInsetChange(Number(event.currentTarget.value))}
+                    type="range"
+                    value={terminalWorkspaceInset}
+                  />
+                </label>
 
               </section>
             ) : null}

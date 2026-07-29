@@ -205,6 +205,7 @@ export function RemoteFileTree({
       const loadId = ++rootLoadIdRef.current;
       const rawPath = requestedPath?.trim();
       setRootError(null);
+      setActionError(null);
       setDirectories({});
       try {
         const target = rawPath || (await sftpHome(profileId));
@@ -236,6 +237,14 @@ export function RemoteFileTree({
   useEffect(() => {
     void loadRoot();
   }, [loadRoot]);
+
+  useEffect(() => {
+    if (!actionError) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setActionError(null), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [actionError]);
 
   useEffect(() => {
     inlineInputRef.current?.focus();
@@ -763,6 +772,7 @@ export function RemoteFileTree({
     if (event.button !== 0 || isMutating) {
       return;
     }
+    setActionError(null);
     const paths = selectedPaths.has(entry.path) ? [...selectedPaths] : [entry.path];
     if (!selectedPaths.has(entry.path)) {
       setSelectedPaths(new Set(paths));

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { SshProfile, TerminalSession } from "../models";
 import type { SessionStatus } from "../models/terminal";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 import { SectionHeader } from "../ui/SectionHeader";
+import { paneSessionIds, type PaneLayout } from "../terminal/usePaneLayout";
 
 /** A live host in the active-session tree: a group of terminals sharing a target. */
 export interface SessionNode {
@@ -66,6 +67,9 @@ function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): Sessio
 
 interface SessionTreeProps {
   sessions: TerminalSession[];
+  terminalNames: Record<string, string>;
+  paneNames: Record<string, string>;
+  paneLayouts: PaneLayout[];
   activeSessionId: string | null;
   isSftpActive: boolean;
   profiles: SshProfile[];
@@ -75,6 +79,9 @@ interface SessionTreeProps {
   onOpenForward: (node: SessionNode) => void;
   onOpenFileList: (node: SessionNode) => void;
   onCloseSession: (sessionId: string) => void;
+  onCloseTerminalWindow: (sessionId: string) => void;
+  onRenameTerminal: (sessionId: string, name: string) => void;
+  onRenamePane: (sessionId: string, name: string) => void;
   onDisconnectNode: (node: SessionNode) => void;
   onConnectProfile: (profile: SshProfile) => void;
   onCreateProfile: () => void;
@@ -89,6 +96,9 @@ interface SessionTreeProps {
  */
 export function SessionTree({
   sessions,
+  terminalNames,
+  paneNames,
+  paneLayouts,
   activeSessionId,
   isSftpActive,
   profiles,
@@ -98,6 +108,9 @@ export function SessionTree({
   onOpenForward,
   onOpenFileList,
   onCloseSession,
+  onCloseTerminalWindow,
+  onRenameTerminal,
+  onRenamePane,
   onDisconnectNode,
   onConnectProfile,
   onCreateProfile,
@@ -106,6 +119,17 @@ export function SessionTree({
   const nodes = buildNodes(sessions, profiles);
   const favorites = profiles.filter((profile) => profile.favorite);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
+  const [paneRenameValue, setPaneRenameValue] = useState("");
+  const paneLayoutBySession = useMemo(() => {
+    const result = new Map<string, PaneLayout>();
+    for (const layout of paneLayouts) {
+      for (const sessionId of paneSessionIds(layout)) result.set(sessionId, layout);
+    }
+    return result;
+  }, [paneLayouts]);
 
   function toggleNode(key: string) {
     setCollapsedNodes((current) => {
@@ -114,6 +138,26 @@ export function SessionTree({
       else next.add(key);
       return next;
     });
+  }
+
+  function beginRename(session: TerminalSession, index: number) {
+    setRenamingSessionId(session.id);
+    setRenameValue(terminalNames[session.id] ?? `终端 ${index + 1}`);
+  }
+
+  function finishRename(sessionId: string) {
+    onRenameTerminal(sessionId, renameValue.trim());
+    setRenamingSessionId(null);
+  }
+
+  function beginPaneRename(sessionId: string, index: number) {
+    setRenamingPaneId(sessionId);
+    setPaneRenameValue(paneNames[sessionId] ?? `Pane ${index + 1}`);
+  }
+
+  function finishPaneRename(sessionId: string) {
+    onRenamePane(sessionId, paneRenameValue.trim());
+    setRenamingPaneId(null);
   }
 
   return (
@@ -130,6 +174,10 @@ export function SessionTree({
           <div className="session-tree__eyebrow">活动会话</div>
           {nodes.map((node) => {
             const collapsed = collapsedNodes.has(node.key);
+            const terminalWindows = node.sessions.filter((session) => {
+              const layout = paneLayoutBySession.get(session.id);
+              return !layout || layout.tabSessionId === session.id;
+            });
             return (
               <div className="session-node" key={node.key}>
                 <div className="session-node__row">
@@ -149,7 +197,7 @@ export function SessionTree({
                         <span className="session-node__sub">{node.subtitle}</span>
                       ) : null}
                     </span>
-                    <span className="session-node__count">{node.sessions.length}</span>
+                    <span className="session-node__count">{terminalWindows.length}</span>
                   </button>
                 </div>
 
@@ -196,31 +244,143 @@ export function SessionTree({
 
                     <div className="session-child__sep" />
 
-                    {node.sessions.map((session, index) => {
-                      const active = !isSftpActive && session.id === activeSessionId;
+                    {terminalWindows.map((session, index) => {
+                      const layout = paneLayoutBySession.get(session.id);
+                      const paneIds = layout ? paneSessionIds(layout) : [];
+                      const active = !isSftpActive && (session.id === activeSessionId || paneIds.includes(activeSessionId ?? ""));
+                      const terminalName = terminalNames[session.id] ?? `终端 ${index + 1}`;
+                      const isRenaming = renamingSessionId === session.id;
                       return (
-                        <div
-                          className={`session-terminal ${active ? "is-active" : ""}`.trim()}
-                          key={session.id}
-                        >
-                          <button
-                            className="session-terminal__open"
-                            onClick={() => onFocusTerminal(session.id)}
-                            type="button"
-                          >
-                            <Icon name="terminalTool" height="15" width="15" />
-                            <span className="session-terminal__name">终端 {index + 1}</span>
-                            <span className="session-terminal__dot" data-status={session.status} />
-                          </button>
-                          <button
-                            className="session-terminal__close"
-                            aria-label="关闭终端"
-                            onClick={() => onCloseSession(session.id)}
-                            title="关闭"
-                            type="button"
-                          >
-                            <Icon name="close" height="13" width="13" />
-                          </button>
+                        <div className="session-terminal-group" key={session.id}>
+                          <div className={`session-terminal ${active ? "is-active" : ""}`.trim()}>
+                            {isRenaming ? (
+                              <form
+                                className="session-terminal__rename-form"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  finishRename(session.id);
+                                }}
+                              >
+                                <Icon name="terminalTool" height="15" width="15" />
+                                <input
+                                  aria-label="终端名称"
+                                  autoFocus
+                                  className="session-terminal__rename-input"
+                                  onBlur={() => finishRename(session.id)}
+                                  onChange={(event) => setRenameValue(event.currentTarget.value)}
+                                  onFocus={(event) => event.currentTarget.select()}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      setRenamingSessionId(null);
+                                    }
+                                  }}
+                                  value={renameValue}
+                                />
+                              </form>
+                            ) : (
+                              <button
+                                className="session-terminal__open"
+                                onClick={() => onFocusTerminal(layout?.focusedPaneId ?? session.id)}
+                                onDoubleClick={() => beginRename(session, index)}
+                                title="双击重命名"
+                                type="button"
+                              >
+                                <Icon name="terminalTool" height="15" width="15" />
+                                <span className="session-terminal__name">{terminalName}</span>
+                                <span className="session-terminal__dot" data-status={session.status} />
+                              </button>
+                            )}
+                            <button
+                              aria-label="重命名终端"
+                              className="session-terminal__rename"
+                              onClick={() => beginRename(session, index)}
+                              title="重命名"
+                              type="button"
+                            >
+                              <Icon name="edit" height="13" width="13" />
+                            </button>
+                            <button
+                              className="session-terminal__close"
+                              aria-label="关闭终端"
+                              onClick={() => layout ? onCloseTerminalWindow(layout.tabSessionId) : onCloseSession(session.id)}
+                              title="关闭"
+                              type="button"
+                            >
+                              <Icon name="close" height="13" width="13" />
+                            </button>
+                          </div>
+                          {layout ? (
+                            <div className="session-terminal__panes" role="group" aria-label={`${terminalName} 的窗格`}>
+                              {paneIds.map((paneId, paneIndex) => {
+                                const pane = node.sessions.find((item) => item.id === paneId);
+                                if (!pane) return null;
+                                const paneActive = !isSftpActive && paneId === activeSessionId;
+                                const paneName = paneNames[paneId] ?? `Pane ${paneIndex + 1}`;
+                                const isRenamingPane = renamingPaneId === paneId;
+                                return (
+                                  <div className={`session-pane ${paneActive ? "is-active" : ""}`.trim()} key={paneId}>
+                                    {isRenamingPane ? (
+                                      <form
+                                        className="session-pane__rename-form"
+                                        onSubmit={(event) => {
+                                          event.preventDefault();
+                                          finishPaneRename(paneId);
+                                        }}
+                                      >
+                                        <Icon name="terminalTool" height="14" width="14" />
+                                        <input
+                                          aria-label="Pane 名称"
+                                          autoFocus
+                                          className="session-pane__rename-input"
+                                          onBlur={() => finishPaneRename(paneId)}
+                                          onChange={(event) => setPaneRenameValue(event.currentTarget.value)}
+                                          onFocus={(event) => event.currentTarget.select()}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Escape") {
+                                              event.preventDefault();
+                                              setRenamingPaneId(null);
+                                            }
+                                          }}
+                                          value={paneRenameValue}
+                                        />
+                                      </form>
+                                    ) : (
+                                      <button
+                                        className="session-pane__open"
+                                        onClick={() => onFocusTerminal(paneId)}
+                                        onDoubleClick={() => beginPaneRename(paneId, paneIndex)}
+                                        title="双击重命名"
+                                        type="button"
+                                      >
+                                        <Icon name="terminalTool" height="14" width="14" />
+                                        <span>{paneName}</span>
+                                        <span className="session-terminal__dot" data-status={pane.status} />
+                                      </button>
+                                    )}
+                                    <button
+                                      aria-label={`重命名 ${paneName}`}
+                                      className="session-pane__rename"
+                                      onClick={() => beginPaneRename(paneId, paneIndex)}
+                                      title="重命名"
+                                      type="button"
+                                    >
+                                      <Icon name="edit" height="12" width="12" />
+                                    </button>
+                                    <button
+                                      aria-label={`关闭 ${paneName}`}
+                                      className="session-pane__close"
+                                      onClick={() => onCloseSession(paneId)}
+                                      title="关闭 Pane"
+                                      type="button"
+                                    >
+                                      <Icon name="close" height="12" width="12" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -231,7 +391,7 @@ export function SessionTree({
                       type="button"
                     >
                       <Icon name="unplug" height="15" width="15" />
-                      <span>断开</span>
+                      <span>关闭会话</span>
                     </button>
                   </div>
                 )}
