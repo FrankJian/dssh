@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -47,6 +47,7 @@ interface InlineAction {
 
 interface ExplorerContextMenu {
   entry: SftpEntry;
+  maxHeight: number;
   x: number;
   y: number;
 }
@@ -188,6 +189,7 @@ export function RemoteFileTree({
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const treeBodyRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const transferOperationIdRef = useRef<string | null>(null);
   const remoteDragPathsRef = useRef<string[] | null>(null);
   const remoteDropTargetRef = useRef<string | null>(null);
@@ -253,11 +255,31 @@ export function RemoteFileTree({
     window.addEventListener("click", close);
     window.addEventListener("resize", close);
     window.addEventListener("keydown", onKeyDown);
+    treeBodyRef.current?.addEventListener("scroll", close);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", onKeyDown);
+      treeBodyRef.current?.removeEventListener("scroll", close);
     };
+  }, [contextMenu]);
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) {
+      return;
+    }
+    const menu = contextMenuRef.current.getBoundingClientRect();
+    const panel = panelRef.current?.getBoundingClientRect();
+    const margin = 8;
+    const left = panel?.left ?? 0;
+    const top = panel?.top ?? 0;
+    const right = panel?.right ?? window.innerWidth;
+    const bottom = panel?.bottom ?? window.innerHeight;
+    const x = Math.max(left + margin, Math.min(contextMenu.x, right - menu.width - margin));
+    const y = Math.max(top + margin, Math.min(contextMenu.y, bottom - menu.height - margin));
+    if (x !== contextMenu.x || y !== contextMenu.y) {
+      setContextMenu((current) => current ? { ...current, x, y } : null);
+    }
   }, [contextMenu]);
 
   useEffect(() => {
@@ -733,7 +755,8 @@ export function RemoteFileTree({
       setSelectedPaths(new Set([entry.path]));
       setSelectionAnchor(entry.path);
     }
-    setContextMenu({ entry, x: event.clientX, y: event.clientY });
+    const panelHeight = panelRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+    setContextMenu({ entry, maxHeight: Math.max(80, panelHeight - 16), x: event.clientX, y: event.clientY });
   }
 
   function beginPointerDrag(event: React.PointerEvent, entry: SftpEntry) {
@@ -1180,9 +1203,10 @@ export function RemoteFileTree({
       {contextMenu ? (
         <div
           className="context-menu"
+          ref={contextMenuRef}
           onClick={(event) => event.stopPropagation()}
           role="menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{ left: contextMenu.x, maxHeight: `${contextMenu.maxHeight}px`, top: contextMenu.y }}
         >
           {!contextMenu.entry.isDir ? (
             <button
