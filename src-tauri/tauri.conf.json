@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "bundleName": "dssh",
     "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
