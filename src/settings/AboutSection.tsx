@@ -1,10 +1,12 @@
 import { getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useState } from "react";
 import { isMacOS } from "../platform";
 import { invokeCommand } from "../services/tauri";
 import { Button } from "../ui/Button";
+import { Icon } from "../ui/Icon";
 
 interface AppInfo {
   name: string;
@@ -28,6 +30,7 @@ interface UpdateEndpointDiagnostic {
 
 /** Optional proxy for update checks, e.g. http://127.0.0.1:7890 or socks5://…. */
 const UPDATE_PROXY_KEY = "dssh.update.proxy";
+const ISSUE_TRACKER_URL = "https://github.com/FrankJian/dssh/issues";
 
 function detectPlatform(): string {
   if (isMacOS) {
@@ -105,6 +108,12 @@ export function AboutSection() {
     } catch {
       /* clipboard unavailable; ignore */
     }
+  }
+
+  function handleReportIssue() {
+    void openUrl(ISSUE_TRACKER_URL).catch(() => {
+      window.open(ISSUE_TRACKER_URL, "_blank", "noopener,noreferrer");
+    });
   }
 
   async function handleCheckUpdate() {
@@ -186,6 +195,19 @@ export function AboutSection() {
           </div>
         ))}
       </dl>
+
+      <div className="settings-card" aria-label="报告问题">
+        <strong>报告问题</strong>
+        <p className="settings-card__hint">
+          欢迎提交使用问题、功能建议或改进需求，我们会在 GitHub Issue 中跟进。
+        </p>
+        <div className="settings-config__actions">
+          <Button onClick={handleReportIssue} variant="secondary">
+            <Icon name="externalWindow" height="15" width="15" />
+            前往 GitHub Issues
+          </Button>
+        </div>
+      </div>
 
       <div className="settings-config__actions">
         <Button disabled={isWorking} onClick={handleCheckUpdate} variant="primary">

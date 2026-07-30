@@ -1206,7 +1206,6 @@ function MainApp() {
           onRenamePane={handleRenamePane}
           onDisconnectNode={handleDisconnectNode}
           onConnectProfile={handleConnectProfile}
-          onCreateProfile={openCreateProfile}
           onOpenConnections={() => setActiveActivity("connections")}
         />
       );
@@ -1218,6 +1217,7 @@ function MainApp() {
         config={aiConfig}
         currentServer={aiCurrentServer}
         layout="panel"
+        onClose={() => setRightPanel(null)}
         onOpenConfig={() => setIsAiConfigOpen(true)}
       />
     ) : rightPanel === "hosttools" ? (
@@ -1278,7 +1278,6 @@ function MainApp() {
         onEdit={openEditProfile}
         onDelete={handleDeleteProfile}
         onToggleFavorite={handleToggleFavorite}
-        onImportExport={() => openSettings("config")}
       />
     );
   } else if (isS3) {

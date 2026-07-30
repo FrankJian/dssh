@@ -1395,7 +1395,10 @@ button {
 .session-manager__toolbar {
   display: flex;
   min-width: 0;
-  height: 48px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  max-height: var(--toolbar-height);
+  box-sizing: border-box;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
@@ -1477,17 +1480,16 @@ button {
   font-size: 12px;
 }
 
-.session-manager__sort select {
+.session-manager__sort .select-menu,
+.session-manager__group .select-menu {
+  width: 112px;
+}
+
+.session-manager__sort .select-menu__trigger,
+.session-manager__group .select-menu__trigger {
   min-width: 0;
   height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  color: var(--text-base);
   font-size: 12px;
-  cursor: pointer;
-  outline: none;
 }
 
 .session-manager__group {
@@ -1498,25 +1500,6 @@ button {
   gap: 6px;
   color: var(--text-muted);
   font-size: 12px;
-}
-
-.session-manager__group select {
-  min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  color: var(--text-base);
-  outline: none;
-}
-
-.session-manager__group select:focus {
-  border-color: var(--accent);
-}
-
-.session-manager__sort select:focus {
-  border-color: var(--accent);
 }
 
 .session-manager__views {
@@ -1561,9 +1544,8 @@ button {
   flex: 1 1 auto;
 }
 
-/* The connection manager shares width with the optional right dock. Keep the
-   compact controls in one line by shrinking text fields first, then hiding
-   labels / low-frequency import actions at narrow widths. */
+/* The connection manager shares width with the optional right dock. Keep
+   compact controls in one line by shrinking text fields first. */
 @container (max-width: 920px) {
   .session-manager__toolbar {
     gap: 6px;
@@ -1586,8 +1568,8 @@ button {
     display: none;
   }
 
-  .session-manager__sort select,
-  .session-manager__group select {
+  .session-manager__sort .select-menu,
+  .session-manager__group .select-menu {
     width: 96px;
   }
 }
@@ -1602,7 +1584,7 @@ button {
     flex-basis: 72px;
   }
 
-  .session-manager__group select {
+  .session-manager__group .select-menu {
     width: 76px;
   }
 }
@@ -3738,6 +3720,51 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   color: var(--text-base);
 }
 
+.remote-file-editor__markdown pre:has(.mermaid-diagram) {
+  display: block;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.mermaid-diagram {
+  display: grid;
+  min-height: 96px;
+  place-items: center;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--bg-panel-muted);
+}
+
+.mermaid-diagram > svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-diagram--loading {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mermaid-diagram--error {
+  justify-items: start;
+  gap: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mermaid-diagram--error > span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .remote-file-editor__markdown blockquote {
   padding: 2px 12px;
   border-left: 3px solid var(--border-strong);
@@ -4403,6 +4430,14 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 
 .select-menu__trigger:hover {
   background: var(--bg-hover);
+}
+
+.select-menu__trigger:disabled,
+.select-menu__trigger:disabled:hover {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.6;
 }
 
 .select-menu__trigger:focus-visible,
@@ -6263,19 +6298,16 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   gap: 6px;
 }
 
-.ai-chat__model-select {
+.ai-chat__provider-select {
   width: min(220px, 100%);
   min-width: 0;
   max-width: 220px;
   flex: 1 1 108px;
+}
+
+.ai-chat__provider-select .select-menu__trigger {
   height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  color: var(--text-base);
   font-size: 12px;
-  cursor: pointer;
 }
 
 .ai-chat__body {
@@ -6973,7 +7005,7 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   max-width: none;
 }
 
-.ai-chat--panel .ai-chat__model-select {
+.ai-chat--panel .ai-chat__provider-select {
   max-width: 150px;
 }
 
@@ -8267,6 +8299,7 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 }
 
 .detached-titlebar {
+  position: relative;
   flex: 0 0 var(--titlebar-height);
 }
 
@@ -8395,13 +8428,22 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 }
 
 .detached-workspace__content {
+  display: flex;
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detached-workspace__content > .terminal-workspace,
+.detached-workspace__content > .pane-workspace {
   min-height: 0;
   flex: 1;
 }
 
 .detached-workspace__content--sftp {
-  display: flex;
+  flex-direction: row;
 }
 
 .detached-workspace__content--sftp .sftp-browser {

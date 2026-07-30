@@ -9,6 +9,7 @@ export interface SelectMenuOption {
 
 interface SelectMenuProps {
   ariaLabel: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
   options: readonly SelectMenuOption[];
   value: string;
@@ -19,7 +20,7 @@ interface SelectMenuProps {
  * be styled consistently across macOS and Windows, so this control owns both
  * the trigger and the option list while retaining basic keyboard navigation.
  */
-export function SelectMenu({ ariaLabel, onChange, options, value }: SelectMenuProps) {
+export function SelectMenu({ ariaLabel, disabled = false, onChange, options, value }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listId = useId();
@@ -100,6 +101,7 @@ export function SelectMenu({ ariaLabel, onChange, options, value }: SelectMenuPr
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         className={`select-menu__trigger${open ? " is-open" : ""}`}
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
         type="button"

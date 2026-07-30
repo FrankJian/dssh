@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "productName": "dssh",
   "bundle": {
     "macOS": {
-      "bundleName": "dssh",
+      "bundleName": "Duo SSH",
       "infoPlist": "Info.plist"
     }
   },

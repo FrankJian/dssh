@@ -7,6 +7,7 @@ import {
   languageLabel,
   MonacoRemoteEditor,
 } from "./MonacoRemoteEditor";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { sftpReadImage, sftpReadText, sftpWriteText } from "../services/sftpService";
 import type { EditorOptions } from "../settings/settings";
 import { Icon } from "../ui/Icon";
@@ -561,6 +562,13 @@ export function RemoteFileEditor({
                     remarkPlugins={[remarkGfm]}
                     components={{
                       a: ({ node: _node, ...props }) => <a {...props} rel="noreferrer" target="_blank" />,
+                      code: ({ className, children, node: _node, ...props }) => {
+                        const language = /language-([^\s]+)/.exec(className ?? "")?.[1]?.toLowerCase();
+                        if (language === "mermaid") {
+                          return <MermaidDiagram chart={String(children).replace(/\n$/, "")} />;
+                        }
+                        return <code className={className} {...props}>{children}</code>;
+                      },
                     }}
                   >
                     {activeDocument.content}

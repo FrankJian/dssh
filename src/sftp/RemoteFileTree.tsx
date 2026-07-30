@@ -1122,33 +1122,33 @@ export function RemoteFileTree({
           <Icon name="close" height="15" width="15" />
         </button>
       </div>
-      {selectedPaths.size > 0 ? (
-        <div className="remote-file-tree__selection-toolbar">
-          <span>已选 {selectedPaths.size} 项</span>
-          <button
-            disabled={isTransferring || isMutating}
-            onClick={() => {
-              const entries = selectedEntries();
-              void (async () => {
-                for (const entry of entries) {
-                  await downloadEntry(entry);
-                }
-              })();
-            }}
-            type="button"
-          >
-            下载
-          </button>
-          <button
-            disabled={isMutating}
-            onClick={() => void requestDelete(selectedEntries())}
-            type="button"
-          >
-            删除
-          </button>
-          <button onClick={() => setSelectedPaths(new Set())} type="button">取消选择</button>
-        </div>
-      ) : null}
+      <div className="remote-file-tree__selection-toolbar">
+        <span>已选 {selectedPaths.size} 项</span>
+        <button
+          disabled={selectedPaths.size === 0 || isTransferring || isMutating}
+          onClick={() => {
+            const entries = selectedEntries();
+            void (async () => {
+              for (const entry of entries) {
+                await downloadEntry(entry);
+              }
+            })();
+          }}
+          type="button"
+        >
+          下载
+        </button>
+        <button
+          disabled={selectedPaths.size === 0 || isMutating}
+          onClick={() => void requestDelete(selectedEntries())}
+          type="button"
+        >
+          删除
+        </button>
+        <button disabled={selectedPaths.size === 0} onClick={() => setSelectedPaths(new Set())} type="button">
+          取消选择
+        </button>
+      </div>
       <div className="remote-file-tree__body" ref={treeBodyRef} role="tree">
         {transferError ? <p className="remote-file-tree__empty remote-file-tree__error">{transferError}</p> : null}
         {actionError ? <p className="remote-file-tree__empty remote-file-tree__error">{actionError}</p> : null}

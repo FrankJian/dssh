@@ -13,19 +13,7 @@
 - 引入 `keyring`、`zeroize` 与仅保存引用键的 `SecretStore`；实现可幂等、可回退的迁移流程。
 - 迁移前创建加密备份；完整覆盖认证、导入导出与失败恢复测试，避免凭据丢失或无法连接。
 
-### 2. SSH 共享连接多路复用池
 
-> 已完成：终端 PTY、SFTP subsystem、主机工具与 AI 单发 exec 会按有效连接配置复用一条 SSH
-> transport，并持有各自独立的 channel。连接键包含 profile 版本、认证方式与代理路由，凭据不参与键或诊断。
-
-- [ ] **2.8 回归与灰度验收**：全部端口转发类型现已接入共享 transport：本地 / 动态转发使用独立
-  `direct-tcpip` channel，远程转发按远端监听地址与端口路由服务器回调。仍需在 macOS、Windows 与至少一台
-  真实 SSH/SFTP 主机验证多终端 + SFTP + 主机工具 + AI 并发、低 `MaxSessions`、大文件传输、网络抖动、主机
-  密钥首次信任 / 变更、认证失败、关闭顺序和所有转发类型。运行 `cargo fmt`、`cargo clippy --all-targets --
-  -D warnings`、`cargo test`、前端 `pnpm exec tsc --noEmit` 与 `pnpm build`；通过后才将连接池标记为跨平台验收完成。
-
-> 多跳“钻入（下一跳 / 跳板）”与“另存为连接”会改变 profile / 路由模型，应作为连接池完成后的独立任务，
-> 不与本次 transport 重构捆绑交付。
 
 ### 3. SSH 多跳钻入与跳板连接
 
@@ -61,11 +49,7 @@
 
 ## P2：可靠性与工作区体验
 
-### 4. 远程工作区跨平台验收
 
-- 在 macOS、Windows 的开发环境与打包 WebView 中验证远程 Explorer、Monaco、SFTP 双栏和标签独立窗口的组合行为。
-- 覆盖 Monaco worker / 中文输入法 / 主题切换、远程文件拖放与批量操作、独立终端输入 / 关闭 / 合并、独立 SFTP 上传下载，以及窗口关闭顺序。
-- 使用至少一台真实 SSH/SFTP 主机覆盖权限拒绝、符号链接、非 UTF-8 文件名、网络中断和大文件传输；规格边界见 [`features/monaco-editor-integration.md`](features/monaco-editor-integration.md) 与 [`features/remote-explorer-enhancement.md`](features/remote-explorer-enhancement.md)。
 
 ### 5. 通知中心与统一确认框
 
@@ -74,20 +58,8 @@
 
 ## P3：可选演进
 
-### 6. 终端外观增强
 
-- 支持整窗对桌面透明（Tauri 透明窗口与 macOS vibrancy）。
-- 支持按标签或按主机保存独立的终端壁纸与透明度设置。
-- 评估为 GPU 渲染下的选中文字差异提供单独的 DOM 渲染策略。
 
 ### 7. S3 并入统一工作区标签条
 
 - 将 S3 从独立 activity 的子标签迁入 `WorkspaceTabStrip`，与终端、SFTP 使用一致的标签生命周期与重排交互。
-
-### 8. 国际化
-
-- 提取当前硬编码中文文案，提供语言包与语言切换；优先覆盖中文和英文。
-
-### 9. 最近使用记录跨设备持久化
-
-- 若需要跨设备同步“最近连接”，增加 `last_used_at` 数据迁移并在启动会话时更新；当前 localStorage 方案继续作为默认本机体验。

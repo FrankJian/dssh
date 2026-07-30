@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import type { SshProfile, TerminalSession } from "../models";
 import type { SessionStatus } from "../models/terminal";
 import { Icon } from "../ui/Icon";
-import { IconButton } from "../ui/IconButton";
 import { SectionHeader } from "../ui/SectionHeader";
 import { paneSessionIds, type PaneLayout } from "../terminal/usePaneLayout";
 
@@ -84,7 +83,6 @@ interface SessionTreeProps {
   onRenamePane: (sessionId: string, name: string) => void;
   onDisconnectNode: (node: SessionNode) => void;
   onConnectProfile: (profile: SshProfile) => void;
-  onCreateProfile: () => void;
   onOpenConnections: () => void;
 }
 
@@ -113,7 +111,6 @@ export function SessionTree({
   onRenamePane,
   onDisconnectNode,
   onConnectProfile,
-  onCreateProfile,
   onOpenConnections,
 }: SessionTreeProps) {
   const nodes = buildNodes(sessions, profiles);
@@ -164,9 +161,6 @@ export function SessionTree({
     <aside className="sidebar session-sidebar" aria-label="会话">
       <div className="sidebar__top">
         <SectionHeader title="会话" />
-        <IconButton className="icon-button--primary" label="新建 SSH 配置" onClick={onCreateProfile}>
-          <Icon name="plus" />
-        </IconButton>
       </div>
 
       {nodes.length > 0 ? (

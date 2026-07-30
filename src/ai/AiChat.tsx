@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AiServerContext } from "../models/ai";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { SelectMenu } from "../ui/SelectMenu";
 import { listAiModels } from "../services/aiService";
 import { Markdown } from "./Markdown";
 import type { ChatItem } from "./useAiChat";
@@ -12,6 +13,8 @@ interface AiChatProps {
   config: AiConfig;
   chat: AiChatController;
   onOpenConfig: () => void;
+  /** Closes the containing right dock when the assistant is shown as a panel. */
+  onClose?: () => void;
   /** "panel" = compact sidebar; "window" = wide standalone window. */
   layout?: "panel" | "window";
   /** When true the assistant is locked until an SSH session is open. */
@@ -23,6 +26,7 @@ export function AiChat({
   config,
   chat,
   onOpenConfig,
+  onClose,
   layout = "window",
   locked = false,
   currentServer = null,
@@ -152,19 +156,15 @@ export function AiChat({
         </div>
         <div className="ai-chat__header-actions">
           {providers.length > 0 ? (
-            <select
-              aria-label="选择模型后端"
-              className="ai-chat__model-select"
-              disabled={isRunning}
-              onChange={(event) => config.setActiveProviderId(event.currentTarget.value)}
-              value={config.activeProviderId ?? ""}
-            >
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.label}
-                </option>
-              ))}
-            </select>
+            <div className="ai-chat__provider-select">
+              <SelectMenu
+                ariaLabel="选择模型后端"
+                disabled={isRunning}
+                onChange={config.setActiveProviderId}
+                options={providers.map((provider) => ({ label: provider.label, value: provider.id }))}
+                value={config.activeProviderId ?? ""}
+              />
+            </div>
           ) : null}
           <IconButton
             label="清空全部聊天记录"
@@ -176,6 +176,11 @@ export function AiChat({
           <IconButton label="模型配置" onClick={onOpenConfig}>
             <Icon name="settings" height="16" width="16" />
           </IconButton>
+          {onClose ? (
+            <IconButton label="关闭 AI 助手" onClick={onClose}>
+              <Icon name="close" height="16" width="16" />
+            </IconButton>
+          ) : null}
         </div>
       </header>
 

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
-import { IconButton } from "../ui/IconButton";
+import { SelectMenu } from "../ui/SelectMenu";
 import { ConnectionCard } from "./ConnectionCard";
 import {
   CONNECTION_TYPE_OPTIONS,
@@ -63,7 +63,6 @@ interface SessionManagerProps {
   onEdit: (profile: SshProfile) => void;
   onDelete: (profileId: string) => void;
   onToggleFavorite: (profileId: string) => void;
-  onImportExport: () => void;
 }
 
 export function SessionManager({
@@ -77,7 +76,6 @@ export function SessionManager({
   onEdit,
   onDelete,
   onToggleFavorite,
-  onImportExport,
 }: SessionManagerProps) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewMode>(() => loadView());
@@ -187,16 +185,15 @@ export function SessionManager({
           <Icon name="plus" height="15" width="15" />
           <span>新建连接</span>
         </button>
-        <label className="session-manager__sort">
+        <div className="session-manager__sort">
           <span>排序</span>
-          <select value={sort} onChange={(event) => changeSort(event.target.value as SortKey)}>
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <SelectMenu
+            ariaLabel="连接排序"
+            onChange={(value) => changeSort(value as SortKey)}
+            options={SORT_OPTIONS.map((option) => ({ label: option.label, value: option.id }))}
+            value={sort}
+          />
+        </div>
         <div className="session-manager__views" role="tablist" aria-label="视图">
           {VIEW_OPTIONS.map((option) => (
             <button
@@ -213,27 +210,16 @@ export function SessionManager({
             </button>
           ))}
         </div>
-        <label className="session-manager__group">
+        <div className="session-manager__group">
           <span>类型</span>
-          <select
-            aria-label="连接类型筛选"
-            onChange={(event) => changeTypeFilter(event.currentTarget.value as ConnectionTypeFilter)}
+          <SelectMenu
+            ariaLabel="连接类型筛选"
+            onChange={(value) => changeTypeFilter(value as ConnectionTypeFilter)}
+            options={TYPE_FILTER_OPTIONS.map((option) => ({ label: option.label, value: option.id }))}
             value={typeFilter}
-          >
-            {TYPE_FILTER_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
         <div className="session-manager__toolbar-spacer" />
-        <IconButton label="导入配置" onClick={onImportExport}>
-          <Icon name="download" />
-        </IconButton>
-        <IconButton label="导出配置" onClick={onImportExport}>
-          <Icon name="upload" />
-        </IconButton>
       </div>
 
       <div className="session-manager__content">
