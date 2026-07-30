@@ -3,6 +3,11 @@ import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 import { ConnectionCard } from "./ConnectionCard";
+import {
+  CONNECTION_TYPE_OPTIONS,
+  connectionTypeForProfile,
+  type ConnectionType,
+} from "./connectionTypes";
 import { groupProfiles } from "./profileGroups";
 
 type ViewMode = "grid" | "list" | "tree";
@@ -10,7 +15,10 @@ type SortKey = "recent" | "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
 const SORT_KEY = "dssh.sessionManager.sort";
+const TYPE_FILTER_KEY = "dssh.sessionManager.typeFilter";
 const RECENT_SECTION_MAX = 6;
+
+type ConnectionTypeFilter = "all" | ConnectionType;
 
 const VIEW_OPTIONS: { id: ViewMode; label: string; icon: "connections" | "monitor" | "sessions" }[] = [
   { id: "grid", label: "网格", icon: "monitor" },
@@ -24,6 +32,11 @@ const SORT_OPTIONS: { id: SortKey; label: string }[] = [
   { id: "host", label: "主机" },
 ];
 
+const TYPE_FILTER_OPTIONS: { id: ConnectionTypeFilter; label: string }[] = [
+  { id: "all", label: "全部类型" },
+  ...CONNECTION_TYPE_OPTIONS.map((option) => ({ id: option.id, label: option.label })),
+];
+
 function loadView(): ViewMode {
   const raw = localStorage.getItem(VIEW_KEY);
   return raw === "grid" || raw === "list" || raw === "tree" ? raw : "grid";
@@ -32,6 +45,11 @@ function loadView(): ViewMode {
 function loadSort(): SortKey {
   const raw = localStorage.getItem(SORT_KEY);
   return raw === "recent" || raw === "name" || raw === "host" ? raw : "recent";
+}
+
+function loadTypeFilter(): ConnectionTypeFilter {
+  const raw = localStorage.getItem(TYPE_FILTER_KEY);
+  return raw === "ssh" || raw === "telnet" || raw === "sftp" ? raw : "all";
 }
 
 interface SessionManagerProps {
@@ -64,6 +82,7 @@ export function SessionManager({
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewMode>(() => loadView());
   const [sort, setSort] = useState<SortKey>(() => loadSort());
+  const [typeFilter, setTypeFilter] = useState<ConnectionTypeFilter>(() => loadTypeFilter());
 
   function changeView(next: ViewMode) {
     setView(next);
@@ -75,19 +94,27 @@ export function SessionManager({
     localStorage.setItem(SORT_KEY, next);
   }
 
+  function changeTypeFilter(next: ConnectionTypeFilter) {
+    setTypeFilter(next);
+    localStorage.setItem(TYPE_FILTER_KEY, next);
+  }
+
   const normalizedQuery = query.trim().toLowerCase();
   const isSearching = normalizedQuery.length > 0;
 
   const filtered = useMemo(() => {
-    if (!isSearching) {
-      return profiles;
-    }
     return profiles.filter((profile) => {
+      if (typeFilter !== "all" && connectionTypeForProfile(profile) !== typeFilter) {
+        return false;
+      }
+      if (!isSearching) {
+        return true;
+      }
       const haystack =
         `${profile.name} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.description ?? ""}`.toLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [profiles, normalizedQuery, isSearching]);
+  }, [profiles, normalizedQuery, isSearching, typeFilter]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -112,11 +139,16 @@ export function SessionManager({
     }
     return recentIds
       .map((id) => profiles.find((profile) => profile.id === id))
-      .filter((profile): profile is SshProfile => Boolean(profile))
+      .filter((profile): profile is SshProfile => {
+        if (!profile) {
+          return false;
+        }
+        return typeFilter === "all" || connectionTypeForProfile(profile) === typeFilter;
+      })
       .slice(0, RECENT_SECTION_MAX);
-  }, [recentIds, profiles, isSearching]);
+  }, [recentIds, profiles, isSearching, typeFilter]);
 
-  const groups = useMemo(() => groupProfiles(sorted), [sorted]);
+  const tagGroups = useMemo(() => groupProfiles(sorted), [sorted]);
 
   const cardVariant = view === "list" ? "list" : "grid";
 
@@ -181,6 +213,20 @@ export function SessionManager({
             </button>
           ))}
         </div>
+        <label className="session-manager__group">
+          <span>类型</span>
+          <select
+            aria-label="连接类型筛选"
+            onChange={(event) => changeTypeFilter(event.currentTarget.value as ConnectionTypeFilter)}
+            value={typeFilter}
+          >
+            {TYPE_FILTER_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="session-manager__toolbar-spacer" />
         <IconButton label="导入配置" onClick={onImportExport}>
           <Icon name="download" />
@@ -210,8 +256,8 @@ export function SessionManager({
             ) : null}
 
             {view === "tree" ? (
-              groups.length > 0 ? (
-                groups.map((group) => (
+              tagGroups.length > 0 ? (
+                tagGroups.map((group) => (
                   <section className="session-manager__section" key={group.key}>
                     <div className="session-manager__section-head">
                       {group.label}

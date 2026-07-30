@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AiChat } from "../ai/AiChat";
 import { AiConfigModal } from "../ai/AiConfigModal";
 import { useAiChat } from "../ai/useAiChat";
@@ -8,6 +9,7 @@ import { readImageDataUrl } from "../services/configService";
 import {
   onHostKeyChanged,
   onHostKeyPrompt,
+  onSshTransportStatus,
   respondHostKeyPrompt,
   type HostKeyPromptEvent,
 } from "../services/sshSessionService";
@@ -46,8 +48,17 @@ import { AppLayout } from "./AppLayout";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
 import { isCommandPaletteShortcut } from "./shortcuts";
 import { useWorkspace } from "./useWorkspace";
+import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
+import { DetachedWorkspaceWindow } from "./DetachedWorkspace";
 import { WorkspaceTabStrip, type WorkspaceTabItem } from "./WorkspaceTabStrip";
 import type { ProfileDraft, ProfileEditorMode } from "../ssh/profileTypes";
+import type { DetachedWorkspace } from "../models";
+import {
+  getDetachedWorkspace,
+  onDetachedWorkspaceClosed,
+  openDetachedSftpWorkspace,
+  openDetachedTerminalWorkspace,
+} from "../services/workspaceService";
 
 interface EditorState {
   mode: ProfileEditorMode;
@@ -83,7 +94,7 @@ function loadRightPanel(): RightPanelId | null {
   return raw === "assistant" || raw === "hosttools" ? raw : null;
 }
 
-function App() {
+function MainApp() {
   const [activeActivity, setActiveActivity] = useState<ActivityId>("sessions");
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
@@ -102,6 +113,7 @@ function App() {
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
+  const reconnectingProfiles = useRef(new Set<string>());
   const [zenMode, setZenMode] = useState<boolean>(
     () => localStorage.getItem("dssh.zenMode") === "true",
   );
@@ -208,6 +220,7 @@ function App() {
   } = useWorkspace();
   const { recentIds, recordUse } = useRecentConnections();
   const panes = usePaneLayout();
+  const { workspaces: detachedWorkspaces, addWorkspace } = useDetachedWorkspaces();
   // A compact remote tree can be docked alongside one SSH terminal. It is a
   // workspace presentation state, not a separate tab or an additional shell.
   const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
@@ -215,6 +228,51 @@ function App() {
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
   const [terminalNames, setTerminalNames] = useState<Record<string, string>>({});
   const [paneNames, setPaneNames] = useState<Record<string, string>>({});
+
+  const detachedTerminalSessionIds = new Set(
+    detachedWorkspaces.flatMap((workspace) => workspace.terminal?.sessionIds ?? []),
+  );
+  const detachedSftpProfileIds = new Set(
+    detachedWorkspaces.flatMap((workspace) => workspace.sftp?.profileId ?? []),
+  );
+  const visibleSessions = sessions.filter((session) => !detachedTerminalSessionIds.has(session.id));
+
+  // A detached renderer may have changed the focused pane or divider ratios.
+  // Keep the hidden main-window tree in sync so it is restored exactly as the
+  // user left it when the child window closes.
+  useEffect(() => {
+    const closedPromise = onDetachedWorkspaceClosed((workspace) => {
+      if (workspace.terminal) {
+        const restoredSessionId =
+          workspace.terminal.layout?.focusedPaneId
+          ?? workspace.terminal.sessionIds[0]
+          ?? workspace.terminal.tabSessionId;
+        if (workspace.terminal.layout) {
+          panes.replaceLayout(workspace.terminal.layout);
+          panes.focusPane(restoredSessionId);
+        }
+        setActiveSessionId(restoredSessionId);
+        focusTerminal();
+        setActiveActivity("sessions");
+      }
+      if (workspace.sftp) {
+        openSftpTab(workspace.sftp.profileId, workspace.title.replace(/^SFTP · /, ""));
+        setActiveActivity("sessions");
+      }
+    });
+    return () => { void closedPromise.then((unlisten) => unlisten()); };
+  }, [
+    focusTerminal,
+    openSftpTab,
+    panes.focusPane,
+    panes.replaceLayout,
+    setActiveSessionId,
+  ]);
+
+  useEffect(() => {
+    if (!activeSessionId || !detachedTerminalSessionIds.has(activeSessionId)) return;
+    setActiveSessionId(visibleSessions[0]?.id ?? null);
+  }, [activeSessionId, detachedWorkspaces, setActiveSessionId, visibleSessions]);
 
   useEffect(() => {
     const activeIds = new Set(sessions.map((session) => session.id));
@@ -423,6 +481,31 @@ function App() {
     return () => {
       void promptPromise.then((unlisten) => unlisten());
       void changedPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // Surface transport-level recovery once per profile without spamming a toast
+  // for every backoff attempt. Individual terminal panes continue to show their
+  // own detailed reconnect status.
+  useEffect(() => {
+    const statusPromise = onSshTransportStatus((event) => {
+      if (event.state === "reconnecting") {
+        if (!reconnectingProfiles.current.has(event.profileId)) {
+          reconnectingProfiles.current.add(event.profileId);
+          toast(event.message ?? "共享 SSH 连接已断开，正在恢复…", "warning");
+        }
+        return;
+      }
+      if (event.state === "ready" && reconnectingProfiles.current.delete(event.profileId)) {
+        toast("共享 SSH 连接已恢复。", "success");
+        return;
+      }
+      if (event.state === "failed" && reconnectingProfiles.current.delete(event.profileId)) {
+        toast(event.message ?? "共享 SSH 连接恢复失败，请重试操作。", "error");
+      }
+    });
+    return () => {
+      void statusPromise.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -745,6 +828,7 @@ function App() {
   // independent tabs, even while another terminal window is active.
   const workspaceTabs: WorkspaceTabItem[] = [
     ...sessions
+      .filter((session) => !detachedTerminalSessionIds.has(session.id))
       .filter((session) => {
         const tabSessionId = paneTabBySession.get(session.id);
         return !tabSessionId || tabSessionId === session.id;
@@ -755,7 +839,7 @@ function App() {
         title: terminalTabTitle(session),
         active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
       })),
-    ...sftpTabs.map((tab) => ({
+    ...sftpTabs.filter((tab) => !detachedSftpProfileIds.has(tab.profileId)).map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
       title: `SFTP · ${tab.title}`,
@@ -819,6 +903,46 @@ function App() {
     }
   }
 
+  async function handleDetachTab(tab: WorkspaceTabItem) {
+    try {
+      const parentLabel = getCurrentWindow().label;
+      if (tab.kind === "sftp") {
+        const sftpTab = sftpTabs.find((item) => item.id === tab.id);
+        if (!sftpTab) return;
+        const workspace = await openDetachedSftpWorkspace({
+          parentLabel,
+          profileId: sftpTab.profileId,
+          title: tab.title,
+        });
+        addWorkspace(workspace);
+        closeSftpTab(tab.id);
+        return;
+      }
+
+      const layout = panes.findLayoutByTab(tab.id);
+      const sessionIds = layout ? paneSessionIds(layout) : [tab.id];
+      const workspace = await openDetachedTerminalWorkspace({
+        parentLabel,
+        title: tab.title,
+        terminal: {
+          tabSessionId: tab.id,
+          sessionIds,
+          layout,
+        },
+      });
+      addWorkspace(workspace);
+      if (sessionIds.includes(fileTreeSessionId ?? "")) {
+        setFileTreeSessionId(null);
+      }
+      if (sessionIds.includes(activeSessionId ?? "")) {
+        const next = visibleSessions.find((session) => !sessionIds.includes(session.id));
+        setActiveSessionId(next?.id ?? null);
+      }
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "无法移至新窗口。", "error");
+    }
+  }
+
   const sidebarContent =
     sidebarCollapsed || isConnections ? null : isS3 ? (
         <S3ProfileSidebar
@@ -841,7 +965,7 @@ function App() {
         />
       ) : (
         <SessionTree
-          sessions={sessions}
+          sessions={visibleSessions}
           terminalNames={terminalNames}
           paneNames={paneNames}
           paneLayouts={panes.layouts}
@@ -923,7 +1047,7 @@ function App() {
       <SessionManager
         profiles={profiles}
         recentIds={recentIds}
-        activeSessionCount={sessions.length}
+        activeSessionCount={visibleSessions.length}
         isLoading={isLoading}
         errorMessage={errorMessage}
         onConnect={handleConnectProfile}
@@ -1165,6 +1289,7 @@ function App() {
                 tabs={workspaceTabs}
                 onSelect={handleSelectTab}
                 onClose={handleCloseTab}
+                onDetach={(tab) => void handleDetachTab(tab)}
                 onReorder={(draggedId, targetId) =>
                   reorderTab(
                     draggedId,
@@ -1303,6 +1428,36 @@ function App() {
       <ToastHost />
     </div>
   );
+}
+
+function App() {
+  const [isCheckingWindow, setIsCheckingWindow] = useState(true);
+  const [detachedWorkspace, setDetachedWorkspace] = useState<DetachedWorkspace | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const label = getCurrentWindow().label;
+    if (!label.startsWith("detached-")) {
+      setIsCheckingWindow(false);
+      return;
+    }
+    void getDetachedWorkspace(label)
+      .then((workspace) => {
+        if (mounted) setDetachedWorkspace(workspace);
+      })
+      .catch(() => {
+        if (mounted) setDetachedWorkspace(null);
+      })
+      .finally(() => {
+        if (mounted) setIsCheckingWindow(false);
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  if (isCheckingWindow) {
+    return <div className="detached-unavailable">正在打开独立窗口…</div>;
+  }
+  return detachedWorkspace ? <DetachedWorkspaceWindow workspace={detachedWorkspace} /> : <MainApp />;
 }
 
 export default App;

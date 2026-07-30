@@ -1485,6 +1485,29 @@ button {
   outline: none;
 }
 
+.session-manager__group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.session-manager__group select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  outline: none;
+}
+
+.session-manager__group select:focus {
+  border-color: var(--accent);
+}
+
 .session-manager__sort select:focus {
   border-color: var(--accent);
 }
@@ -1695,6 +1718,17 @@ button {
   gap: 4px;
 }
 
+.conn-card__type {
+  width: fit-content;
+  padding: 1px 7px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 .conn-card__tag {
   padding: 1px 7px;
   border-radius: var(--radius-pill);
@@ -1746,6 +1780,10 @@ button {
   flex: 0 0 auto;
   overflow: hidden;
   flex-wrap: nowrap;
+}
+
+.conn-card[data-variant="list"] .conn-card__type {
+  flex: 0 0 auto;
 }
 
 .conn-card[data-variant="list"] .conn-card__actions {
@@ -4042,6 +4080,15 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   color: var(--text-base);
 }
 
+.tab__detach {
+  opacity: 0;
+}
+
+.tab:hover .tab__detach,
+.tab:focus-within .tab__detach {
+  opacity: 1;
+}
+
 .tab-add {
   display: inline-flex;
   width: 28px;
@@ -4149,6 +4196,10 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   box-shadow: var(--shadow-soft);
 }
 
+.profile-editor--connection {
+  width: min(900px, 100%);
+}
+
 .profile-editor__topbar {
   position: sticky;
   top: 0;
@@ -4213,6 +4264,48 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   padding: 18px;
 }
 
+.profile-form--connection {
+  grid-template-columns: minmax(190px, 0.34fr) minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 0;
+  align-items: start;
+}
+
+.profile-form--connection > .form-errors,
+.profile-form--connection > .profile-editor__footer {
+  grid-column: 1 / -1;
+}
+
+.profile-form--connection > .form-errors {
+  margin-bottom: 16px;
+}
+
+.profile-form__sidebar {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-right: 24px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.profile-form__main {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.profile-form__connection-grid {
+  display: grid;
+  grid-template-columns: minmax(128px, 0.42fr) minmax(0, 1fr) 92px;
+  gap: 12px;
+}
+
+.profile-form__proxy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 12px;
+}
+
 .form-grid {
   display: grid;
   gap: 12px;
@@ -4226,9 +4319,122 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   font-size: 12px;
 }
 
-.field input,
-.field textarea,
-.field select {
+.profile-form__hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.select-menu {
+  position: relative;
+  width: 100%;
+}
+
+.select-menu__trigger {
+  display: flex;
+  width: 100%;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  padding: 0 9px 0 10px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.select-menu__trigger:hover {
+  background: var(--bg-hover);
+}
+
+.select-menu__trigger:focus-visible,
+.select-menu__trigger.is-open {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.select-menu__trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu__trigger .icon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+
+.select-menu__trigger.is-open .icon {
+  transform: rotate(180deg);
+}
+
+.select-menu__options {
+  position: absolute;
+  top: calc(100% + 3px);
+  right: 0;
+  left: 0;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: max-content;
+  max-height: 248px;
+  margin: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-soft);
+  list-style: none;
+}
+
+.select-menu__option {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--text-base);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.select-menu__option:hover,
+.select-menu__option:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.select-menu__option.is-selected {
+  color: var(--accent-strong);
+}
+
+.select-menu__option .icon {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.select-menu__option:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.field > input,
+.field > textarea,
+.field > select {
   width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: 2px;
@@ -4239,11 +4445,11 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   transition: border-color 0.12s ease;
 }
 
-.field input {
+.field > input {
   height: 34px;
 }
 
-.field select {
+.field > select {
   height: 34px;
   appearance: none;
   padding-right: 32px;
@@ -4258,13 +4464,13 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   background-size: 5px 5px;
 }
 
-.field textarea {
+.field > textarea {
   resize: vertical;
 }
 
-.field input:focus,
-.field textarea:focus,
-.field select:focus {
+.field > input:focus,
+.field > textarea:focus,
+.field > select:focus {
   border-color: var(--accent);
 }
 
@@ -4477,6 +4683,10 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   background: var(--bg-modal-footer);
 }
 
+.profile-form--connection .profile-editor__footer {
+  margin-top: 22px;
+}
+
 .profile-editor__footer .button {
   border-radius: 2px;
 }
@@ -4607,6 +4817,18 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-form--connection {
+    grid-template-columns: 1fr;
+    row-gap: 16px;
+  }
+
+  .profile-form__sidebar {
+    padding-right: 0;
+    padding-bottom: 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .terminal-empty {
@@ -7933,6 +8155,148 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 .tab-action:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* A detached workspace intentionally keeps the same compact IDE chrome while
+   omitting the main app's activity rail and sidebars. */
+.detached-workspace {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.detached-titlebar {
+  flex: 0 0 var(--titlebar-height);
+}
+
+.detached-titlebar__title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0 180px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detached-titlebar__return {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 25px;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.detached-titlebar__return:hover {
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.detached-workspace__tabbar {
+  display: flex;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+}
+
+.detached-workspace__tab {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(480px, calc(100vw - 120px));
+  height: 100%;
+  align-items: center;
+  border-top: 2px solid var(--accent);
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+}
+
+.detached-workspace__tab-title {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.detached-workspace__tab-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detached-workspace__tab-close {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 5px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.detached-workspace__tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.detached-workspace__tab-spacer {
+  flex: 1;
+}
+
+.detached-workspace__content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.detached-workspace__content--sftp {
+  display: flex;
+}
+
+.detached-workspace__content--sftp .sftp-browser {
+  flex: 1;
+}
+
+.detached-unavailable {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  background: var(--bg-base);
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 /* Update proxy field in the About panel. */

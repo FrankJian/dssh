@@ -15,6 +15,8 @@ interface WorkspaceTabStripProps {
   tabs: WorkspaceTabItem[];
   onSelect: (tab: WorkspaceTabItem) => void;
   onClose: (tab: WorkspaceTabItem) => void;
+  /** Move the whole terminal window (including its panes) or SFTP tab to a native window. */
+  onDetach?: (tab: WorkspaceTabItem) => void;
   /** Drop `draggedId` at `targetId`'s position (tab reordering). */
   onReorder?: (draggedId: string, targetId: string) => void;
 }
@@ -66,6 +68,7 @@ export function WorkspaceTabStrip({
   tabs,
   onSelect,
   onClose,
+  onDetach,
   onReorder,
 }: WorkspaceTabStripProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -150,6 +153,28 @@ export function WorkspaceTabStrip({
           >
             <Icon name="close" height="13" width="13" />
           </span>
+          {onDetach ? (
+            <span
+              aria-label="移至新窗口"
+              className="tab__action tab__detach"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDetach(tab);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDetach(tab);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              title="移至新窗口"
+            >
+              <Icon name="externalWindow" height="13" width="13" />
+            </span>
+          ) : null}
         </div>
       ))}
     </div>

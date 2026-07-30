@@ -18,5 +18,5 @@ pub async fn host_tools_snapshot(
         .profiles
         .get_profile(&profile_id)?
         .ok_or_else(|| AppError::new("profile_not_found", "找不到该连接的配置。"))?;
-    hosttools::snapshot(profile, tool, state.host_keys.clone()).await
+    hosttools::snapshot(profile, tool, &state.ssh_pool).await
 }

@@ -14,6 +14,7 @@ pub mod storage;
 pub mod terminal;
 pub mod theme;
 pub mod utils;
+pub mod workspace;
 
 use tauri::Manager;
 
@@ -79,6 +80,7 @@ pub fn run() {
             commands::config::write_text_file,
             commands::config::read_image_data_url,
             commands::sessions::list_ssh_sessions,
+            commands::sessions::read_ssh_session_output,
             commands::sessions::start_local_session,
             commands::sessions::start_ssh_session,
             commands::sessions::write_ssh_session,
@@ -86,6 +88,12 @@ pub fn run() {
             commands::sessions::close_ssh_session,
             commands::sessions::cancel_reconnect,
             commands::sessions::respond_host_key_prompt,
+            commands::workspace::list_detached_workspaces,
+            commands::workspace::get_detached_workspace,
+            commands::workspace::open_detached_terminal_workspace,
+            commands::workspace::open_detached_sftp_workspace,
+            commands::workspace::update_detached_terminal_workspace,
+            commands::workspace::discard_detached_workspace,
             commands::sftp::sftp_home,
             commands::sftp::sftp_list,
             commands::sftp::sftp_local_home,

@@ -76,4 +76,4 @@ RemoteFileTree ── sftp_list / 上传下载 / 文件操作 ── Rust SftpMa
 
 ## 8. 决策记录
 
-采用“Monaco 仅替换编辑器”的方案。Monaco 是浏览器代码编辑器，不是 VS Code Explorer 或完整 Workbench；保留 dssh 已有 SFTP 功能可避免把远端文件权限、TOFU、传输进度和错误处理迁移到不合适的 UI 库中。
+采用“Monaco 仅替换编辑器”的方案。Monaco 是浏览器代码编辑器，不是 VS Code Explorer 或完整 Workbench；保留 Duo SSH 已有 SFTP 功能可避免把远端文件权限、TOFU、传输进度和错误处理迁移到不合适的 UI 库中。

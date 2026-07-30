@@ -5,10 +5,8 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
-use russh::{Channel, client};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,81 +20,41 @@ use crate::{
         forwarding::{ForwardKind, PortForward, StartPortForwardRequest},
         ssh_profile::SshProfile,
     },
-    ssh::HostKeyVerifier,
-    ssh::session_manager::{authenticate, ssh_error},
+    ssh::{ChannelOwner, ConnectionLease, SshConnectionPool},
 };
-
-/// A russh client handler dedicated to a single tunnel connection.
-///
-/// For remote (`-R`) forwards the server initiates channels back to us, so the
-/// handler keeps the local target it should relay those connections to. Local
-/// and dynamic forwards drive channels from our side, so `remote_target` stays
-/// `None`.
-#[derive(Clone)]
-pub struct ForwardHandler {
-    remote_target: Option<(String, u16)>,
-    verifier: Arc<HostKeyVerifier>,
-    host: String,
-    port: u16,
-}
-
-impl client::Handler for ForwardHandler {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        let fingerprint = server_public_key
-            .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
-            .to_string();
-        Ok(self
-            .verifier
-            .verify(&self.host, self.port, &fingerprint)
-            .await)
-    }
-
-    async fn server_channel_open_forwarded_tcpip(
-        &mut self,
-        channel: Channel<client::Msg>,
-        _connected_address: &str,
-        _connected_port: u32,
-        _originator_address: &str,
-        _originator_port: u32,
-        // russh 0.62 added this handle parameter to the trait method.
-        _handle: russh::ChannelOpenHandleInner<client::Msg>,
-        _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        if let Some((host, port)) = self.remote_target.clone() {
-            tokio::spawn(async move {
-                let _ = pipe_channel_to_local(channel, host, port).await;
-            });
-        }
-        Ok(())
-    }
-}
 
 struct ForwardEntry {
     info: PortForward,
-    // Keeping the handle alive keeps the underlying SSH tunnel connection open;
-    // dropping it disconnects and tears down every forwarded channel.
-    _handle: Arc<client::Handle<ForwardHandler>>,
-    // Accept loop for local/dynamic forwards. Remote forwards rely purely on the
-    // connection handler, so they have no listener task.
+    // A forward keeps one shared transport lease alive. It never owns the
+    // transport itself, so stopping one forward cannot drop sibling channels.
+    _transport: ForwardTransport,
+    // Accept loop for local/dynamic forwards. Remote forwards use the pooled
+    // client handler's callback route and therefore need no listener task.
     task: Option<JoinHandle<()>>,
+}
+
+enum ForwardTransport {
+    Pooled {
+        _lease: Arc<ConnectionLease>,
+    },
+    Remote {
+        lease: Arc<ConnectionLease>,
+        bind_host: String,
+        port: u32,
+    },
 }
 
 #[derive(Clone)]
 pub struct ForwardManager {
     forwards: Arc<Mutex<HashMap<String, ForwardEntry>>>,
-    host_keys: Arc<HostKeyVerifier>,
+    pool: SshConnectionPool,
 }
 
 impl ForwardManager {
-    pub fn new(host_keys: Arc<HostKeyVerifier>) -> Self {
+    pub fn new(pool: SshConnectionPool) -> Self {
         Self {
             forwards: Arc::new(Mutex::new(HashMap::new())),
-            host_keys,
+            pool,
         }
     }
 
@@ -107,7 +65,7 @@ impl ForwardManager {
     ) -> AppResult<PortForward> {
         let id = create_forward_id();
 
-        let info = PortForward {
+        let mut info = PortForward {
             id: id.clone(),
             session_id: request.session_id.clone(),
             kind: request.kind,
@@ -118,38 +76,60 @@ impl ForwardManager {
             description: request.description.clone(),
         };
 
-        let (handle, task) = match request.kind {
+        let (transport, task) = match request.kind {
             ForwardKind::Local => {
                 let listener = bind_listener(&request.local_host, request.local_port).await?;
-                let handle =
-                    Arc::new(open_connection(profile, None, self.host_keys.clone()).await?);
-                let task_handle = handle.clone();
+                let lease = Arc::new(
+                    self.pool
+                        .acquire(profile.clone(), ChannelOwner::Forward)
+                        .await?,
+                );
+                let task_lease = lease.clone();
                 let remote_host = request.remote_host.clone();
                 let remote_port = request.remote_port;
                 let task = tokio::spawn(async move {
-                    run_local_listener(task_handle, listener, remote_host, remote_port).await;
+                    run_local_listener(task_lease, listener, remote_host, remote_port).await;
                 });
-                (handle, Some(task))
+                (ForwardTransport::Pooled { _lease: lease }, Some(task))
             }
             ForwardKind::Dynamic => {
                 let listener = bind_listener(&request.local_host, request.local_port).await?;
-                let handle =
-                    Arc::new(open_connection(profile, None, self.host_keys.clone()).await?);
-                let task_handle = handle.clone();
+                let lease = Arc::new(
+                    self.pool
+                        .acquire(profile.clone(), ChannelOwner::Forward)
+                        .await?,
+                );
+                let task_lease = lease.clone();
                 let task = tokio::spawn(async move {
-                    run_socks_listener(task_handle, listener).await;
+                    run_socks_listener(task_lease, listener).await;
                 });
-                (handle, Some(task))
+                (ForwardTransport::Pooled { _lease: lease }, Some(task))
             }
             ForwardKind::Remote => {
-                let target = Some((request.local_host.clone(), request.local_port));
-                let handle =
-                    Arc::new(open_connection(profile, target, self.host_keys.clone()).await?);
-                handle
-                    .tcpip_forward(request.remote_host.clone(), request.remote_port as u32)
-                    .await
-                    .map_err(ssh_error)?;
-                (handle, None)
+                let lease = Arc::new(
+                    self.pool
+                        .acquire(profile.clone(), ChannelOwner::Forward)
+                        .await?,
+                );
+                let assigned_port = lease
+                    .start_remote_forward(
+                        request.remote_host.clone(),
+                        request.remote_port as u32,
+                        request.local_host.clone(),
+                        request.local_port,
+                    )
+                    .await?;
+                info.remote_port = u16::try_from(assigned_port).map_err(|_| {
+                    AppError::new("port_forward_error", "远程服务器分配的端口无效。")
+                })?;
+                (
+                    ForwardTransport::Remote {
+                        lease,
+                        bind_host: request.remote_host.clone(),
+                        port: assigned_port,
+                    },
+                    None,
+                )
             }
         };
 
@@ -157,7 +137,7 @@ impl ForwardManager {
             id,
             ForwardEntry {
                 info: info.clone(),
-                _handle: handle,
+                _transport: transport,
                 task,
             },
         );
@@ -166,26 +146,25 @@ impl ForwardManager {
     }
 
     pub async fn stop(&self, forward_id: &str) {
-        if let Some(entry) = self.forwards.lock().await.remove(forward_id)
-            && let Some(task) = entry.task
-        {
-            task.abort();
+        if let Some(entry) = self.forwards.lock().await.remove(forward_id) {
+            stop_entry(entry).await;
         }
     }
 
     pub async fn stop_session(&self, session_id: &str) {
         let mut forwards = self.forwards.lock().await;
-        let ids: Vec<String> = forwards
+        let ids = forwards
             .iter()
             .filter(|(_, entry)| entry.info.session_id == session_id)
             .map(|(id, _)| id.clone())
-            .collect();
-        for id in ids {
-            if let Some(entry) = forwards.remove(&id)
-                && let Some(task) = entry.task
-            {
-                task.abort();
-            }
+            .collect::<Vec<_>>();
+        let entries = ids
+            .into_iter()
+            .filter_map(|id| forwards.remove(&id))
+            .collect::<Vec<_>>();
+        drop(forwards);
+        for entry in entries {
+            stop_entry(entry).await;
         }
     }
 
@@ -200,26 +179,21 @@ impl ForwardManager {
     }
 }
 
-async fn open_connection(
-    profile: &SshProfile,
-    remote_target: Option<(String, u16)>,
-    verifier: Arc<HostKeyVerifier>,
-) -> AppResult<client::Handle<ForwardHandler>> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(24 * 60 * 60)),
-        ..<_>::default()
-    });
-    let handler = ForwardHandler {
-        remote_target,
-        verifier,
-        host: profile.host.clone(),
-        port: profile.port,
-    };
-    let mut handle = client::connect(config, (profile.host.as_str(), profile.port), handler)
-        .await
-        .map_err(ssh_error)?;
-    authenticate(&mut handle, profile).await?;
-    Ok(handle)
+async fn stop_entry(entry: ForwardEntry) {
+    let ForwardEntry {
+        _transport, task, ..
+    } = entry;
+    if let ForwardTransport::Remote {
+        lease,
+        bind_host,
+        port,
+    } = _transport
+    {
+        let _ = lease.stop_remote_forward(bind_host, port).await;
+    }
+    if let Some(task) = task {
+        task.abort();
+    }
 }
 
 async fn bind_listener(host: &str, port: u16) -> AppResult<TcpListener> {
@@ -234,7 +208,7 @@ async fn bind_listener(host: &str, port: u16) -> AppResult<TcpListener> {
 /// Accept local connections and tunnel each one to `host:port` on the remote
 /// side through a `direct-tcpip` channel.
 async fn run_local_listener(
-    handle: Arc<client::Handle<ForwardHandler>>,
+    lease: Arc<ConnectionLease>,
     listener: TcpListener,
     host: String,
     port: u16,
@@ -244,11 +218,11 @@ async fn run_local_listener(
             Ok(value) => value,
             Err(_) => break,
         };
-        let handle = handle.clone();
+        let lease = lease.clone();
         let host = host.clone();
         tokio::spawn(async move {
-            let channel = match handle
-                .channel_open_direct_tcpip(
+            let (channel, _channel_lease) = match lease
+                .open_direct_tcpip_channel(
                     host,
                     port as u32,
                     peer.ip().to_string(),
@@ -265,35 +239,23 @@ async fn run_local_listener(
     }
 }
 
-/// Relay a server-initiated (remote forward) channel to a local target.
-async fn pipe_channel_to_local(
-    channel: Channel<client::Msg>,
-    host: String,
-    port: u16,
-) -> std::io::Result<()> {
-    let mut outbound = TcpStream::connect((host.as_str(), port)).await?;
-    let mut stream = channel.into_stream();
-    tokio::io::copy_bidirectional(&mut stream, &mut outbound).await?;
-    Ok(())
-}
-
 /// Minimal SOCKS5 (no-auth, CONNECT) proxy that tunnels each request through a
 /// `direct-tcpip` channel on the SSH connection.
-async fn run_socks_listener(handle: Arc<client::Handle<ForwardHandler>>, listener: TcpListener) {
+async fn run_socks_listener(lease: Arc<ConnectionLease>, listener: TcpListener) {
     loop {
         let (inbound, _peer) = match listener.accept().await {
             Ok(value) => value,
             Err(_) => break,
         };
-        let handle = handle.clone();
+        let lease = lease.clone();
         tokio::spawn(async move {
-            let _ = handle_socks_connection(handle, inbound).await;
+            let _ = handle_socks_connection(lease, inbound).await;
         });
     }
 }
 
 async fn handle_socks_connection(
-    handle: Arc<client::Handle<ForwardHandler>>,
+    lease: Arc<ConnectionLease>,
     mut inbound: TcpStream,
 ) -> std::io::Result<()> {
     let mut greeting = [0_u8; 2];
@@ -347,8 +309,8 @@ async fn handle_socks_connection(
     inbound.read_exact(&mut port_bytes).await?;
     let port = u16::from_be_bytes(port_bytes);
 
-    let channel = match handle
-        .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0)
+    let (channel, _channel_lease) = match lease
+        .open_direct_tcpip_channel(host, port as u32, "127.0.0.1".to_string(), 0)
         .await
     {
         Ok(channel) => channel,

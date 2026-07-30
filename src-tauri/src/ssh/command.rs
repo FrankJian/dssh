@@ -1,13 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use russh::{ChannelMsg, Disconnect, client};
+use russh::ChannelMsg;
 use serde::Serialize;
 
 use crate::{
     error::AppResult,
     models::ssh_profile::SshProfile,
-    ssh::host_keys::HostKeyVerifier,
-    ssh::session_manager::{SshClient, authenticate, ssh_error},
+    ssh::{ChannelOwner, SshConnectionPool, transport_recovering_error},
 };
 
 /// Result of running a single command over SSH (non-interactive exec channel).
@@ -20,36 +19,26 @@ pub struct CommandOutput {
     pub timed_out: bool,
 }
 
-/// Open a fresh SSH connection, run a single command on an exec channel, and
-/// collect its stdout/stderr and exit status. This is used by the AI agent to
-/// perform one-shot server operations without attaching an interactive shell.
+/// Run one command on an independent exec channel over a shared SSH transport.
+/// The lease and channel permit last only for this command, so a command error
+/// or timeout cannot disconnect other channels on the same transport.
 pub async fn run_ssh_command(
     profile: SshProfile,
     command: String,
     timeout_secs: u64,
-    verifier: Arc<HostKeyVerifier>,
+    pool: &SshConnectionPool,
 ) -> AppResult<CommandOutput> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(60 * 60)),
-        ..<_>::default()
-    });
-    let address = (profile.host.as_str(), profile.port);
-    let client = SshClient::new(verifier, profile.host.clone(), profile.port);
-    let mut handle = client::connect(config, address, client)
-        .await
-        .map_err(ssh_error)?;
-
-    authenticate(&mut handle, &profile).await?;
-
-    let mut channel = handle.channel_open_session().await.map_err(ssh_error)?;
-    channel
-        .exec(true, command.as_bytes())
-        .await
-        .map_err(ssh_error)?;
+    let transport = pool.acquire(profile, ChannelOwner::Exec).await?;
+    let (mut channel, _channel_lease) = transport.open_session_channel().await?;
+    if channel.exec(true, command.as_bytes()).await.is_err() {
+        transport.invalidate().await;
+        return Err(transport_recovering_error());
+    }
 
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
     let mut exit_code: Option<u32> = None;
+    let mut channel_closed = false;
 
     let read_loop = async {
         loop {
@@ -59,7 +48,10 @@ pub async fn run_ssh_command(
                 Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = Some(exit_status),
                 // The server sends EOF *before* the exit-status request, so keep
                 // reading after EOF; only stop once the channel actually closes.
-                Some(ChannelMsg::Close) | None => break,
+                Some(ChannelMsg::Close) | None => {
+                    channel_closed = true;
+                    break;
+                }
                 _ => {}
             }
         }
@@ -68,10 +60,13 @@ pub async fn run_ssh_command(
     let timed_out = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), read_loop)
         .await
         .is_err();
-
-    let _ = handle
-        .disconnect(Disconnect::ByApplication, "", "English")
-        .await;
+    if timed_out {
+        let _ = channel.close().await;
+    }
+    if !timed_out && channel_closed && exit_code.is_none() {
+        transport.invalidate().await;
+        return Err(transport_recovering_error());
+    }
 
     Ok(CommandOutput {
         stdout: String::from_utf8_lossy(&stdout).to_string(),

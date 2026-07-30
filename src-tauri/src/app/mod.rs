@@ -8,8 +8,9 @@ use crate::{
     forwarding::ForwardManager,
     s3::S3Manager,
     sftp::SftpManager,
-    ssh::{HostKeyVerifier, SessionManager},
+    ssh::{HostKeyVerifier, SessionManager, SshConnectionDiagnostics, SshConnectionPool},
     storage::{ProfileRepository, StorageConfig},
+    workspace::DetachedWorkspaceManager,
 };
 
 #[derive(Clone)]
@@ -21,6 +22,9 @@ pub struct AppState {
     pub forwards: ForwardManager,
     pub ai: AiManager,
     pub host_keys: Arc<HostKeyVerifier>,
+    pub ssh_diagnostics: Arc<SshConnectionDiagnostics>,
+    pub ssh_pool: SshConnectionPool,
+    pub detached_workspaces: DetachedWorkspaceManager,
 }
 
 impl AppState {
@@ -37,18 +41,28 @@ impl AppState {
             &app_data_dir,
             app_handle.clone(),
         ));
+        let ssh_diagnostics = Arc::new(SshConnectionDiagnostics::default());
+        let ssh_pool = SshConnectionPool::new(
+            host_keys.clone(),
+            ssh_diagnostics.clone(),
+            app_handle.clone(),
+        );
+        ssh_pool.start_idle_reaper();
 
         Ok(Self {
             profiles: ProfileRepository::initialize(
                 app_data_dir,
                 storage_config.database_file_name,
             )?,
-            sessions: SessionManager::new(host_keys.clone()),
-            sftp: SftpManager::new(host_keys.clone()),
+            sessions: SessionManager::new(ssh_pool.clone()),
+            sftp: SftpManager::new(ssh_pool.clone()),
             s3: S3Manager::default(),
-            forwards: ForwardManager::new(host_keys.clone()),
+            forwards: ForwardManager::new(ssh_pool.clone()),
             ai: AiManager::default(),
             host_keys,
+            ssh_diagnostics,
+            ssh_pool,
+            detached_workspaces: DetachedWorkspaceManager::default(),
         })
     }
 }

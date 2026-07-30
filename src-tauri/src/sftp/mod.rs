@@ -2,11 +2,10 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Component, Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use russh::{ChannelMsg, client};
+use russh::ChannelMsg;
 use russh_sftp::{
     client::SftpSession,
     protocol::{FileAttributes, OpenFlags},
@@ -22,8 +21,10 @@ use tokio::{
 use crate::{
     error::{AppError, AppResult},
     models::ssh_profile::SshProfile,
-    ssh::HostKeyVerifier,
-    ssh::session_manager::{SshClient, authenticate, ssh_error},
+    ssh::session_manager::ssh_error,
+    ssh::{
+        ChannelLease, ChannelOwner, ConnectionLease, SshConnectionPool, transport_recovering_error,
+    },
 };
 
 pub const SFTP_TRANSFER_PROGRESS_EVENT: &str = "sftp://transfer-progress";
@@ -125,9 +126,11 @@ pub struct SftpDeleteResult {
 }
 
 struct SftpConn {
-    // Keeping the client handle alive keeps the underlying SSH connection (and
-    // therefore the SFTP channel stream) open.
-    _handle: client::Handle<SshClient>,
+    // Keeping both leases alive keeps the shared transport and its SFTP
+    // subsystem channel open for the cached session.
+    transport: ConnectionLease,
+    _sftp_channel: ChannelLease,
+    profile_version: String,
     sftp: SftpSession,
 }
 
@@ -135,24 +138,26 @@ struct SftpConn {
 pub struct SftpManager {
     conns: Arc<Mutex<HashMap<String, Arc<SftpConn>>>>,
     cancelled_operations: Arc<Mutex<HashSet<String>>>,
-    host_keys: Arc<HostKeyVerifier>,
+    pool: SshConnectionPool,
 }
 
 impl SftpManager {
-    pub fn new(host_keys: Arc<HostKeyVerifier>) -> Self {
+    pub fn new(pool: SshConnectionPool) -> Self {
         Self {
             conns: Arc::new(Mutex::new(HashMap::new())),
             cancelled_operations: Arc::new(Mutex::new(HashSet::new())),
-            host_keys,
+            pool,
         }
     }
 
     async fn connection(&self, profile: &SshProfile) -> AppResult<Arc<SftpConn>> {
-        if let Some(conn) = self.conns.lock().await.get(&profile.id) {
+        if let Some(conn) = self.conns.lock().await.get(&profile.id)
+            && conn.profile_version == profile.updated_at
+        {
             return Ok(conn.clone());
         }
 
-        let conn = Arc::new(open_connection(profile, self.host_keys.clone()).await?);
+        let conn = Arc::new(open_connection(profile, &self.pool).await?);
         self.conns
             .lock()
             .await
@@ -330,7 +335,7 @@ impl SftpManager {
             operation_id,
             &profile.id,
             remote_path,
-            &conn._handle,
+            &conn.transport,
             &command,
             local_path,
         )
@@ -1051,21 +1056,15 @@ impl SftpManager {
     }
 }
 
-async fn open_connection(
-    profile: &SshProfile,
-    verifier: Arc<HostKeyVerifier>,
-) -> AppResult<SftpConn> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(24 * 60 * 60)),
-        ..<_>::default()
-    });
-    let client = SshClient::new(verifier, profile.host.clone(), profile.port);
-    let mut handle = client::connect(config, (profile.host.as_str(), profile.port), client)
-        .await
-        .map_err(ssh_error)?;
-    authenticate(&mut handle, profile).await?;
-
-    let channel = handle.channel_open_session().await.map_err(ssh_error)?;
+async fn open_connection(profile: &SshProfile, pool: &SshConnectionPool) -> AppResult<SftpConn> {
+    let transport = pool.acquire(profile.clone(), ChannelOwner::Sftp).await?;
+    let (channel, sftp_channel) = match transport.open_session_channel().await {
+        Ok(channel) => channel,
+        Err(error) if error.code == "ssh_transport_unavailable" => {
+            return Err(transport_recovering_error());
+        }
+        Err(error) => return Err(error),
+    };
     channel
         .request_subsystem(true, "sftp")
         .await
@@ -1075,7 +1074,9 @@ async fn open_connection(
         .map_err(sftp_error)?;
 
     Ok(SftpConn {
-        _handle: handle,
+        transport,
+        _sftp_channel: sftp_channel,
+        profile_version: profile.updated_at.clone(),
         sftp,
     })
 }
@@ -1086,12 +1087,15 @@ async fn stream_exec_to_file(
     operation_id: &str,
     profile_id: &str,
     remote_path: &str,
-    handle: &client::Handle<SshClient>,
+    transport: &ConnectionLease,
     command: &str,
     local_path: &str,
 ) -> AppResult<()> {
-    let mut channel = handle.channel_open_session().await.map_err(ssh_error)?;
-    channel.exec(true, command).await.map_err(ssh_error)?;
+    let (mut channel, _channel_lease) = transport.open_session_channel().await?;
+    if channel.exec(true, command).await.is_err() {
+        transport.invalidate().await;
+        return Err(transport_recovering_error());
+    }
 
     let write_error =
         |error: std::io::Error| AppError::new("sftp_download_error", error.to_string());

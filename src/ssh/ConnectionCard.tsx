@@ -1,6 +1,7 @@
 import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { connectionTypeLabel, connectionTypeForProfile } from "./connectionTypes";
 
 interface ConnectionCardProps {
   profile: SshProfile;
@@ -54,6 +55,8 @@ export function ConnectionCard({
           ))}
         </div>
       ) : null}
+
+      <span className="conn-card__type">{connectionTypeLabel(connectionTypeForProfile(profile))}</span>
 
       <div className="conn-card__actions">
         <button className="conn-card__connect" onClick={onConnect} type="button">

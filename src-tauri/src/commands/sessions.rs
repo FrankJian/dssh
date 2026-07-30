@@ -14,6 +14,17 @@ pub fn list_ssh_sessions(state: State<'_, AppState>) -> AppResult<Vec<TerminalSe
     state.sessions.list_sessions()
 }
 
+/// Reads retained scrollback for a live terminal. This is used when a tab is
+/// attached to a different Tauri webview so its new renderer can paint the
+/// existing terminal contents before receiving future output events.
+#[tauri::command]
+pub fn read_ssh_session_output(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<String> {
+    state.sessions.read_session_output(&session_id)
+}
+
 #[tauri::command]
 pub fn start_ssh_session(
     app_handle: AppHandle,

@@ -148,6 +148,21 @@ export function usePaneLayout() {
     setLayouts((current) => current.filter((layout) => layout.tabSessionId !== tabSessionId));
   }, []);
 
+  /** Replace one terminal window's tree after it returns from a detached window. */
+  const replaceLayout = useCallback((layout: PaneLayout | null) => {
+    if (!layout) return;
+    setLayouts((current) => {
+      const incomingSessionIds = new Set(paneSessionIds(layout));
+      const index = current.findIndex((item) =>
+        item.tabSessionId === layout.tabSessionId || paneSessionIds(item).some((id) => incomingSessionIds.has(id)),
+      );
+      if (index < 0) return [...current, layout];
+      const next = [...current];
+      next[index] = layout;
+      return next;
+    });
+  }, []);
+
   const focusPane = useCallback((sessionId: string) => {
     setLayouts((current) => current.map((layout) =>
       paneSessionIds(layout).includes(sessionId) ? { ...layout, focusedPaneId: sessionId } : layout,
@@ -187,6 +202,7 @@ export function usePaneLayout() {
     split,
     removePane,
     removeLayout,
+    replaceLayout,
     focusPane,
     setRatios,
     pruneSessions,

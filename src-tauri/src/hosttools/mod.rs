@@ -4,14 +4,12 @@
 //! layout it simply yields fewer rows, and the raw text is always returned so
 //! the UI can fall back to showing it verbatim.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::AppResult,
     models::ssh_profile::SshProfile,
-    ssh::{HostKeyVerifier, run_ssh_command},
+    ssh::{SshConnectionPool, run_ssh_command},
 };
 
 /// Host-tools commands are quick; cap them well under the interactive timeout.
@@ -117,14 +115,13 @@ pub struct HostToolsSnapshot {
     pub ports: Option<Vec<PortRow>>,
 }
 
-/// Run the tool's command over a fresh SSH connection and parse the result.
+/// Run the tool's command over a leased SSH exec channel and parse the result.
 pub async fn snapshot(
     profile: SshProfile,
     tool: HostTool,
-    verifier: Arc<HostKeyVerifier>,
+    pool: &SshConnectionPool,
 ) -> AppResult<HostToolsSnapshot> {
-    let output =
-        run_ssh_command(profile, tool.command().to_string(), TIMEOUT_SECS, verifier).await?;
+    let output = run_ssh_command(profile, tool.command().to_string(), TIMEOUT_SECS, pool).await?;
     let stdout = output.stdout;
     let raw = if stdout.trim().is_empty() && !output.stderr.trim().is_empty() {
         output.stderr.clone()

@@ -36,6 +36,10 @@ export function listSshSessions() {
   return invokeCommand<TerminalSession[]>("list_ssh_sessions");
 }
 
+export function readSshSessionOutput(sessionId: string) {
+  return invokeCommand<string>("read_ssh_session_output", { sessionId });
+}
+
 export function startSshSession(request: StartSshSessionRequest) {
   return invokeCommand<TerminalSession>("start_ssh_session", { request });
 }
@@ -74,6 +78,12 @@ export interface HostKeyChangedEvent {
   presentedFingerprint: string;
 }
 
+export interface SshTransportStatusEvent {
+  profileId: string;
+  state: "connecting" | "ready" | "reconnecting" | "failed";
+  message?: string;
+}
+
 export function respondHostKeyPrompt(promptId: string, accept: boolean) {
   return invokeCommand<void>("respond_host_key_prompt", { promptId, accept });
 }
@@ -84,6 +94,10 @@ export function onHostKeyPrompt(handler: (event: HostKeyPromptEvent) => void) {
 
 export function onHostKeyChanged(handler: (event: HostKeyChangedEvent) => void) {
   return listen<HostKeyChangedEvent>("ssh://hostkey-changed", (event) => handler(event.payload));
+}
+
+export function onSshTransportStatus(handler: (event: SshTransportStatusEvent) => void) {
+  return listen<SshTransportStatusEvent>("ssh://transport-status", (event) => handler(event.payload));
 }
 
 export function onTerminalOutput(handler: (event: TerminalOutputEvent) => void) {

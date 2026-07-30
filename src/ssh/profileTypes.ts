@@ -31,7 +31,7 @@ export function createEmptyProfileDraft(): ProfileDraft {
     host: "",
     port: "22",
     username: "root",
-    authType: "privateKey",
+    authType: "password",
     password: "",
     keyData: "",
     keyName: "",

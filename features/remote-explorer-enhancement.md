@@ -4,7 +4,7 @@
 
 ## 1. 范围与原则
 
-- Explorer 只通过 Rust `SftpManager` 操作远端文件系统，并沿用 SSH TOFU 主机密钥校验。
+- Explorer 只通过 Rust `SftpManager` 操作远端文件系统；SFTP channel 来自共享 `SshConnectionPool`，并沿用 SSH TOFU 主机密钥校验。
 - 禁止用终端 shell 拼接 `rm`、`mv`、`mkdir`，也不把远端路径交给前端直接处理。
 - 所有破坏性或批量操作需先说明作用范围，失败项保留可读错误；默认安全优先于“像 VS Code 一样快”。
 - 现有 `RemoteFileTree` 负责树与选中态，`RemoteFileEditor` 负责打开文件及其未保存保护；传输和文件系统行为抽为可复用 hook / service，供全页 `FileBrowser` 复用。

@@ -6,6 +6,7 @@ import {
   listSshSessions,
   onTerminalOutput,
   onTerminalStatus,
+  readSshSessionOutput,
   resizeSshSession,
   startLocalSession as startLocalSessionCommand,
   startSshSession,
@@ -32,6 +33,7 @@ function clipBuffer(value: string) {
 export function useTerminalSessions() {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
 
   // Mirror of `sessions` so async callbacks (e.g. reconnect) can read the
   // latest list without becoming stale or churning their identity.
@@ -98,21 +100,43 @@ export function useTerminalSessions() {
   useEffect(() => {
     let mounted = true;
 
-    listSshSessions().then(async (loadedSessions) => {
-      if (!mounted) {
-        return;
-      }
+    void listSshSessions()
+      .then(async (loadedSessions) => {
+        if (!mounted) return;
 
-      if (loadedSessions.length > 0) {
-        setSessions(loadedSessions);
-        setActiveSessionId(loadedSessions[0]?.id ?? null);
-        return;
-      }
-      // Do not create a local terminal automatically at startup. A local shell
-      // is created only when the user explicitly asks for one.
-      setSessions([]);
-      setActiveSessionId(null);
-    });
+        // A second window attaches to an existing Rust-side session. Hydrate its
+        // renderer from the retained backend scrollback before future global
+        // `terminal-output` events fan in.
+        const snapshots = await Promise.all(
+          loadedSessions.map(async (session) => ({
+            sessionId: session.id,
+            output: await readSshSessionOutput(session.id).catch(() => ""),
+          })),
+        );
+        if (!mounted) return;
+        for (const snapshot of snapshots) {
+          if (snapshot.output) buffersRef.current.set(snapshot.sessionId, clipBuffer(snapshot.output));
+        }
+
+        if (loadedSessions.length > 0) {
+          setSessions(loadedSessions);
+          setActiveSessionId(loadedSessions[0]?.id ?? null);
+          return;
+        }
+        // Do not create a local terminal automatically at startup. A local shell
+        // is created only when the user explicitly asks for one.
+        setSessions([]);
+        setActiveSessionId(null);
+      })
+      .catch(() => {
+        if (mounted) {
+          setSessions([]);
+          setActiveSessionId(null);
+        }
+      })
+      .finally(() => {
+        if (mounted) setIsSessionsLoaded(true);
+      });
 
     return () => {
       mounted = false;
@@ -256,6 +280,7 @@ export function useTerminalSessions() {
     cancelReconnect,
     closeSession,
     getBacklog,
+    isSessionsLoaded,
     reconnectSession,
     resizeActiveSession,
     resizeSession,

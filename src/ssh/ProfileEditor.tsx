@@ -4,6 +4,12 @@ import type { SshProfile } from "../models";
 import { readKeyFile } from "../services/sshProfileService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
+import {
+  CONNECTION_TYPE_OPTIONS,
+  connectionTypeLabel,
+  type ConnectionType,
+} from "./connectionTypes";
 import { TagInput } from "./TagInput";
 import { validateProfileDraft } from "./profileStore";
 import {
@@ -21,21 +27,41 @@ interface ProfileEditorProps {
   onSubmit: (draft: ProfileDraft) => Promise<void>;
 }
 
+type ConnectionRoute = "direct" | "socks5" | "http";
+
+const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
+  { label: "直连", value: "direct" },
+  { disabled: true, label: "代理命令（即将支持）", value: "proxyCommand" },
+  { disabled: true, label: "跳板主机（即将支持）", value: "jumpHost" },
+  { label: "SOCKS5 代理", value: "socks5" },
+  { label: "HTTP 代理", value: "http" },
+];
+
 export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     profile ? profileToDraft(profile) : createEmptyProfileDraft(),
   );
+  const [connectionType, setConnectionType] = useState<ConnectionType>("ssh");
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
     setDraft(profile ? profileToDraft(profile) : createEmptyProfileDraft());
+    setConnectionType("ssh");
     setErrors([]);
-  }, [profile]);
+  }, [mode, profile]);
 
   function updateDraft<Field extends keyof ProfileDraft>(field: Field, value: ProfileDraft[Field]) {
     setDraft((currentDraft) => ({
       ...currentDraft,
       [field]: value,
+    }));
+  }
+
+  function updateConnectionRoute(route: ConnectionRoute) {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      proxyType: route === "direct" ? currentDraft.proxyType : route,
+      useProxy: route !== "direct",
     }));
   }
 
@@ -78,12 +104,14 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
     }
   }
 
-  const title = mode === "create" ? "新建 SSH 配置" : "编辑 SSH 配置";
+  const title = mode === "create" ? `新建 ${connectionTypeLabel(connectionType)} 连接` : "编辑 SSH 连接";
   const passwordLabel = mode === "create" ? "密码" : "密码（留空则保持不变）";
+  const connectionRoute: ConnectionRoute = draft.useProxy ? draft.proxyType : "direct";
+  const proxyLabel = connectionRoute === "http" ? "HTTP 代理" : "SOCKS5 代理";
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="profile-editor" aria-label={title}>
+      <section className="profile-editor profile-editor--connection" aria-label={title}>
         <header className="profile-editor__topbar">
           <h2>{title}</h2>
           <button
@@ -96,7 +124,7 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
           </button>
         </header>
 
-        <form className="profile-form" onSubmit={handleSubmit}>
+        <form className="profile-form profile-form--connection" onSubmit={handleSubmit}>
           {errors.length > 0 ? (
             <div className="form-errors" role="alert">
               {errors.map((error) => (
@@ -105,7 +133,24 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
             </div>
           ) : null}
 
-          <div className="form-grid">
+          <aside className="profile-form__sidebar">
+            {mode === "create" ? (
+              <label className="field">
+                <span>连接类型</span>
+                <SelectMenu
+                  ariaLabel="连接类型"
+                  onChange={(value) => setConnectionType(value as ConnectionType)}
+                  options={CONNECTION_TYPE_OPTIONS.map((option) => ({
+                    disabled: !option.available,
+                    label: option.available ? option.label : `${option.label}（即将支持）`,
+                    value: option.id,
+                  }))}
+                  value={connectionType}
+                />
+                <small className="profile-form__hint">Telnet 与 SFTP 将在支持后开放创建。</small>
+              </label>
+            ) : null}
+
             <label className="field">
               <span>名称</span>
               <input
@@ -114,21 +159,98 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
                 value={draft.name}
               />
             </label>
+
+            <div className="field">
+              <span>分组（标签）</span>
+              <TagInput
+                onChange={(tags) => updateDraft("tags", tags)}
+                suggestions={allTags}
+                value={draft.tags}
+              />
+            </div>
+
             <label className="field">
-              <span>主机</span>
-              <input
-                onChange={(event) => updateDraft("host", event.currentTarget.value)}
-                value={draft.host}
+              <span>描述</span>
+              <textarea
+                onChange={(event) => updateDraft("description", event.currentTarget.value)}
+                rows={3}
+                value={draft.description}
               />
             </label>
-            <label className="field">
-              <span>端口</span>
+
+            <label className="checkbox-field">
               <input
-                inputMode="numeric"
-                onChange={(event) => updateDraft("port", event.currentTarget.value)}
-                value={draft.port}
+                checked={draft.favorite}
+                onChange={(event) => updateDraft("favorite", event.currentTarget.checked)}
+                type="checkbox"
               />
+              设为收藏
             </label>
+          </aside>
+
+          <div className="profile-form__main">
+            <div className="profile-form__connection-grid">
+              <label className="field">
+                <span>连接方式</span>
+                <SelectMenu
+                  ariaLabel="连接方式"
+                  onChange={(value) => updateConnectionRoute(value as ConnectionRoute)}
+                  options={CONNECTION_ROUTE_OPTIONS}
+                  value={connectionRoute}
+                />
+              </label>
+              <label className="field">
+                <span>主机（IP 或域名）</span>
+                <input
+                  onChange={(event) => updateDraft("host", event.currentTarget.value)}
+                  value={draft.host}
+                />
+              </label>
+              <label className="field">
+                <span>端口</span>
+                <input
+                  inputMode="numeric"
+                  onChange={(event) => updateDraft("port", event.currentTarget.value)}
+                  value={draft.port}
+                />
+              </label>
+            </div>
+
+            {draft.useProxy ? (
+              <div className="profile-form__proxy-grid">
+                <label className="field profile-form__proxy-host">
+                  <span>{proxyLabel}主机</span>
+                  <input
+                    onChange={(event) => updateDraft("proxyHost", event.currentTarget.value)}
+                    value={draft.proxyHost}
+                  />
+                </label>
+                <label className="field">
+                  <span>{proxyLabel}端口</span>
+                  <input
+                    inputMode="numeric"
+                    onChange={(event) => updateDraft("proxyPort", event.currentTarget.value)}
+                    value={draft.proxyPort}
+                  />
+                </label>
+                <label className="field">
+                  <span>代理用户名（可选）</span>
+                  <input
+                    onChange={(event) => updateDraft("proxyUsername", event.currentTarget.value)}
+                    value={draft.proxyUsername}
+                  />
+                </label>
+                <label className="field">
+                  <span>代理密码（可选）</span>
+                  <input
+                    onChange={(event) => updateDraft("proxyPassword", event.currentTarget.value)}
+                    type="password"
+                    value={draft.proxyPassword}
+                  />
+                </label>
+              </div>
+            ) : null}
+
             <label className="field">
               <span>用户名</span>
               <input
@@ -136,136 +258,66 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
                 value={draft.username}
               />
             </label>
-          </div>
 
-          <fieldset className="auth-fieldset">
-            <legend>认证方式</legend>
-            <label>
-              <input
-                checked={draft.authType === "password"}
-                name="authType"
-                onChange={() => updateDraft("authType", "password")}
-                type="radio"
-              />
-              密码
-            </label>
-            <label>
-              <input
-                checked={draft.authType === "privateKey"}
-                name="authType"
-                onChange={() => updateDraft("authType", "privateKey")}
-                type="radio"
-              />
-              密钥
-            </label>
-          </fieldset>
-
-          {draft.authType === "password" ? (
-            <label className="field">
-              <span>{passwordLabel}</span>
-              <input
-                onChange={(event) => updateDraft("password", event.currentTarget.value)}
-                type="password"
-                value={draft.password}
-              />
-            </label>
-          ) : (
-            <div className="form-grid">
-              <div className="field">
-                <span>密钥文件</span>
-                <div className="key-upload">
-                  <Button onClick={handleUploadKey} variant="ghost">
-                    {draft.keyName ? "重新上传" : "上传密钥"}
-                  </Button>
-                  <span className="key-upload__name">
-                    {draft.keyName
-                      ? draft.keyData
-                        ? `已选择：${draft.keyName}`
-                        : `已存储：${draft.keyName}`
-                      : "未选择密钥文件"}
-                  </span>
-                </div>
-              </div>
-              <label className="field">
-                <span>Passphrase（可选）</span>
+            <fieldset className="auth-fieldset">
+              <legend>认证方式</legend>
+              <label>
                 <input
-                  onChange={(event) => updateDraft("passphrase", event.currentTarget.value)}
+                  checked={draft.authType === "password"}
+                  name="authType"
+                  onChange={() => updateDraft("authType", "password")}
+                  type="radio"
+                />
+                密码
+              </label>
+              <label>
+                <input
+                  checked={draft.authType === "privateKey"}
+                  name="authType"
+                  onChange={() => updateDraft("authType", "privateKey")}
+                  type="radio"
+                />
+                密钥
+              </label>
+            </fieldset>
+
+            {draft.authType === "password" ? (
+              <label className="field">
+                <span>{passwordLabel}</span>
+                <input
+                  onChange={(event) => updateDraft("password", event.currentTarget.value)}
                   type="password"
-                  value={draft.passphrase}
+                  value={draft.password}
                 />
               </label>
-            </div>
-          )}
-
-          <fieldset className="auth-fieldset">
-            <legend>连接代理</legend>
-            <label>
-              <input
-                checked={draft.useProxy}
-                onChange={(event) => updateDraft("useProxy", event.currentTarget.checked)}
-                type="checkbox"
-              />
-              通过代理连接 SSH
-            </label>
-          </fieldset>
-
-          {draft.useProxy ? (
-            <div className="form-grid">
-              <label className="field">
-                <span>代理类型</span>
-                <select
-                  onChange={(event) => updateDraft("proxyType", event.currentTarget.value as "socks5" | "http")}
-                  value={draft.proxyType}
-                >
-                  <option value="socks5">SOCKS5</option>
-                  <option value="http">HTTP CONNECT</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>代理主机</span>
-                <input onChange={(event) => updateDraft("proxyHost", event.currentTarget.value)} value={draft.proxyHost} />
-              </label>
-              <label className="field">
-                <span>代理端口</span>
-                <input inputMode="numeric" onChange={(event) => updateDraft("proxyPort", event.currentTarget.value)} value={draft.proxyPort} />
-              </label>
-              <label className="field">
-                <span>代理用户名（可选）</span>
-                <input onChange={(event) => updateDraft("proxyUsername", event.currentTarget.value)} value={draft.proxyUsername} />
-              </label>
-              <label className="field">
-                <span>代理密码（可选）</span>
-                <input onChange={(event) => updateDraft("proxyPassword", event.currentTarget.value)} type="password" value={draft.proxyPassword} />
-              </label>
-            </div>
-          ) : null}
-
-          <div className="field">
-            <span>标签</span>
-            <TagInput
-              onChange={(tags) => updateDraft("tags", tags)}
-              suggestions={allTags}
-              value={draft.tags}
-            />
+            ) : (
+              <div className="form-grid">
+                <div className="field">
+                  <span>密钥文件</span>
+                  <div className="key-upload">
+                    <Button onClick={handleUploadKey} variant="ghost">
+                      {draft.keyName ? "重新上传" : "上传密钥"}
+                    </Button>
+                    <span className="key-upload__name">
+                      {draft.keyName
+                        ? draft.keyData
+                          ? `已选择：${draft.keyName}`
+                          : `已存储：${draft.keyName}`
+                        : "未选择密钥文件"}
+                    </span>
+                  </div>
+                </div>
+                <label className="field">
+                  <span>Passphrase（可选）</span>
+                  <input
+                    onChange={(event) => updateDraft("passphrase", event.currentTarget.value)}
+                    type="password"
+                    value={draft.passphrase}
+                  />
+                </label>
+              </div>
+            )}
           </div>
-
-          <label className="field">
-            <span>描述</span>
-            <textarea
-              onChange={(event) => updateDraft("description", event.currentTarget.value)}
-              rows={3}
-              value={draft.description}
-            />
-          </label>
-
-          <label className="checkbox-field">
-            <input
-              checked={draft.favorite}
-              onChange={(event) => updateDraft("favorite", event.currentTarget.checked)}
-              type="checkbox"
-            />
-            设为收藏
-          </label>
 
           <footer className="profile-editor__footer">
             <Button onClick={onClose} variant="ghost">

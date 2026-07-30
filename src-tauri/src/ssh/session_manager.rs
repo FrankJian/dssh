@@ -11,7 +11,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use russh::{
-    ChannelMsg, Disconnect, Pty,
+    ChannelMsg, Pty,
     client::{self, Handler},
     keys::{PrivateKeyWithHashAlg, decode_secret_key},
 };
@@ -19,7 +19,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::{Mutex as AsyncMutex, mpsc, oneshot},
 };
 
 use crate::{
@@ -32,15 +32,11 @@ use crate::{
         },
     },
     ssh::host_keys::HostKeyVerifier,
+    ssh::{ChannelOwner, SshConnectionPool},
 };
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 const TERMINAL_STATUS_EVENT: &str = "terminal-status";
-// Keepalives are kept short so a dropped transport is noticed within ~45s,
-// letting the grace-period reconnect kick in promptly.
-const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-const SSH_KEEPALIVE_MAX: usize = 3;
-
 // Grace-period auto-reconnect: after an unexpected drop, keep retrying with
 // exponential backoff for up to GRACE before giving up.
 const RECONNECT_GRACE: Duration = Duration::from_secs(30);
@@ -55,14 +51,14 @@ const MAX_SESSION_BUFFER_BYTES: usize = 200_000;
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionHandle>>>,
-    host_keys: Arc<HostKeyVerifier>,
+    pool: SshConnectionPool,
 }
 
 impl SessionManager {
-    pub fn new(host_keys: Arc<HostKeyVerifier>) -> Self {
+    pub fn new(pool: SshConnectionPool) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            host_keys,
+            pool,
         }
     }
 }
@@ -100,7 +96,16 @@ pub struct SshClient {
     verifier: Arc<HostKeyVerifier>,
     host: String,
     port: u16,
+    remote_forwards: Option<RemoteForwardTargets>,
 }
+
+#[derive(Clone)]
+pub(crate) struct RemoteForwardTarget {
+    pub local_host: String,
+    pub local_port: u16,
+}
+
+pub(crate) type RemoteForwardTargets = Arc<AsyncMutex<HashMap<(String, u32), RemoteForwardTarget>>>;
 
 impl SshClient {
     pub fn new(verifier: Arc<HostKeyVerifier>, host: impl Into<String>, port: u16) -> Self {
@@ -108,6 +113,21 @@ impl SshClient {
             verifier,
             host: host.into(),
             port,
+            remote_forwards: None,
+        }
+    }
+
+    pub(crate) fn with_remote_forwards(
+        verifier: Arc<HostKeyVerifier>,
+        host: impl Into<String>,
+        port: u16,
+        remote_forwards: RemoteForwardTargets,
+    ) -> Self {
+        Self {
+            verifier,
+            host: host.into(),
+            port,
+            remote_forwards: Some(remote_forwards),
         }
     }
 }
@@ -127,6 +147,51 @@ impl Handler for SshClient {
             .verify(&self.host, self.port, &fingerprint)
             .await)
     }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        handle: russh::ChannelOpenHandleInner<client::Msg>,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let target = match &self.remote_forwards {
+            Some(forwards) => {
+                let forwards = forwards.lock().await;
+                resolve_remote_forward_target(&forwards, connected_address, connected_port)
+            }
+            None => None,
+        };
+
+        if let Some(target) = target {
+            handle.accept().await;
+            tokio::spawn(async move {
+                let _ = pipe_forwarded_channel(channel, target).await;
+            });
+        }
+        Ok(())
+    }
+}
+
+fn resolve_remote_forward_target(
+    forwards: &HashMap<(String, u32), RemoteForwardTarget>,
+    connected_address: &str,
+    connected_port: u32,
+) -> Option<RemoteForwardTarget> {
+    forwards
+        .get(&(connected_address.to_string(), connected_port))
+        .cloned()
+        .or_else(|| {
+            let mut matches = forwards
+                .iter()
+                .filter(|((_, port), _)| *port == connected_port)
+                .map(|(_, target)| target.clone());
+            let target = matches.next()?;
+            matches.next().is_none().then_some(target)
+        })
 }
 
 impl SessionManager {
@@ -153,7 +218,7 @@ impl SessionManager {
         );
 
         let sessions = self.sessions.clone();
-        let host_keys = self.host_keys.clone();
+        let pool = self.pool.clone();
         let task_session_id = session_id.clone();
         tauri::async_runtime::spawn(async move {
             emit_status(
@@ -170,7 +235,7 @@ impl SessionManager {
                 size,
                 rx,
                 output,
-                host_keys,
+                pool,
             )
             .await;
 
@@ -334,15 +399,8 @@ async fn run_ssh_session(
     size: TerminalSize,
     mut rx: mpsc::Receiver<SessionCommand>,
     output: Arc<Mutex<String>>,
-    host_keys: Arc<HostKeyVerifier>,
+    pool: SshConnectionPool,
 ) -> AppResult<()> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(24 * 60 * 60)),
-        keepalive_interval: Some(SSH_KEEPALIVE_INTERVAL),
-        keepalive_max: SSH_KEEPALIVE_MAX,
-        ..<_>::default()
-    });
-
     let mut size = size;
     // Grace window + backoff are armed only after the first successful connect
     // drops; a failure on the very first attempt is a hard error (as before).
@@ -353,12 +411,11 @@ async fn run_ssh_session(
         match connect_and_run(
             &app_handle,
             &session_id,
-            &config,
             &profile,
             &mut size,
             &mut rx,
             &output,
-            &host_keys,
+            &pool,
         )
         .await
         {
@@ -445,17 +502,16 @@ async fn run_ssh_session(
 async fn connect_and_run(
     app_handle: &AppHandle,
     session_id: &str,
-    config: &Arc<client::Config>,
     profile: &SshProfile,
     size: &mut TerminalSize,
     rx: &mut mpsc::Receiver<SessionCommand>,
     output: &Arc<Mutex<String>>,
-    host_keys: &Arc<HostKeyVerifier>,
+    pool: &SshConnectionPool,
 ) -> AppResult<ConnOutcome> {
-    let mut handle = connect_ssh(config.clone(), profile, host_keys.clone()).await?;
-    authenticate(&mut handle, profile).await?;
-
-    let channel = handle.channel_open_session().await.map_err(ssh_error)?;
+    let transport = pool
+        .acquire(profile.clone(), ChannelOwner::Terminal)
+        .await?;
+    let (channel, _channel_lease) = transport.open_session_channel().await?;
     channel
         .request_pty(
             true,
@@ -532,9 +588,9 @@ async fn connect_and_run(
     };
 
     read_task.abort();
-    let _ = handle
-        .disconnect(Disconnect::ByApplication, "", "English")
-        .await;
+    if matches!(outcome, ConnOutcome::Dropped) {
+        transport.invalidate().await;
+    }
     Ok(outcome)
 }
 
@@ -615,13 +671,12 @@ fn run_local_session(
     Ok(())
 }
 
-async fn connect_ssh(
+pub(crate) async fn connect_ssh_with_client(
     config: Arc<client::Config>,
     profile: &SshProfile,
-    verifier: Arc<HostKeyVerifier>,
+    client: SshClient,
 ) -> AppResult<client::Handle<SshClient>> {
     let address = (profile.host.as_str(), profile.port);
-    let client = SshClient::new(verifier, profile.host.clone(), profile.port);
 
     match &profile.proxy {
         None => client::connect(config, address, client)
@@ -646,6 +701,16 @@ async fn connect_ssh(
                 .map_err(ssh_error)
         }
     }
+}
+
+async fn pipe_forwarded_channel(
+    channel: russh::Channel<client::Msg>,
+    target: RemoteForwardTarget,
+) -> std::io::Result<()> {
+    let mut outbound = TcpStream::connect((target.local_host.as_str(), target.local_port)).await?;
+    let mut stream = channel.into_stream();
+    tokio::io::copy_bidirectional(&mut stream, &mut outbound).await?;
+    Ok(())
 }
 
 async fn establish_socks5_tunnel(
@@ -1015,11 +1080,42 @@ fn lock_error(error: impl std::fmt::Display) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_input;
+    use std::collections::HashMap;
+
+    use super::{RemoteForwardTarget, normalize_input, resolve_remote_forward_target};
 
     #[test]
     fn terminal_input_preserves_carriage_return_for_raw_mode_programs() {
         assert_eq!(normalize_input("\r"), b"\r");
         assert_eq!(normalize_input("\r\n"), b"\r\n");
+    }
+
+    #[test]
+    fn remote_forward_target_prefers_exact_route_and_rejects_ambiguous_fallback() {
+        let mut forwards = HashMap::new();
+        forwards.insert(
+            ("127.0.0.1".to_string(), 8080),
+            RemoteForwardTarget {
+                local_host: "localhost".to_string(),
+                local_port: 3000,
+            },
+        );
+        forwards.insert(
+            ("0.0.0.0".to_string(), 8080),
+            RemoteForwardTarget {
+                local_host: "localhost".to_string(),
+                local_port: 4000,
+            },
+        );
+
+        let exact = resolve_remote_forward_target(&forwards, "127.0.0.1", 8080)
+            .expect("exact route should resolve");
+        assert_eq!(exact.local_port, 3000);
+        assert!(resolve_remote_forward_target(&forwards, "localhost", 8080).is_none());
+
+        forwards.remove(&("0.0.0.0".to_string(), 8080));
+        let fallback = resolve_remote_forward_target(&forwards, "localhost", 8080)
+            .expect("a unique port fallback should resolve");
+        assert_eq!(fallback.local_port, 3000);
     }
 }

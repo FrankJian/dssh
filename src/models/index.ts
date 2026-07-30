@@ -16,3 +16,11 @@ export type {
   S3Profile,
 } from "./s3";
 export type { SessionStatus, TerminalSession, TerminalSize } from "./terminal";
+export type {
+  DetachedSftpWorkspace,
+  DetachedTerminalWorkspace,
+  DetachedWorkspace,
+  DetachedWorkspaceKind,
+  OpenDetachedSftpRequest,
+  OpenDetachedTerminalRequest,
+} from "./workspace";

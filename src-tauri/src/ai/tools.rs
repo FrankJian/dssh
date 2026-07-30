@@ -32,8 +32,8 @@ pub fn tool_defs() -> Vec<Tool> {
             .with_description(
                 "执行一条非交互式 shell 命令，并返回标准输出、标准错误和退出码。\
                  适合查询系统状态、查看日志、管理服务、读取文件等操作。\
-                 命令在一个全新的、非登录的会话中执行，因此如需持久化环境请在同一条命令中完成\
-                 （例如使用 `cd /path && ...`）。\n\
+                 命令在独立的、非登录 exec channel 中执行，因此如需持久化环境请在同一条命令中完成\
+                 （例如使用 `cd /path && ...`）；它可复用已认证的 SSH transport，但不会共享其他命令的 shell 状态。\n\
                  目标由 server_id 决定：提供已保存服务器的 id 时通过 SSH 在该远程服务器上执行；\
                  当用户当前处于【本地终端】且未指定 server_id（或 server_id 为 \"local\"）时，\
                  命令会在本地机器上执行。操作本地终端时无需先调用 list_servers。",
@@ -292,7 +292,7 @@ async fn execute_run_command(
         Err(error) => return (format!("读取服务器配置失败：{}", error.message), true),
     };
 
-    match run_ssh_command(profile, command, timeout_secs, state.host_keys.clone()).await {
+    match run_ssh_command(profile, command, timeout_secs, &state.ssh_pool).await {
         Ok(output) => {
             let mut body = String::new();
             body.push_str(&format!(
