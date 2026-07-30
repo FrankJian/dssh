@@ -11,8 +11,8 @@ use crate::{
         client::{build_client, build_copilot_client},
         copilot,
         tools::{
-            execute_tool, open_ssh_session_confirmation_args, prepare_open_ssh_session, tool_defs,
-            tool_needs_approval,
+            execute_tool, open_ssh_session_confirmation_args, prepare_app_action,
+            prepare_open_ssh_session, tool_defs, tool_needs_approval,
         },
     },
     app::AppState,
@@ -41,6 +41,7 @@ const SYSTEM_PROMPT: &str = "你是内嵌于 dssh（一款跨平台 SSH 管理�
 你可以使用以下工具操作用户的 SSH 服务器：\n\
 - list_servers：列出用户已保存的服务器配置，获取每台服务器的 id。\n\
 - open_ssh_session：请求打开一台已保存服务器的交互式 SSH 终端。\n\
+- control_app：执行受限的、非破坏性应用界面操作，例如切换视图、打开设置、SFTP、文件列表和主机工具，以及当前终端的分屏、重连。\n\
 - run_command：通过 SSH 在指定服务器上执行一条 shell 命令，并获得输出与退出码。\n\
 - ask_user_question：需要用户从多个明确选项中选择时，展示可点击选项并等待回答。\n\
 - read_terminal：读取用户当前交互式终端（黑窗口）中最近的输出内容。\
@@ -50,10 +51,13 @@ const SYSTEM_PROMPT: &str = "你是内嵌于 dssh（一款跨平台 SSH 管理�
 1. 当需要操作某台服务器却不知道其 id 时，先调用 list_servers。\n\
 2. 当有多台候选服务器且用户没有指定目标时，调用 ask_user_question 让用户直接选择，不要要求用户重新输入名称。\n\
 3. 每次 run_command 只执行一条清晰、明确的命令；优先使用只读、幂等的命令来收集信息。\n\
-4. 对具有破坏性或不可逆的操作（删除、重启、覆盖文件、修改配置等）要格外谨慎，\
+4. 用户要求完成应用内快捷操作（切换界面、打开设置/SFTP/文件列表/主机工具、切换主题、新建本地终端或配置、当前终端分屏/重连）时，\
+优先调用 control_app，不要只描述点击路径。control_app 只用于其 schema 中列出的非破坏性动作；\
+删除、断开、关闭工作区和保存/覆盖远程文件不属于该工具。\n\
+5. 对具有破坏性或不可逆的操作（删除、重启、覆盖文件、修改配置等）要格外谨慎，\
 先说明你的计划，再执行，且尽量分步进行。\n\
-5. 依据工具返回的真实结果作答，不要编造输出。\n\
-6. 只要你表示将要执行某个命令或操作，就必须在【本次回复中】立即通过相应工具（如 run_command）真正发起调用；\
+6. 依据工具返回的真实结果作答，不要编造输出。\n\
+7. 只要你表示将要执行某个命令或操作，就必须在【本次回复中】立即通过相应工具（如 run_command）真正发起调用；\
 严禁只用文字说“我来执行 / 这就运行 / 让我测试 / 稍等”之类却不调用任何工具，\
 也不要声称自己已经执行过其实并未执行的命令。要么现在就调用工具去做，要么直接给出最终答复。\n\n\
 输出格式（务必遵守，让回答清晰易读）：\n\
@@ -494,6 +498,22 @@ async fn drive(
                             },
                         );
                         ("SSH 连接请求已获允许，正在打开终端。".to_string(), false)
+                    }
+                    Err(message) => (message, true),
+                }
+            } else if tool_call.fn_name == "control_app" {
+                match prepare_app_action(state, &tool_call.fn_arguments) {
+                    Ok(request) => {
+                        emit(
+                            app,
+                            AiEvent::AppAction {
+                                run_id: run_id.clone(),
+                                call_id: tool_call.call_id.clone(),
+                                action: request.action,
+                                args: request.args,
+                            },
+                        );
+                        ("已请求应用执行该快捷操作。".to_string(), false)
                     }
                     Err(message) => (message, true),
                 }

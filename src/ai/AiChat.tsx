@@ -370,7 +370,7 @@ function AiEmptyState({
         <>
           <p className="ai-chat__empty-title">开始与 AI 助手对话</p>
           <p className="ai-chat__empty-hint">
-            我可以查找已保存的服务器、请求打开 SSH 连接，或在当前终端上帮助你排查问题。
+            我可以操作应用界面、查找已保存的服务器、请求打开 SSH 连接，或在当前终端上帮助你排查问题。
           </p>
         </>
       ) : (
@@ -589,7 +589,9 @@ const TOOL_LABELS: Record<string, string> = {
   list_servers: "列出服务器",
   run_command: "执行命令",
   open_ssh_session: "打开 SSH 连接",
+  control_app: "应用快捷操作",
   ask_user_question: "需要你的选择",
+  read_terminal: "读取终端输出",
 };
 
 const STATUS_LABELS: Record<string, string> = {

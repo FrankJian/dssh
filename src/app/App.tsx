@@ -21,7 +21,7 @@ import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
 import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
-import { SettingsDialog } from "../settings/SettingsDialog";
+import { SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { FileBrowser } from "../sftp/FileBrowser";
@@ -44,7 +44,12 @@ import { Icon } from "../ui/Icon";
 import { ToastHost, toast } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
 import { isMacOS } from "../platform";
-import { ActivityBar, type ActivityId, type RightPanelId } from "./ActivityBar";
+import {
+  ActivityBar,
+  type ActivityId,
+  type NavigationIconId,
+  type RightPanelId,
+} from "./ActivityBar";
 import { AppLayout } from "./AppLayout";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
 import { isCommandPaletteShortcut } from "./shortcuts";
@@ -78,11 +83,35 @@ interface ForwardTarget {
 
 const SIDEBAR_COLLAPSED_KEY = "dssh.sidebar.collapsed";
 const RIGHT_PANEL_KEY = "dssh.rightPanel";
+const NAVIGATION_ICONS_KEY = "dssh.navigation.icons";
 const RIGHT_PANEL_WIDTH_KEY = "dssh.ai.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
 const RIGHT_PANEL_WIDTH_DEFAULT = 360;
 const SIDE_PANEL_WIDTH_DEFAULT = 288;
+const DEFAULT_NAVIGATION_ICONS: NavigationIconId[] = ["sessions", "connections", "assistant"];
+const AI_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
+  "appearance",
+  "terminal",
+  "editor",
+  "s3",
+  "ai",
+  "config",
+  "about",
+];
+
+function isAiSettingsCategory(value: unknown): value is SettingsCategory {
+  return typeof value === "string" && AI_SETTINGS_CATEGORIES.includes(value as SettingsCategory);
+}
+
+function isAiThemeMode(value: unknown): value is "dark" | "light" | "system" {
+  return value === "dark" || value === "light" || value === "system";
+}
+
+function aiStringArg(args: Record<string, unknown>, key: string): string | null {
+  const value = args[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
 
 function loadPanelWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -95,12 +124,37 @@ function loadRightPanel(): RightPanelId | null {
   return raw === "assistant" || raw === "hosttools" ? raw : null;
 }
 
+function loadNavigationIcons(): NavigationIconId[] {
+  try {
+    const raw = localStorage.getItem(NAVIGATION_ICONS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_NAVIGATION_ICONS;
+    }
+    const valid = parsed.filter(
+      (item): item is NavigationIconId =>
+        item === "sessions" ||
+        item === "connections" ||
+        item === "s3" ||
+        item === "assistant" ||
+        item === "newLocalTerminal",
+    );
+    const unique = [...new Set(valid)];
+    return unique.some((item) => item !== "assistant" && item !== "newLocalTerminal")
+      ? unique
+      : DEFAULT_NAVIGATION_ICONS;
+  } catch {
+    return DEFAULT_NAVIGATION_ICONS;
+  }
+}
+
 function MainApp() {
   const [activeActivity, setActiveActivity] = useState<ActivityId>("sessions");
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
   );
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
+  const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
@@ -108,9 +162,7 @@ function MainApp() {
   const [activeS3ProfileId, setActiveS3ProfileId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<ForwardTarget | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsCategory, setSettingsCategory] = useState<"appearance" | "ai" | "config">(
-    "appearance",
-  );
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("appearance");
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
@@ -153,6 +205,20 @@ function MainApp() {
       localStorage.removeItem(RIGHT_PANEL_KEY);
     }
   }, [rightPanel]);
+  useEffect(() => {
+    localStorage.setItem(NAVIGATION_ICONS_KEY, JSON.stringify(navigationIcons));
+  }, [navigationIcons]);
+  useEffect(() => {
+    if (!navigationIcons.includes(activeActivity)) {
+      const fallback = navigationIcons.find(
+        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "s3",
+      );
+      if (fallback) {
+        setActiveActivity(fallback);
+        setSidebarCollapsed(false);
+      }
+    }
+  }, [activeActivity, navigationIcons]);
 
   const { setThemeMode, themeMode } = useTheme();
   const {
@@ -394,48 +460,208 @@ function MainApp() {
     setActiveActivity("sessions");
   }, [focusTerminal]);
 
+  const activeSessionProfile =
+    activeSession && activeSession.kind === "ssh"
+      ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
+      : null;
+  const activeCanSplit = panes.canSplit(activeSessionId);
+
 
   useEffect(() => {
     const unlistenPromise = onAiEvent((event) => {
-      if (event.kind !== "openSshSession") {
-        return;
-      }
-      const profile = profiles.find((item) => item.id === event.profileId);
-      if (!profile) {
-        aiChat.completeSshSessionOpen(
-          event.callId,
-          "无法打开 SSH 连接：保存的服务器配置已不存在。",
-          true,
-        );
-        return;
-      }
-      void startSession(profile)
-        .then(() => {
-          recordUse(profile.id);
-          showTerminalSurface();
+      if (event.kind === "openSshSession") {
+        const profile = profiles.find((item) => item.id === event.profileId);
+        if (!profile) {
           aiChat.completeSshSessionOpen(
             event.callId,
-            `已打开 SSH 终端：${profile.username}@${profile.host}:${profile.port}。`,
-            false,
-          );
-        })
-        .catch((error) => {
-          aiChat.completeSshSessionOpen(
-            event.callId,
-            `无法打开 SSH 连接：${error instanceof Error ? error.message : "连接失败。"}`,
+            "无法打开 SSH 连接：保存的服务器配置已不存在。",
             true,
           );
-        });
+          return;
+        }
+        void startSession(profile)
+          .then(() => {
+            recordUse(profile.id);
+            showTerminalSurface();
+            aiChat.completeSshSessionOpen(
+              event.callId,
+              `已打开 SSH 终端：${profile.username}@${profile.host}:${profile.port}。`,
+              false,
+            );
+          })
+          .catch((error) => {
+            aiChat.completeSshSessionOpen(
+              event.callId,
+              `无法打开 SSH 连接：${error instanceof Error ? error.message : "连接失败。"}`,
+              true,
+            );
+          });
+        return;
+      }
+      if (event.kind !== "appAction") {
+        return;
+      }
+
+      const complete = (result: string, isError = false) =>
+        aiChat.completeAppAction(event.callId, result, isError);
+      const requireActiveSsh = () => {
+        if (activeSession?.kind !== "ssh" || !activeSessionProfile) {
+          complete("当前没有可用于此操作的 SSH 终端。请先连接服务器并聚焦对应终端。", true);
+          return null;
+        }
+        return { profile: activeSessionProfile, session: activeSession };
+      };
+
+      switch (event.action) {
+        case "show_sessions":
+          setActiveActivity("sessions");
+          setSidebarCollapsed(false);
+          complete("已打开活动会话。");
+          return;
+        case "show_connections":
+          setActiveActivity("connections");
+          complete("已打开连接管理。");
+          return;
+        case "show_s3":
+          setActiveActivity("s3");
+          setSidebarCollapsed(false);
+          complete("已打开 S3 对象浏览器。");
+          return;
+        case "show_terminal":
+          setActiveRemoteFilePath(null);
+          showTerminalSurface();
+          complete("已显示终端。");
+          return;
+        case "open_settings": {
+          const category = isAiSettingsCategory(event.args.category) ? event.args.category : "appearance";
+          openSettings(category);
+          complete(`已打开“${category}”设置。`);
+          return;
+        }
+        case "open_ai_config":
+          setRightPanel("assistant");
+          setIsAiConfigOpen(true);
+          complete("已打开 AI 配置。");
+          return;
+        case "set_theme": {
+          const theme = event.args.theme;
+          if (!isAiThemeMode(theme)) {
+            complete("主题参数无效。", true);
+            return;
+          }
+          setThemeMode(theme);
+          complete(`已切换为${theme === "system" ? "跟随系统" : theme === "light" ? "浅色" : "深色"}主题。`);
+          return;
+        }
+        case "open_host_tools": {
+          if (!requireActiveSsh()) return;
+          setRightPanel("hosttools");
+          complete("已打开主机工具。");
+          return;
+        }
+        case "open_file_explorer": {
+          const target = requireActiveSsh();
+          if (!target) return;
+          setFileTreeSessionId(target.session.id);
+          setActiveRemoteFilePath(null);
+          showTerminalSurface();
+          complete(`已打开 ${target.profile.name} 的文件列表。`);
+          return;
+        }
+        case "open_port_forward": {
+          const target = requireActiveSsh();
+          if (!target) return;
+          setForwardTarget({ profile: target.profile, sessionId: target.session.id });
+          complete("已打开端口转发配置。");
+          return;
+        }
+        case "open_sftp": {
+          const profileId = aiStringArg(event.args, "server_id");
+          const profile = profileId ? profiles.find((item) => item.id === profileId) : null;
+          if (!profile) {
+            complete("无法打开 SFTP：目标 SSH 配置不存在。", true);
+            return;
+          }
+          setActiveActivity("sessions");
+          handleOpenSftpForProfile(profile);
+          complete(`已打开 ${profile.name} 的 SFTP。`);
+          return;
+        }
+        case "new_local_terminal":
+          void startLocalSession()
+            .then(() => {
+              showTerminalSurface();
+              complete("已新建本地终端。");
+            })
+            .catch((error) => complete(
+              `新建本地终端失败：${error instanceof Error ? error.message : "未知错误。"}`,
+              true,
+            ));
+          return;
+        case "new_ssh_profile":
+          setActiveActivity("connections");
+          openCreateProfile();
+          complete("已打开新建 SSH 连接页面。");
+          return;
+        case "new_s3_profile":
+          setActiveActivity("s3");
+          setSidebarCollapsed(false);
+          setS3EditorState({ mode: "create", profile: null });
+          complete("已打开新建 S3 配置页面。");
+          return;
+        case "split_horizontal":
+        case "split_vertical": {
+          if (!activeSession) {
+            complete("当前没有可分屏的终端。", true);
+            return;
+          }
+          if (!activeCanSplit) {
+            complete("当前终端已达到分屏数量上限。", true);
+            return;
+          }
+          void handleSplit(event.action === "split_horizontal" ? "h" : "v");
+          complete(`已请求${event.action === "split_horizontal" ? "左右" : "上下"}分屏。`);
+          return;
+        }
+        case "reconnect_active_session":
+          if (!activeSession) {
+            complete("当前没有可重连的终端。", true);
+            return;
+          }
+          handleReconnectActiveSession();
+          complete("已请求重连当前终端。");
+          return;
+        case "cancel_reconnect":
+          if (!activeSession || activeSession.status !== "reconnecting") {
+            complete("当前终端不处于重连中。", true);
+            return;
+          }
+          cancelReconnect(activeSession.id);
+          complete("已取消当前终端的重连。");
+          return;
+        default:
+          complete(`不支持的应用操作：${event.action}。`, true);
+      }
     });
     return () => {
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [
     aiChat.completeSshSessionOpen,
+    aiChat.completeAppAction,
+    activeSession,
+    activeSessionProfile,
+    activeCanSplit,
+    cancelReconnect,
+    handleOpenSftpForProfile,
+    openCreateProfile,
+    openSettings,
     profiles,
     startSession,
+    startLocalSession,
     showTerminalSurface,
     recordUse,
+    setThemeMode,
   ]);
 
   // ⌘K / Ctrl+K toggles the command palette; Escape leaves zen mode.
@@ -777,10 +1003,6 @@ function MainApp() {
     setRightPanel((current) => (current === panel ? null : panel));
   }, []);
 
-  const activeSessionProfile =
-    activeSession && activeSession.kind === "ssh"
-      ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
-      : null;
   const activeSessionLabel = activeSession
     ? activeSessionProfile
       ? `${activeSessionProfile.username}@${activeSessionProfile.host}:${activeSessionProfile.port}`
@@ -799,7 +1021,7 @@ function MainApp() {
       }
     : null;
 
-  function openSettings(category: "appearance" | "ai" | "config") {
+  function openSettings(category: SettingsCategory) {
     setSettingsCategory(category);
     setIsSettingsOpen(true);
   }
@@ -824,7 +1046,6 @@ function MainApp() {
     }
   }
   const activePaneLayout = panes.findLayout(activeSessionId);
-  const activeCanSplit = panes.canSplit(activeSessionId);
 
   // Every pane tree has one terminal-window tab. Child panes never appear as
   // independent tabs, even while another terminal window is active.
@@ -1153,20 +1374,37 @@ function MainApp() {
 
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
-      { id: "act:new-local", label: "新建本地终端", hint: "动作", icon: "terminalTool", run: () => void handleStartLocalSession() },
-      { id: "act:connections", label: "连接管理", hint: "动作", icon: "connections", run: () => setActiveActivity("connections") },
-      { id: "act:sessions", label: "会话", hint: "动作", icon: "sessions", run: () => setActiveActivity("sessions") },
-      { id: "act:s3", label: "S3 对象浏览器", hint: "动作", icon: "bucket", run: () => setActiveActivity("s3") },
-      { id: "act:assistant", label: "切换 AI 助手面板", hint: "动作", icon: "bot", run: () => toggleRightPanel("assistant") },
-      { id: "act:hosttools", label: "切换主机工具面板", hint: "动作", icon: "toolbox", run: () => toggleRightPanel("hosttools") },
-      { id: "act:settings", label: "设置", hint: "动作", icon: "settings", run: () => openSettings("appearance") },
-      { id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏" : "折叠侧栏", hint: "动作", icon: "panelLeft", run: toggleSidebar },
-      { id: "act:zen", label: zenMode ? "退出禅模式" : "禅模式（隐藏侧栏/标签）", hint: "动作", icon: "panelLeft", run: () => setZenMode((value) => !value) },
-      { id: "act:theme-dark", label: "主题：深色", hint: "动作", icon: "moon", run: () => setThemeMode("dark") },
-      { id: "act:theme-light", label: "主题：浅色", hint: "动作", icon: "sun", run: () => setThemeMode("light") },
-      { id: "act:theme-system", label: "主题：跟随系统", hint: "动作", icon: "system", run: () => setThemeMode("system") },
+      { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
+      { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
+      { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
+      { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
+      { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
+      { id: "act:new-s3", label: "新建 S3 配置", hint: "对象存储", icon: "bucket", keywords: "object storage profile", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); setS3EditorState({ mode: "create", profile: null }); } },
+      { id: "act:terminal-surface", label: "显示终端", hint: "导航", icon: "terminalTool", keywords: "terminal shell", run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); } },
+      { id: "act:assistant", label: rightPanel === "assistant" ? "关闭 AI 助手" : "打开 AI 助手", hint: "面板", icon: "bot", keywords: "ai assistant", run: () => toggleRightPanel("assistant") },
+      { id: "act:ai-config", label: "配置 AI 助手", hint: "设置", icon: "bot", keywords: "ai api model", run: () => setIsAiConfigOpen(true) },
+      { id: "act:settings-appearance", label: "设置：外观", hint: "设置", icon: "sun", keywords: "appearance theme", run: () => openSettings("appearance") },
+      { id: "act:settings-terminal", label: "设置：终端", hint: "设置", icon: "terminalTool", keywords: "terminal font background", run: () => openSettings("terminal") },
+      { id: "act:settings-editor", label: "设置：文件编辑器", hint: "设置", icon: "fileCode", keywords: "editor monaco font", run: () => openSettings("editor") },
+      { id: "act:settings-s3", label: "设置：对象存储", hint: "设置", icon: "bucket", keywords: "s3 transfer", run: () => openSettings("s3") },
+      { id: "act:settings-ai", label: "设置：AI", hint: "设置", icon: "bot", keywords: "ai api", run: () => openSettings("ai") },
+      { id: "act:settings-config", label: "设置：配置文件", hint: "设置", icon: "file", keywords: "import export", run: () => openSettings("config") },
+      { id: "act:settings-about", label: "设置：关于", hint: "设置", icon: "info", keywords: "about version", run: () => openSettings("about") },
+      { id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏" : "折叠侧栏", hint: "布局", icon: "panelLeft", keywords: "sidebar", run: toggleSidebar },
+      { id: "act:zen", label: zenMode ? "退出禅模式" : "进入禅模式", hint: "布局", icon: "panelLeft", keywords: "zen focus", run: () => setZenMode((value) => !value) },
+      { id: "act:theme-dark", label: "主题：深色", hint: "外观", icon: "moon", keywords: "theme dark", run: () => setThemeMode("dark") },
+      { id: "act:theme-light", label: "主题：浅色", hint: "外观", icon: "sun", keywords: "theme light", run: () => setThemeMode("light") },
+      { id: "act:theme-system", label: "主题：跟随系统", hint: "外观", icon: "system", keywords: "theme system", run: () => setThemeMode("system") },
     ];
     if (activeSession) {
+      items.push({
+        id: "act:focus-active-terminal",
+        label: "聚焦当前终端",
+        hint: "终端",
+        icon: "terminalTool",
+        keywords: "focus terminal",
+        run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); },
+      });
       if (activeCanSplit) {
         items.push({
           id: "act:split-h",
@@ -1193,6 +1431,16 @@ function MainApp() {
         keywords: "reconnect 重连",
         run: handleReconnectActiveSession,
       });
+      if (activeSession.status === "reconnecting") {
+        items.push({
+          id: "act:cancel-reconnect",
+          label: "取消当前终端重连",
+          hint: "终端",
+          icon: "stop",
+          keywords: "cancel reconnect",
+          run: () => cancelReconnect(activeSession.id),
+        });
+      }
       items.push({
         id: "act:close-session",
         label: "关闭当前终端",
@@ -1202,6 +1450,22 @@ function MainApp() {
         run: () => void closeSession(activeSession.id),
       });
       if (activeSessionProfile) {
+        items.push({
+          id: "act:file-list-current",
+          label: fileTreeSessionId === activeSession.id ? "关闭当前文件列表" : "打开当前文件列表",
+          hint: "文件",
+          icon: "tree",
+          keywords: "explorer files remote",
+          run: () => {
+            if (fileTreeSessionId === activeSession.id) {
+              setFileTreeSessionId(null);
+              setActiveRemoteFilePath(null);
+            } else {
+              setFileTreeSessionId(activeSession.id);
+              showTerminalSurface();
+            }
+          },
+        });
         items.push({
           id: "act:sftp-current",
           label: `打开 SFTP · ${activeSessionProfile.name}`,
@@ -1219,35 +1483,136 @@ function MainApp() {
           run: () =>
             setForwardTarget({ sessionId: activeSession.id, profile: activeSessionProfile }),
         });
+        items.push({
+          id: "act:hosttools-current",
+          label: rightPanel === "hosttools" ? "关闭主机工具" : "打开主机工具",
+          hint: "终端",
+          icon: "toolbox",
+          keywords: "host tools monitor logs",
+          run: () => toggleRightPanel("hosttools"),
+        });
       }
     }
-    for (const session of sessions) {
+    for (const session of visibleSessions) {
       items.push({
         id: `term:${session.id}`,
-        label: session.title,
+        label: `切换终端：${terminalName(session)}`,
         hint: "终端",
         icon: session.kind === "ssh" ? "ssh" : "terminalTool",
-        keywords: "terminal",
+        keywords: `${session.title} ${session.status} terminal pane`,
         run: () => handleFocusTerminal(session.id),
       });
     }
     for (const tab of sftpTabs) {
       items.push({
         id: `sftpx:${tab.id}`,
-        label: `SFTP · ${tab.title}`,
+        label: `切换 SFTP：${tab.title}`,
         hint: "SFTP",
         icon: "folder",
-        run: () => focusSftpTab(tab.id),
+        keywords: "sftp file transfer",
+        run: () => { setActiveActivity("sessions"); focusSftpTab(tab.id); },
+      });
+      items.push({
+        id: `sftpx-close:${tab.id}`,
+        label: `关闭 SFTP：${tab.title}`,
+        hint: "SFTP",
+        icon: "close",
+        keywords: "sftp close",
+        run: () => closeSftpTab(tab.id),
+      });
+    }
+    for (const tab of workspaceTabs) {
+      items.push({
+        id: `workspace:detach:${tab.id}`,
+        label: `移至独立窗口：${tab.title}`,
+        hint: tab.kind === "sftp" ? "SFTP" : "终端",
+        icon: "externalWindow",
+        keywords: "detach external window 新窗口",
+        run: () => void handleDetachTab(tab),
+      });
+      if (tab.kind !== "sftp") {
+        items.push({
+          id: `workspace:close:${tab.id}`,
+          label: `关闭终端标签：${tab.title}`,
+          hint: "终端",
+          icon: "close",
+          keywords: "close terminal tab",
+          run: () => handleCloseTab(tab),
+        });
+      }
+    }
+    for (const path of openRemoteFilePaths) {
+      const name = path.replace(/\/+$/, "").split("/").pop() || path;
+      items.push({
+        id: `file:${path}`,
+        label: `切换文件：${name}`,
+        hint: "文件编辑器",
+        icon: "fileCode",
+        keywords: `${path} editor remote file`,
+        run: () => {
+          setActiveRemoteFilePath(path);
+          showTerminalSurface();
+        },
       });
     }
     for (const profile of profiles) {
       items.push({
         id: `conn:${profile.id}`,
-        label: profile.name,
-        hint: `${profile.username}@${profile.host}`,
+        label: `连接 SSH：${profile.name}`,
+        hint: `${profile.username}@${profile.host}:${profile.port}`,
         icon: "ssh",
         keywords: `${profile.host} ${profile.tags.join(" ")} connect 连接`,
         run: () => void handleConnectProfile(profile),
+      });
+      items.push({
+        id: `conn:sftp:${profile.id}`,
+        label: `打开 SFTP：${profile.name}`,
+        hint: "SSH 配置",
+        icon: "folder",
+        keywords: `${profile.host} ${profile.tags.join(" ")} sftp files`,
+        run: () => { setActiveActivity("sessions"); handleOpenSftpForProfile(profile); },
+      });
+      items.push({
+        id: `conn:edit:${profile.id}`,
+        label: `编辑 SSH 配置：${profile.name}`,
+        hint: "SSH 配置",
+        icon: "edit",
+        keywords: `${profile.host} ${profile.tags.join(" ")} edit`,
+        run: () => openEditProfile(profile),
+      });
+      items.push({
+        id: `conn:favorite:${profile.id}`,
+        label: `${profile.favorite ? "取消收藏" : "收藏"} SSH：${profile.name}`,
+        hint: "SSH 配置",
+        icon: "star",
+        keywords: `${profile.host} favorite 收藏`,
+        run: () => void handleToggleFavorite(profile.id),
+      });
+    }
+    for (const profile of s3Profiles.profiles) {
+      items.push({
+        id: `s3:${profile.id}`,
+        label: `打开 S3：${profile.name}`,
+        hint: `${profile.host}:${profile.port}`,
+        icon: "bucket",
+        keywords: `${profile.host} ${profile.tags.join(" ")} object storage`,
+        run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); openS3Profile(profile); },
+      });
+      items.push({
+        id: `s3:edit:${profile.id}`,
+        label: `编辑 S3 配置：${profile.name}`,
+        hint: "S3 配置",
+        icon: "edit",
+        keywords: `${profile.host} ${profile.tags.join(" ")} edit`,
+        run: () => setS3EditorState({ mode: "edit", profile }),
+      });
+      items.push({
+        id: `s3:favorite:${profile.id}`,
+        label: `${profile.favorite ? "取消收藏" : "收藏"} S3：${profile.name}`,
+        hint: "S3 配置",
+        icon: "star",
+        keywords: `${profile.host} favorite 收藏`,
+        run: () => void s3Profiles.toggleFavorite(profile.id),
       });
     }
     return items;
@@ -1275,6 +1640,7 @@ function MainApp() {
           zenMode ? null : (
             <ActivityBar
               activeActivity={activeActivity}
+              visibleNavigationIcons={navigationIcons}
               onSelectActivity={handleSelectActivity}
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={toggleSidebar}
@@ -1385,6 +1751,8 @@ function MainApp() {
           onFontFamilyChange={setFontFamily}
           onFontSizeChange={setFontSize}
           onGpuAccelerationChange={setGpuAcceleration}
+          navigationIcons={navigationIcons}
+          onNavigationIconsChange={setNavigationIcons}
           onS3DownloadConcurrencyChange={setS3DownloadConcurrency}
           onS3UploadConcurrencyChange={setS3UploadConcurrency}
           onProfilesImported={async () => {

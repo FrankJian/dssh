@@ -16,6 +16,7 @@ import {
 import type { ThemeMode } from "../theme/useTheme";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import type { NavigationIconId } from "../app/ActivityBar";
 import {
   FONT_FAMILY_OPTIONS,
   FONT_SIZE_DEFAULT,
@@ -34,13 +35,15 @@ import {
   type RightClickAction,
 } from "./settings";
 
-type SettingsCategory = "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about";
+export type SettingsCategory = "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
   aiConfig: AiConfig;
   initialCategory?: SettingsCategory;
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
+  navigationIcons: readonly NavigationIconId[];
+  onNavigationIconsChange: (icons: NavigationIconId[]) => void;
   editorSettings: EditorSettings;
   fontSize: number;
   onFontSizeChange: (size: number) => void;
@@ -97,6 +100,18 @@ const themeOptions: Array<{
   { icon: "moon", label: "深色", mode: "dark" },
 ];
 
+const NAVIGATION_ICON_OPTIONS: Array<{
+  id: NavigationIconId;
+  label: string;
+  icon: "sessions" | "connections" | "bucket" | "bot" | "terminalTool";
+}> = [
+  { id: "sessions", label: "活动会话", icon: "sessions" },
+  { id: "connections", label: "连接管理", icon: "connections" },
+  { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
+  { id: "assistant", label: "AI 助手", icon: "bot" },
+  { id: "newLocalTerminal", label: "新建本地终端", icon: "terminalTool" },
+];
+
 export function SettingsDialog({
   aiConfig,
   copyOnSelect,
@@ -119,6 +134,8 @@ export function SettingsDialog({
   onTerminalBgOpacityChange,
   onTerminalWorkspaceInsetChange,
   onThemeChange,
+  navigationIcons,
+  onNavigationIconsChange,
   rightClick,
   s3DownloadConcurrency,
   s3UploadConcurrency,
@@ -372,6 +389,41 @@ export function SettingsDialog({
                       <span>{option.label}</span>
                     </button>
                   ))}
+                </div>
+
+                <div className="settings-section__head">
+                  <h3>左侧导航栏</h3>
+                  <p>选择要在左侧活动栏显示的入口。设置始终保留。</p>
+                </div>
+                <div className="settings-card settings-navigation-icons">
+                  {NAVIGATION_ICON_OPTIONS.map((option) => {
+                    const checked = navigationIcons.includes(option.id);
+                    const visibleActivityCount = navigationIcons.filter(
+                      (item) => item !== "assistant" && item !== "newLocalTerminal",
+                    ).length;
+                    const disableLastActivity =
+                      checked &&
+                      option.id !== "assistant" &&
+                      option.id !== "newLocalTerminal" &&
+                      visibleActivityCount === 1;
+                    return (
+                      <label className="checkbox-field" key={option.id}>
+                        <input
+                          checked={checked}
+                          disabled={disableLastActivity}
+                          onChange={(event) => {
+                            const next = event.currentTarget.checked
+                              ? [...navigationIcons, option.id]
+                              : navigationIcons.filter((item) => item !== option.id);
+                            onNavigationIconsChange(next);
+                          }}
+                          type="checkbox"
+                        />
+                        <Icon name={option.icon} height="15" width="15" />
+                        {option.label}
+                      </label>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}

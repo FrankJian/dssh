@@ -41,6 +41,7 @@ export interface AiChat {
   send: (args: SendArgs) => Promise<void>;
   approve: (callId: string, approved: boolean) => void;
   answerQuestion: (callId: string, optionIds: string[]) => void;
+  completeAppAction: (callId: string, result: string, isError: boolean) => void;
   completeSshSessionOpen: (callId: string, result: string, isError: boolean) => void;
   cancel: () => void;
   clear: () => void;
@@ -54,6 +55,8 @@ export function useAiChat(): AiChat {
   const seqRef = useRef(0);
   const pendingSshSessionCallsRef = useRef(new Set<string>());
   const sshSessionOutcomesRef = useRef(new Map<string, { result: string; isError: boolean }>());
+  const pendingAppActionCallsRef = useRef(new Set<string>());
+  const appActionOutcomesRef = useRef(new Map<string, { result: string; isError: boolean }>());
 
   const nextId = useCallback((prefix: string) => {
     seqRef.current += 1;
@@ -138,6 +141,24 @@ export function useAiChat(): AiChat {
             }
             break;
           }
+          if (
+            event.toolName === "control_app" &&
+            pendingAppActionCallsRef.current.has(event.callId)
+          ) {
+            const outcome = appActionOutcomesRef.current.get(event.callId);
+            if (outcome) {
+              pendingAppActionCallsRef.current.delete(event.callId);
+              appActionOutcomesRef.current.delete(event.callId);
+              setItems((prev) =>
+                prev.map((item) =>
+                  item.type === "tool" && item.callId === event.callId
+                    ? { ...item, status: outcome.isError ? "error" : "done", result: outcome.result }
+                    : item,
+                ),
+              );
+            }
+            break;
+          }
           setItems((prev) =>
             prev.map((item) =>
               item.type === "tool" && item.callId === event.callId
@@ -156,6 +177,16 @@ export function useAiChat(): AiChat {
             prev.map((item) =>
               item.type === "tool" && item.callId === event.callId
                 ? { ...item, status: "running", result: "正在打开 SSH 终端…" }
+                : item,
+            ),
+          );
+          break;
+        case "appAction":
+          pendingAppActionCallsRef.current.add(event.callId);
+          setItems((prev) =>
+            prev.map((item) =>
+              item.type === "tool" && item.callId === event.callId
+                ? { ...item, status: "running", result: "正在执行应用快捷操作…" }
                 : item,
             ),
           );
@@ -294,6 +325,20 @@ export function useAiChat(): AiChat {
     [],
   );
 
+  const completeAppAction = useCallback(
+    (callId: string, result: string, isError: boolean) => {
+      appActionOutcomesRef.current.set(callId, { result, isError });
+      setItems((prev) =>
+        prev.map((item) =>
+          item.type === "tool" && item.callId === callId
+            ? { ...item, status: isError ? "error" : "done", result }
+            : item,
+        ),
+      );
+    },
+    [],
+  );
+
   const cancel = useCallback(() => {
     const runId = runIdRef.current;
     if (!runId) {
@@ -321,6 +366,7 @@ export function useAiChat(): AiChat {
     send,
     approve,
     answerQuestion,
+    completeAppAction,
     completeSshSessionOpen,
     cancel,
     clear,

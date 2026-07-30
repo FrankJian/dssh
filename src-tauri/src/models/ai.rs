@@ -188,6 +188,15 @@ pub enum AiEvent {
         call_id: String,
         profile_id: String,
     },
+    /// Requests a validated, non-destructive application UI action. The
+    /// frontend owns execution because workspace state is renderer-local.
+    #[serde(rename_all = "camelCase")]
+    AppAction {
+        run_id: String,
+        call_id: String,
+        action: String,
+        args: Value,
+    },
     /// The agent's final answer for this run.
     #[serde(rename_all = "camelCase")]
     Final {

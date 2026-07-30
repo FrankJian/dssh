@@ -48,7 +48,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) {
-      return items.slice(0, 50);
+      return items;
     }
     return items
       .map((item) => ({
@@ -57,7 +57,6 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
       }))
       .filter((entry): entry is { item: PaletteItem; score: number } => entry.score !== null)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 50)
       .map((entry) => entry.item);
   }, [items, query]);
 

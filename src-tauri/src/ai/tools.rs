@@ -74,6 +74,45 @@ pub fn tool_defs() -> Vec<Tool> {
                 "required": ["server_id"],
                 "additionalProperties": false
             })),
+        Tool::new("control_app")
+            .with_description(
+                "执行 Duo SSH 的非破坏性界面快捷操作。可用于切换会话/连接管理/S3/终端视图，打开设置、AI 配置、\
+                 主机工具、当前终端的文件列表、端口转发或某台已保存服务器的 SFTP，以及切换主题、新建本地终端或新建配置。\
+                 action 必须使用指定枚举；open_sftp 需要先通过 list_servers 获取 server_id。\
+                 此工具不会删除配置、断开会话、关闭标签或执行远程命令。",
+            )
+            .with_schema(json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "show_sessions", "show_connections", "show_s3", "show_terminal",
+                            "open_settings", "open_ai_config", "open_host_tools", "open_file_explorer",
+                            "open_sftp", "open_port_forward", "set_theme", "new_local_terminal",
+                            "new_ssh_profile", "new_s3_profile", "split_horizontal", "split_vertical",
+                            "reconnect_active_session", "cancel_reconnect"
+                        ],
+                        "description": "要执行的界面动作。"
+                    },
+                    "server_id": {
+                        "type": "string",
+                        "description": "open_sftp 的目标 SSH 服务器 id（来自 list_servers）。"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["appearance", "terminal", "editor", "s3", "ai", "config", "about"],
+                        "description": "open_settings 要打开的设置分类，省略时为 appearance。"
+                    },
+                    "theme": {
+                        "type": "string",
+                        "enum": ["system", "light", "dark"],
+                        "description": "set_theme 的主题模式。"
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            })),
         Tool::new("ask_user_question")
             .with_description(
                 "向用户提出一个需要选择的问题。仅在无法从当前上下文确定目标时使用，例如让用户从多台服务器中选择。\
@@ -141,6 +180,79 @@ pub struct OpenSshSessionRequest {
     pub host: String,
     pub port: u16,
     pub username: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppActionRequest {
+    pub action: String,
+    pub args: Value,
+}
+
+/// Validate a model-requested app action before it crosses the Rust/UI boundary.
+/// This whitelist intentionally contains only reversible UI navigation and
+/// creation entry points; destructive operations keep their own confirmation
+/// flow and must never be smuggled through this tool.
+pub fn prepare_app_action(state: &AppState, args: &Value) -> Result<AppActionRequest, String> {
+    let action = args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "缺少参数 action。".to_string())?;
+
+    match action {
+        "show_sessions"
+        | "show_connections"
+        | "show_s3"
+        | "show_terminal"
+        | "open_ai_config"
+        | "open_host_tools"
+        | "open_file_explorer"
+        | "open_port_forward"
+        | "new_local_terminal"
+        | "new_ssh_profile"
+        | "new_s3_profile"
+        | "split_horizontal"
+        | "split_vertical"
+        | "reconnect_active_session"
+        | "cancel_reconnect" => {}
+        "open_settings" => {
+            if let Some(category) = args.get("category").and_then(Value::as_str)
+                && !matches!(
+                    category,
+                    "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about"
+                )
+            {
+                return Err("无效的设置分类。".to_string());
+            }
+        }
+        "set_theme" => match args.get("theme").and_then(Value::as_str) {
+            Some("system" | "light" | "dark") => {}
+            _ => return Err("set_theme 需要 system、light 或 dark 主题参数。".to_string()),
+        },
+        "open_sftp" => {
+            let server_id = args
+                .get("server_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "open_sftp 需要有效的 server_id。".to_string())?;
+            if state
+                .profiles
+                .get_profile(server_id)
+                .map_err(|error| format!("读取服务器配置失败：{}", error.message))?
+                .is_none()
+            {
+                return Err(format!("找不到 id 为 {server_id} 的服务器。"));
+            }
+        }
+        _ => return Err(format!("不支持的应用操作：{action}。")),
+    }
+
+    Ok(AppActionRequest {
+        action: action.to_string(),
+        args: args.clone(),
+    })
 }
 
 pub fn prepare_open_ssh_session(
@@ -465,6 +577,7 @@ mod tests {
         assert!(tool_needs_approval("open_ssh_session"));
         assert!(tool_needs_approval("run_command"));
         assert!(!tool_needs_approval("list_servers"));
+        assert!(!tool_needs_approval("control_app"));
     }
 
     #[test]
@@ -473,6 +586,15 @@ mod tests {
             tool_defs()
                 .iter()
                 .any(|tool| tool.name == "open_ssh_session".into())
+        );
+    }
+
+    #[test]
+    fn app_control_tool_is_available_to_the_agent() {
+        assert!(
+            tool_defs()
+                .iter()
+                .any(|tool| tool.name == "control_app".into())
         );
     }
 }

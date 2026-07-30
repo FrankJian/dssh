@@ -21,6 +21,8 @@ import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 
 interface FileBrowserProps {
+  /** Suppress the native WebView menu when no SFTP context actions exist. */
+  disableContextMenu?: boolean;
   profileId: string | null;
   /** Enter the given remote directory in the active terminal (`cd <dir>`). */
   onOpenInTerminal?: (dir: string) => void;
@@ -111,7 +113,7 @@ function selectionAfterClick(
 
 /** WinSCP-style two-pane SFTP workspace. Remote operations remain inside the
  * verified Rust SFTP client; local paths are only listed after user navigation. */
-export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
+export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTerminal }: FileBrowserProps) {
   const [remotePath, setRemotePath] = useState("");
   const [remoteInput, setRemoteInput] = useState("");
   const [remoteEntries, setRemoteEntries] = useState<SftpEntry[]>([]);
@@ -329,7 +331,11 @@ export function FileBrowser({ profileId, onOpenInTerminal }: FileBrowserProps) {
   }
 
   return (
-    <section className="sftp-dual-browser" aria-label="SFTP 双栏文件管理器">
+    <section
+      aria-label="SFTP 双栏文件管理器"
+      className="sftp-dual-browser"
+      onContextMenu={disableContextMenu ? (event) => event.preventDefault() : undefined}
+    >
       <Pane
         entries={remoteEntries}
         isLoading={loadingRemote}

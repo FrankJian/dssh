@@ -1389,10 +1389,12 @@ button {
   flex: 1;
   flex-direction: column;
   background: var(--bg-app);
+  container-type: inline-size;
 }
 
 .session-manager__toolbar {
   display: flex;
+  min-width: 0;
   height: 48px;
   flex: 0 0 auto;
   align-items: center;
@@ -1404,9 +1406,10 @@ button {
 
 .session-manager__search {
   display: flex;
-  min-width: 120px;
+  min-width: 0;
   height: 30px;
-  flex: 0 1 260px;
+  max-width: 260px;
+  flex: 1 1 180px;
   align-items: center;
   gap: 6px;
   padding: 0 10px;
@@ -1466,6 +1469,7 @@ button {
 
 .session-manager__sort {
   display: inline-flex;
+  min-width: 0;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
@@ -1474,6 +1478,7 @@ button {
 }
 
 .session-manager__sort select {
+  min-width: 0;
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
@@ -1487,6 +1492,7 @@ button {
 
 .session-manager__group {
   display: inline-flex;
+  min-width: 0;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
@@ -1495,6 +1501,7 @@ button {
 }
 
 .session-manager__group select {
+  min-width: 0;
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
@@ -1552,6 +1559,52 @@ button {
 
 .session-manager__toolbar-spacer {
   flex: 1 1 auto;
+}
+
+/* The connection manager shares width with the optional right dock. Keep the
+   compact controls in one line by shrinking text fields first, then hiding
+   labels / low-frequency import actions at narrow widths. */
+@container (max-width: 920px) {
+  .session-manager__toolbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+  .session-manager__search {
+    flex-basis: 112px;
+  }
+
+  .session-manager__new {
+    width: 30px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .session-manager__new > span,
+  .session-manager__sort > span,
+  .session-manager__group > span {
+    display: none;
+  }
+
+  .session-manager__sort select,
+  .session-manager__group select {
+    width: 96px;
+  }
+}
+
+@container (max-width: 700px) {
+  .session-manager__toolbar > .icon-button,
+  .session-manager__sort {
+    display: none;
+  }
+
+  .session-manager__search {
+    flex-basis: 72px;
+  }
+
+  .session-manager__group select {
+    width: 76px;
+  }
 }
 
 .session-manager__content {
@@ -6164,6 +6217,10 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 .ai-chat__header {
   display: flex;
   height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  max-height: var(--toolbar-height);
+  box-sizing: border-box;
+  min-width: 0;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
@@ -6175,25 +6232,42 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 
 .ai-chat__title {
   display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .ai-chat__title .icon {
+  flex: 0 0 auto;
   color: var(--accent-strong);
+}
+
+.ai-chat__title > span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-chat__header-actions {
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
 }
 
 .ai-chat__model-select {
+  width: min(220px, 100%);
+  min-width: 0;
   max-width: 220px;
+  flex: 1 1 108px;
   height: 28px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
@@ -8230,6 +8304,29 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
 }
 
 .detached-titlebar__return:hover {
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.detached-titlebar__close {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  margin: 0 6px 0 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.detached-titlebar__close:hover {
   background: var(--bg-hover);
   color: var(--text-base);
 }

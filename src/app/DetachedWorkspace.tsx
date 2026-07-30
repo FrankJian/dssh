@@ -8,6 +8,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
+import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
 import { toast, ToastHost } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
@@ -18,7 +19,15 @@ interface DetachedWorkspaceProps {
   workspace: DetachedWorkspace;
 }
 
-function DetachedTitlebar({ title, onReturn }: { title: string; onReturn: () => void }) {
+function DetachedTitlebar({
+  title,
+  onClose,
+  onReturn,
+}: {
+  title: string;
+  onClose?: () => void;
+  onReturn: () => void;
+}) {
   return (
     <div className={`titlebar detached-titlebar${isMacOS ? " titlebar--mac" : ""}`}>
       <div className="titlebar__drag" data-tauri-drag-region />
@@ -33,6 +42,17 @@ function DetachedTitlebar({ title, onReturn }: { title: string; onReturn: () => 
         <Icon name="restore" height="15" width="15" />
         <span>合并回主窗口</span>
       </button>
+      {onClose ? (
+        <button
+          aria-label="关闭独立工作区"
+          className="detached-titlebar__close"
+          onClick={onClose}
+          title="关闭"
+          type="button"
+        >
+          <Icon name="close" height="15" width="15" />
+        </button>
+      ) : null}
       {isMacOS ? null : <WindowControls />}
     </div>
   );
@@ -42,11 +62,23 @@ function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
   const profileId = workspace.sftp?.profileId ?? null;
   const currentWindow = getCurrentWindow();
 
+  function closeSftpWorkspace() {
+    void discardDetachedWorkspace(workspace.label)
+      .then(() => currentWindow.close())
+      .catch((error: unknown) => {
+        toast(error instanceof Error ? error.message : "关闭独立 SFTP 窗口失败。", "error");
+      });
+  }
+
   return (
     <div className="detached-workspace">
-      <DetachedTitlebar title={workspace.title} onReturn={() => void currentWindow.close()} />
+      <DetachedTitlebar
+        title={workspace.title}
+        onClose={closeSftpWorkspace}
+        onReturn={() => void currentWindow.close()}
+      />
       <main className="detached-workspace__content detached-workspace__content--sftp">
-        <FileBrowser profileId={profileId} />
+        <FileBrowser disableContextMenu profileId={profileId} />
       </main>
       <ToastHost />
     </div>
@@ -230,6 +262,7 @@ function DetachedUnavailable({ message }: { message: string }) {
 }
 
 export function DetachedWorkspaceWindow({ workspace }: DetachedWorkspaceProps) {
+  useTheme();
   if (workspace.kind === "sftp") return <DetachedSftpWindow workspace={workspace} />;
   return <DetachedTerminalWindow workspace={workspace} />;
 }

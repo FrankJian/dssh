@@ -112,6 +112,13 @@ export type AiEvent =
       callId: string;
       profileId: string;
     }
+  | {
+      kind: "appAction";
+      runId: string;
+      callId: string;
+      action: string;
+      args: Record<string, unknown>;
+    }
   | { kind: "final"; runId: string; text: string | null }
   | { kind: "error"; runId: string; message: string }
   | { kind: "done"; runId: string };
