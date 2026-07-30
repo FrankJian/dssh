@@ -4,6 +4,7 @@ import { AiSettingsSection } from "../ai/AiSettingsSection";
 import type { AiConfig } from "../ai/useAiConfig";
 import { AboutSection } from "./AboutSection";
 import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
+import type { EditorSettings } from "./useEditorSettings";
 import {
   exportProfilesEncrypted,
   exportProfilesYaml,
@@ -20,6 +21,8 @@ import {
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  EDITOR_TAB_SIZE_MAX,
+  EDITOR_TAB_SIZE_MIN,
   RIGHT_CLICK_OPTIONS,
   S3_TRANSFER_CONCURRENCY_MAX,
   S3_TRANSFER_CONCURRENCY_MIN,
@@ -27,16 +30,18 @@ import {
   TERMINAL_BG_OPACITY_MIN,
   TERMINAL_WORKSPACE_INSET_MAX,
   TERMINAL_WORKSPACE_INSET_MIN,
+  type EditorRenderWhitespace,
   type RightClickAction,
 } from "./settings";
 
-type SettingsCategory = "appearance" | "terminal" | "s3" | "ai" | "config" | "about";
+type SettingsCategory = "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
   aiConfig: AiConfig;
   initialCategory?: SettingsCategory;
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
+  editorSettings: EditorSettings;
   fontSize: number;
   onFontSizeChange: (size: number) => void;
   onResetFontSize: () => void;
@@ -65,10 +70,11 @@ interface SettingsDialogProps {
 const categories: Array<{
   id: SettingsCategory;
   label: string;
-  icon: "sun" | "monitor" | "bucket" | "file" | "bot" | "info";
+  icon: "sun" | "monitor" | "fileCode" | "bucket" | "file" | "bot" | "info";
 }> = [
   { icon: "sun", id: "appearance", label: "外观" },
   { icon: "monitor", id: "terminal", label: "终端" },
+  { icon: "fileCode", id: "editor", label: "文件编辑器" },
   { icon: "bucket", id: "s3", label: "对象存储" },
   { icon: "bot", id: "ai", label: "AI" },
   { icon: "file", id: "config", label: "配置文件" },
@@ -94,6 +100,7 @@ const themeOptions: Array<{
 export function SettingsDialog({
   aiConfig,
   copyOnSelect,
+  editorSettings,
   fontFamily,
   fontSize,
   gpuAcceleration,
@@ -529,6 +536,117 @@ export function SettingsDialog({
                   />
                 </label>
 
+              </section>
+            ) : null}
+
+            {category === "editor" ? (
+              <section className="settings-section" aria-label="文件编辑器设置">
+                <div className="settings-section__head">
+                  <h3>文件编辑器</h3>
+                  <p>这些设置会立即应用到远程文件列表中的代码编辑器。</p>
+                </div>
+
+                <div className="settings-card">
+                  <label className="checkbox-field">
+                    <input
+                      checked={editorSettings.inheritTerminal}
+                      onChange={(event) => editorSettings.setInheritTerminal(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    继承终端字体与字号
+                  </label>
+                  <p className="settings-card__hint">
+                    开启后，终端的字体样式和大小变更会同步到文件编辑器。
+                  </p>
+                </div>
+
+                <div className="form-grid">
+                  <label className="settings-field">
+                    <span className="settings-field__label">字体</span>
+                    <select
+                      aria-label="编辑器字体"
+                      className="settings-select"
+                      disabled={editorSettings.inheritTerminal}
+                      onChange={(event) => editorSettings.setFontFamily(event.currentTarget.value)}
+                      style={{ fontFamily: editorSettings.fontFamily }}
+                      value={editorSettings.fontFamily}
+                    >
+                      {FONT_FAMILY_OPTIONS.map((option) => (
+                        <option key={option.id} style={{ fontFamily: option.value }} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-field__label">字号</span>
+                    <input
+                      aria-label="编辑器字号"
+                      className="settings-number"
+                      disabled={editorSettings.inheritTerminal}
+                      max={FONT_SIZE_MAX}
+                      min={FONT_SIZE_MIN}
+                      onChange={(event) => editorSettings.setFontSize(Number(event.currentTarget.value))}
+                      type="number"
+                      value={editorSettings.fontSize}
+                    />
+                  </label>
+                </div>
+
+                <div className="settings-section__head">
+                  <h3>显示与编辑</h3>
+                  <p>仅影响文件编辑器，不改变终端行为。</p>
+                </div>
+                <div className="settings-card settings-card--fields">
+                  <label className="checkbox-field">
+                    <input
+                      checked={editorSettings.wordWrap}
+                      onChange={(event) => editorSettings.setWordWrap(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    自动换行
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      checked={editorSettings.lineNumbers}
+                      onChange={(event) => editorSettings.setLineNumbers(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    显示行号
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      checked={editorSettings.minimap}
+                      onChange={(event) => editorSettings.setMinimap(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    显示小地图
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-field__label">Tab 宽度</span>
+                    <input
+                      className="settings-number"
+                      max={EDITOR_TAB_SIZE_MAX}
+                      min={EDITOR_TAB_SIZE_MIN}
+                      onChange={(event) => editorSettings.setTabSize(Number(event.currentTarget.value))}
+                      type="number"
+                      value={editorSettings.tabSize}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-field__label">显示空白字符</span>
+                    <select
+                      className="settings-select"
+                      onChange={(event) => editorSettings.setRenderWhitespace(event.currentTarget.value as EditorRenderWhitespace)}
+                      value={editorSettings.renderWhitespace}
+                    >
+                      <option value="none">不显示</option>
+                      <option value="selection">仅选中时显示</option>
+                      <option value="boundary">仅行尾显示</option>
+                      <option value="all">始终显示</option>
+                    </select>
+                  </label>
+                </div>
               </section>
             ) : null}
 

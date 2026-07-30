@@ -42,6 +42,48 @@ export function normalizeFontFamily(value: string | null): string {
     : DEFAULT_FONT_FAMILY;
 }
 
+export const editorInheritTerminalKey = "dssh.editor.inheritTerminal";
+export const editorFontFamilyKey = "dssh.editor.fontFamily";
+export const editorFontSizeKey = "dssh.editor.fontSize";
+export const editorWordWrapKey = "dssh.editor.wordWrap";
+export const editorMinimapKey = "dssh.editor.minimap";
+export const editorLineNumbersKey = "dssh.editor.lineNumbers";
+export const editorTabSizeKey = "dssh.editor.tabSize";
+export const editorRenderWhitespaceKey = "dssh.editor.renderWhitespace";
+
+export const EDITOR_INHERIT_TERMINAL_DEFAULT = true;
+export const EDITOR_WORD_WRAP_DEFAULT = true;
+export const EDITOR_MINIMAP_DEFAULT = false;
+export const EDITOR_LINE_NUMBERS_DEFAULT = true;
+export const EDITOR_TAB_SIZE_DEFAULT = 2;
+export const EDITOR_TAB_SIZE_MIN = 1;
+export const EDITOR_TAB_SIZE_MAX = 8;
+
+export type EditorRenderWhitespace = "all" | "boundary" | "none" | "selection";
+
+export interface EditorOptions {
+  fontFamily: string;
+  fontSize: number;
+  lineNumbers: "off" | "on";
+  minimap: boolean;
+  renderWhitespace: EditorRenderWhitespace;
+  tabSize: number;
+  wordWrap: "off" | "on";
+}
+
+export function clampEditorTabSize(value: number): number {
+  if (!Number.isFinite(value)) {
+    return EDITOR_TAB_SIZE_DEFAULT;
+  }
+  return Math.min(EDITOR_TAB_SIZE_MAX, Math.max(EDITOR_TAB_SIZE_MIN, Math.round(value)));
+}
+
+export function normalizeEditorRenderWhitespace(value: string | null): EditorRenderWhitespace {
+  return value === "all" || value === "boundary" || value === "selection" || value === "none"
+    ? value
+    : "selection";
+}
+
 export const terminalCopyOnSelectKey = "dssh.terminal.copyOnSelect";
 export const terminalRightClickKey = "dssh.terminal.rightClick";
 export const terminalGpuKey = "dssh.terminal.gpuAcceleration";

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
+import type { EditorOptions } from "../settings/settings";
 import { loadMonaco, refreshMonacoTheme } from "./monacoLoader";
 
 interface MonacoDocument {
@@ -11,6 +12,7 @@ interface MonacoDocument {
 interface MonacoRemoteEditorProps {
   activePath: string | null;
   documents: Record<string, MonacoDocument>;
+  editorOptions: EditorOptions;
   filePaths: string[];
   hidden: boolean;
   languageOverrides: Record<string, string>;
@@ -104,6 +106,7 @@ function disposeEntry(entry: ModelEntry) {
 export function MonacoRemoteEditor({
   activePath,
   documents,
+  editorOptions,
   filePaths,
   hidden,
   languageOverrides,
@@ -140,16 +143,17 @@ export function MonacoRemoteEditor({
           automaticLayout: true,
           bracketPairColorization: { enabled: true },
           folding: true,
-          fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim(),
-          fontSize: 13,
+          fontFamily: editorOptions.fontFamily,
+          fontSize: editorOptions.fontSize,
+          lineNumbers: editorOptions.lineNumbers,
           lineNumbersMinChars: 3,
-          minimap: { enabled: false },
+          minimap: { enabled: editorOptions.minimap },
           padding: { top: 10, bottom: 10 },
-          renderWhitespace: "selection",
+          renderWhitespace: editorOptions.renderWhitespace,
           scrollBeyondLastLine: false,
           smoothScrolling: true,
-          tabSize: 2,
-          wordWrap: "on",
+          tabSize: editorOptions.tabSize,
+          wordWrap: editorOptions.wordWrap,
         });
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSaveRef.current());
         editorRef.current = editor;
@@ -171,6 +175,18 @@ export function MonacoRemoteEditor({
       setIsReady(false);
     };
   }, [shouldLoad]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({
+      fontFamily: editorOptions.fontFamily,
+      fontSize: editorOptions.fontSize,
+      lineNumbers: editorOptions.lineNumbers,
+      minimap: { enabled: editorOptions.minimap },
+      renderWhitespace: editorOptions.renderWhitespace,
+      tabSize: editorOptions.tabSize,
+      wordWrap: editorOptions.wordWrap,
+    });
+  }, [editorOptions]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {

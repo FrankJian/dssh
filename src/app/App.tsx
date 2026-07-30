@@ -22,6 +22,7 @@ import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
 import { SettingsDialog } from "../settings/SettingsDialog";
+import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
@@ -177,6 +178,7 @@ function MainApp() {
     setS3UploadConcurrency,
     setRightClick,
   } = useTerminalSettings();
+  const editorSettings = useEditorSettings(fontFamily, fontSize);
   const {
     allTags,
     createProfile,
@@ -1104,6 +1106,7 @@ function MainApp() {
           activeRemoteFilePath ? (
             <RemoteFileEditor
               activePath={activeRemoteFilePath}
+              editorOptions={editorSettings.options}
               filePaths={openRemoteFilePaths}
               key={fileTreeProfile.id}
               onCloseFile={handleCloseRemoteFile}
@@ -1371,6 +1374,7 @@ function MainApp() {
       {isSettingsOpen ? (
         <SettingsDialog
           aiConfig={aiConfig}
+          editorSettings={editorSettings}
           initialCategory={settingsCategory}
           copyOnSelect={copyOnSelect}
           fontFamily={fontFamily}

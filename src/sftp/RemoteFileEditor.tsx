@@ -8,11 +8,13 @@ import {
   MonacoRemoteEditor,
 } from "./MonacoRemoteEditor";
 import { sftpReadImage, sftpReadText, sftpWriteText } from "../services/sftpService";
+import type { EditorOptions } from "../settings/settings";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/ToastHost";
 
 interface RemoteFileEditorProps {
   activePath: string | null;
+  editorOptions: EditorOptions;
   filePaths: string[];
   onCloseFile: (path: string) => void;
   onSelectFile: (path: string) => void;
@@ -78,6 +80,7 @@ const MAX_PREVIEW_WIDTH = 720;
  * here while Monaco owns only the editable text surface. */
 export function RemoteFileEditor({
   activePath,
+  editorOptions,
   filePaths,
   onCloseFile,
   onSelectFile,
@@ -522,6 +525,7 @@ export function RemoteFileEditor({
         <MonacoRemoteEditor
           activePath={activePath}
           documents={documents}
+          editorOptions={editorOptions}
           filePaths={filePaths}
           hidden={activeIsImage || activeIsBinary || !activeDocument || activeDocument.isLoading || Boolean(activeDocument.error)}
           languageOverrides={languageOverrides}

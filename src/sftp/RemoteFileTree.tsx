@@ -768,6 +768,14 @@ export function RemoteFileTree({
     setContextMenu({ entry, maxHeight: Math.max(80, panelHeight - 16), x: event.clientX, y: event.clientY });
   }
 
+  function setDirectoryAsRoot(path: string) {
+    setContextMenu(null);
+    setSelectedPaths(new Set());
+    setSelectionAnchor(null);
+    setInlineAction(null);
+    void loadRoot(path);
+  }
+
   function beginPointerDrag(event: React.PointerEvent, entry: SftpEntry) {
     if (event.button !== 0 || isMutating) {
       return;
@@ -1235,6 +1243,15 @@ export function RemoteFileTree({
           ) : null}
           {contextMenu.entry.isDir ? (
             <>
+              <button
+                className="context-menu__item"
+                onClick={() => setDirectoryAsRoot(contextMenu.entry.path)}
+                role="menuitem"
+                type="button"
+              >
+                <Icon name="folder" height="15" width="15" />
+                <span>设为根目录</span>
+              </button>
               <button
                 className="context-menu__item"
                 onClick={() => beginInlineAction({
