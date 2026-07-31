@@ -43,6 +43,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::app_health,
             commands::app::app_update_endpoint_diagnostics,
+            commands::app::list_system_font_families,
             commands::profiles::list_ssh_profiles,
             commands::profiles::create_ssh_profile,
             commands::profiles::update_ssh_profile,

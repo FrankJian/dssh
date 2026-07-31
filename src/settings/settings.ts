@@ -34,12 +34,16 @@ export const FONT_FAMILY_OPTIONS: FontFamilyOption[] = [
 ];
 
 export function normalizeFontFamily(value: string | null): string {
-  if (!value) {
+  const normalized = value?.trim();
+  if (!normalized) {
     return DEFAULT_FONT_FAMILY;
   }
-  return FONT_FAMILY_OPTIONS.some((option) => option.value === value)
-    ? value
-    : DEFAULT_FONT_FAMILY;
+  return normalized;
+}
+
+/** Escapes an installed family name for use in a CSS/xterm font stack. */
+export function systemFontFamilyValue(family: string): string {
+  return `"${family.replace(/[\\"]/g, "\\$&")}", monospace`;
 }
 
 export const editorInheritTerminalKey = "dssh.editor.inheritTerminal";
@@ -118,7 +122,7 @@ export const GPU_ACCELERATION_DEFAULT = true;
  * wallpaper when one is set, otherwise the app background.
  */
 export const TERMINAL_BG_OPACITY_DEFAULT = 100;
-export const TERMINAL_BG_OPACITY_MIN = 20;
+export const TERMINAL_BG_OPACITY_MIN = 0;
 export const TERMINAL_BG_OPACITY_MAX = 100;
 
 export function clampBgOpacity(value: number): number {

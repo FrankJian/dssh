@@ -1,9 +1,13 @@
 use std::time::Duration;
 
+use font_kit::source::SystemSource;
 use serde::Serialize;
 
-use crate::config::APP_NAME;
 use crate::models::app::AppHealth;
+use crate::{
+    config::APP_NAME,
+    error::{AppError, AppResult},
+};
 
 /// Update manifests are published to the GitHub release that the updater plugin
 /// reads (`plugins.updater.endpoints` in tauri.conf.json). Keep both lists in
@@ -25,6 +29,25 @@ pub fn app_health() -> AppHealth {
         version: env!("CARGO_PKG_VERSION").to_string(),
         status: "ok".to_string(),
     }
+}
+
+fn collect_system_font_families() -> AppResult<Vec<String>> {
+    let mut families = SystemSource::new()
+        .all_families()
+        .map_err(|error| AppError::new("font_enumeration_failed", error.to_string()))?;
+    families.retain(|family| !family.trim().is_empty());
+    families.sort_unstable_by_key(|family| family.to_lowercase());
+    families.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    Ok(families)
+}
+
+/// Enumerate installed system font families without exposing font files or
+/// machine-specific paths to the frontend.
+#[tauri::command]
+pub async fn list_system_font_families() -> AppResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(collect_system_font_families)
+        .await
+        .map_err(|error| AppError::new("font_enumeration_failed", error.to_string()))?
 }
 
 /// Probe every configured updater manifest endpoint so the UI can show the

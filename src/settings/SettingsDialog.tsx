@@ -1,5 +1,5 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AiSettingsSection } from "../ai/AiSettingsSection";
 import type { AiConfig } from "../ai/useAiConfig";
 import { AboutSection } from "./AboutSection";
@@ -13,9 +13,11 @@ import {
   readTextFile,
   writeTextFile,
 } from "../services/configService";
+import { listSystemFontFamilies } from "../services/appService";
 import type { ThemeMode } from "../theme/useTheme";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { SelectMenu } from "../ui/SelectMenu";
 import type { NavigationIconId } from "../app/ActivityBar";
 import {
   FONT_FAMILY_OPTIONS,
@@ -32,7 +34,9 @@ import {
   TERMINAL_WORKSPACE_INSET_MAX,
   TERMINAL_WORKSPACE_INSET_MIN,
   type EditorRenderWhitespace,
+  type FontFamilyOption,
   type RightClickAction,
+  systemFontFamilyValue,
 } from "./settings";
 
 export type SettingsCategory = "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about";
@@ -112,6 +116,32 @@ const NAVIGATION_ICON_OPTIONS: Array<{
   { id: "newLocalTerminal", label: "新建本地终端", icon: "terminalTool" },
 ];
 
+function buildFontOptions(systemFamilies: readonly string[], currentValues: readonly string[]): FontFamilyOption[] {
+  const options = [...FONT_FAMILY_OPTIONS];
+  const values = new Set(options.map((option) => option.value));
+
+  for (const family of systemFamilies) {
+    const value = systemFontFamilyValue(family);
+    if (values.has(value)) {
+      continue;
+    }
+    values.add(value);
+    options.push({ id: `system:${family}`, label: family, value });
+  }
+
+  // Keep a saved custom font selectable while the system-font request is still
+  // loading, or if it was removed from the operating system after being saved.
+  for (const value of currentValues) {
+    if (values.has(value)) {
+      continue;
+    }
+    values.add(value);
+    options.push({ id: `current:${value}`, label: `${value}（当前）`, value });
+  }
+
+  return options;
+}
+
 export function SettingsDialog({
   aiConfig,
   copyOnSelect,
@@ -144,7 +174,20 @@ export function SettingsDialog({
   terminalWorkspaceInset,
   themeMode,
 }: SettingsDialogProps) {
-  const [category, setCategory] = useState<SettingsCategory>(initialCategory ?? "appearance");
+  const s3NavigationEnabled = navigationIcons.includes("s3");
+  const aiNavigationEnabled = navigationIcons.includes("assistant");
+  const visibleCategories = categories.filter(
+    (item) => (item.id !== "s3" || s3NavigationEnabled) && (item.id !== "ai" || aiNavigationEnabled),
+  );
+  const [category, setCategory] = useState<SettingsCategory>(
+    () => (
+      (initialCategory === "s3" && !s3NavigationEnabled) ||
+      (initialCategory === "ai" && !aiNavigationEnabled)
+        ? "appearance"
+        : initialCategory ?? "appearance"
+    ),
+  );
+  const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>([]);
   const [yamlText, setYamlText] = useState("");
   const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -156,6 +199,10 @@ export function SettingsDialog({
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [isDraggingWindow, setIsDraggingWindow] = useState(false);
   const windowRef = useRef<HTMLElement>(null);
+  const fontOptions = useMemo(
+    () => buildFontOptions(systemFontFamilies, [fontFamily, editorSettings.fontFamily]),
+    [editorSettings.fontFamily, fontFamily, systemFontFamilies],
+  );
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -166,6 +213,31 @@ export function SettingsDialog({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listSystemFontFamilies()
+      .then((families) => {
+        if (!cancelled) {
+          setSystemFontFamilies(families);
+        }
+      })
+      .catch(() => {
+        // The preset list remains available if the host cannot enumerate fonts.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      (!s3NavigationEnabled && category === "s3") ||
+      (!aiNavigationEnabled && category === "ai")
+    ) {
+      setCategory("appearance");
+    }
+  }, [aiNavigationEnabled, category, s3NavigationEnabled]);
 
   const loadYaml = useCallback(async () => {
     setConfigError(null);
@@ -353,7 +425,7 @@ export function SettingsDialog({
 
         <div className="settings-window__body">
           <nav className="settings-nav" aria-label="设置分类">
-            {categories.map((item) => (
+            {visibleCategories.map((item) => (
               <button
                 aria-current={category === item.id}
                 className={`settings-nav__item ${category === item.id ? "is-active" : ""}`.trim()}
@@ -466,21 +538,17 @@ export function SettingsDialog({
 
                 <div className="settings-section__head">
                   <h3>字体样式</h3>
-                  <p>选择终端使用的等宽字体，需系统已安装该字体。</p>
+                  <p>选择终端字体；已安装的系统字体会自动显示，建议使用等宽字体。</p>
                 </div>
-                <select
-                  aria-label="终端字体"
-                  className="settings-select"
-                  onChange={(event) => onFontFamilyChange(event.currentTarget.value)}
-                  style={{ fontFamily }}
+                <SelectMenu
+                  ariaLabel="终端字体"
+                  className="settings-select-menu"
+                  onChange={onFontFamilyChange}
+                  options={fontOptions}
+                  searchable
+                  searchPlaceholder="搜索字体名称"
                   value={fontFamily}
-                >
-                  {FONT_FAMILY_OPTIONS.map((option) => (
-                    <option key={option.id} style={{ fontFamily: option.value }} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                />
 
                 <div className="settings-section__head">
                   <h3>鼠标</h3>
@@ -488,19 +556,13 @@ export function SettingsDialog({
                 </div>
                 <label className="settings-field">
                   <span className="settings-field__label">右键点击</span>
-                  <select
-                    className="settings-select"
-                    onChange={(event) =>
-                      onRightClickChange(event.currentTarget.value as RightClickAction)
-                    }
+                  <SelectMenu
+                    ariaLabel="右键点击"
+                    className="settings-select-menu"
+                    onChange={(value) => onRightClickChange(value as RightClickAction)}
+                    options={RIGHT_CLICK_OPTIONS}
                     value={rightClick}
-                  >
-                    {RIGHT_CLICK_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
                 <label className="checkbox-field">
                   <input
@@ -615,20 +677,16 @@ export function SettingsDialog({
                 <div className="form-grid">
                   <label className="settings-field">
                     <span className="settings-field__label">字体</span>
-                    <select
-                      aria-label="编辑器字体"
-                      className="settings-select"
+                    <SelectMenu
+                      ariaLabel="编辑器字体"
+                      className="settings-select-menu"
                       disabled={editorSettings.inheritTerminal}
-                      onChange={(event) => editorSettings.setFontFamily(event.currentTarget.value)}
-                      style={{ fontFamily: editorSettings.fontFamily }}
+                      onChange={editorSettings.setFontFamily}
+                      options={fontOptions}
+                      searchable
+                      searchPlaceholder="搜索字体名称"
                       value={editorSettings.fontFamily}
-                    >
-                      {FONT_FAMILY_OPTIONS.map((option) => (
-                        <option key={option.id} style={{ fontFamily: option.value }} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </label>
                   <label className="settings-field">
                     <span className="settings-field__label">字号</span>
@@ -687,22 +745,24 @@ export function SettingsDialog({
                   </label>
                   <label className="settings-field">
                     <span className="settings-field__label">显示空白字符</span>
-                    <select
-                      className="settings-select"
-                      onChange={(event) => editorSettings.setRenderWhitespace(event.currentTarget.value as EditorRenderWhitespace)}
+                    <SelectMenu
+                      ariaLabel="显示空白字符"
+                      className="settings-select-menu"
+                      onChange={(value) => editorSettings.setRenderWhitespace(value as EditorRenderWhitespace)}
+                      options={[
+                        { value: "none", label: "不显示" },
+                        { value: "selection", label: "仅选中时显示" },
+                        { value: "boundary", label: "仅行尾显示" },
+                        { value: "all", label: "始终显示" },
+                      ]}
                       value={editorSettings.renderWhitespace}
-                    >
-                      <option value="none">不显示</option>
-                      <option value="selection">仅选中时显示</option>
-                      <option value="boundary">仅行尾显示</option>
-                      <option value="all">始终显示</option>
-                    </select>
+                    />
                   </label>
                 </div>
               </section>
             ) : null}
 
-            {category === "s3" ? (
+            {s3NavigationEnabled && category === "s3" ? (
               <section className="settings-section" aria-label="对象存储传输">
                 <div className="settings-section__head">
                   <h3>传输并发</h3>
@@ -735,7 +795,7 @@ export function SettingsDialog({
               </section>
             ) : null}
 
-            {category === "ai" ? <AiSettingsSection aiConfig={aiConfig} /> : null}
+            {aiNavigationEnabled && category === "ai" ? <AiSettingsSection aiConfig={aiConfig} /> : null}
 
             {category === "config" ? (
               <section className="settings-section" aria-label="配置文件">

@@ -217,11 +217,10 @@ export function TerminalView({
       }
 
       if (primaryMod && event.key.toLowerCase() === "v") {
-        void navigator.clipboard?.readText().then((text) => {
-          if (text) {
-            terminal.paste(text);
-          }
-        });
+        // Let the WebView dispatch its native `paste` event. Reading through
+        // navigator.clipboard here makes macOS WebKit show a Paste permission
+        // affordance; the capture handler below receives the same data without
+        // that prompt and writes it exactly once.
         return false;
       }
 
@@ -277,6 +276,19 @@ export function TerminalView({
         .catch(() => {});
     }
 
+    // The terminal's hidden textarea also listens for `paste`. Intercept the
+    // native event in capture phase so Cmd/Ctrl+V and application-menu Paste
+    // share one path and cannot send the clipboard contents twice.
+    function handlePaste(event: ClipboardEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const text = event.clipboardData?.getData("text/plain");
+      if (text) {
+        terminal.paste(text);
+      }
+    }
+    container.addEventListener("paste", handlePaste, true);
+
     // Configurable right-click behaviour (paste, copy-or-paste, native menu…).
     function handleContextMenu(event: MouseEvent) {
       const action = rightClickRef.current ?? RIGHT_CLICK_DEFAULT;
@@ -322,6 +334,7 @@ export function TerminalView({
     return () => {
       resizeObserver.disconnect();
       container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("paste", handlePaste, true);
       container.removeEventListener("contextmenu", handleContextMenu);
       if (resizeFrameRef.current !== null) {
         cancelAnimationFrame(resizeFrameRef.current);

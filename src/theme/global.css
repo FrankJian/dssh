@@ -4462,24 +4462,53 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   transform: rotate(180deg);
 }
 
-.select-menu__options {
+.select-menu__popover {
   position: absolute;
   top: calc(100% + 3px);
   right: 0;
   left: 0;
   z-index: 40;
+  min-width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-soft);
+}
+
+.select-menu__search {
+  display: block;
+  width: calc(100% - 8px);
+  height: 30px;
+  margin: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0 8px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.select-menu__search:focus {
+  border-color: var(--accent);
+}
+
+.select-menu__options {
   display: grid;
   gap: 2px;
-  min-width: max-content;
   max-height: 248px;
   margin: 0;
   overflow-y: auto;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
   padding: 4px;
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-soft);
   list-style: none;
+}
+
+.select-menu__empty {
+  padding: 10px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .select-menu__option {
@@ -5403,6 +5432,10 @@ button.remote-file-tree__row--root[data-remote-drop-target="true"] {
   font-size: 13px;
   outline: none;
   cursor: pointer;
+}
+
+.settings-select-menu {
+  width: 100%;
 }
 
 .settings-select:focus {

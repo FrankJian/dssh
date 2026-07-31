@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Icon } from "./Icon";
 
 export interface SelectMenuOption {
@@ -9,10 +16,40 @@ export interface SelectMenuOption {
 
 interface SelectMenuProps {
   ariaLabel: string;
+  className?: string;
   disabled?: boolean;
   onChange: (value: string) => void;
   options: readonly SelectMenuOption[];
+  searchable?: boolean;
+  searchPlaceholder?: string;
   value: string;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLocaleLowerCase().replace(/[\s\-_/,.'"]+/g, "");
+}
+
+function fuzzyMatches(query: string, option: SelectMenuOption): boolean {
+  const needle = normalizeSearchText(query);
+  if (!needle) {
+    return true;
+  }
+
+  const haystack = normalizeSearchText(`${option.label} ${option.value}`);
+  if (haystack.includes(needle)) {
+    return true;
+  }
+
+  let needleIndex = 0;
+  for (const character of haystack) {
+    if (character === needle[needleIndex]) {
+      needleIndex += 1;
+      if (needleIndex === needle.length) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -20,11 +57,38 @@ interface SelectMenuProps {
  * be styled consistently across macOS and Windows, so this control owns both
  * the trigger and the option list while retaining basic keyboard navigation.
  */
-export function SelectMenu({ ariaLabel, disabled = false, onChange, options, value }: SelectMenuProps) {
+export function SelectMenu({
+  ariaLabel,
+  className,
+  disabled = false,
+  onChange,
+  options,
+  searchable = false,
+  searchPlaceholder = "搜索…",
+  value,
+}: SelectMenuProps) {
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
+  const filteredOptions = useMemo(
+    () => (searchable ? options.filter((option) => fuzzyMatches(searchQuery, option)) : options),
+    [options, searchable, searchQuery],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      setSearchQuery("");
+      return;
+    }
+
+    if (searchable) {
+      const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
+      return () => window.cancelAnimationFrame(frame);
+    }
+  }, [open, searchable]);
 
   useEffect(() => {
     if (!open) {
@@ -94,7 +158,7 @@ export function SelectMenu({ ariaLabel, disabled = false, onChange, options, val
   }
 
   return (
-    <div className="select-menu" ref={rootRef}>
+    <div className={`select-menu${className ? ` ${className}` : ""}`} ref={rootRef}>
       <button
         aria-controls={listId}
         aria-expanded={open}
@@ -110,26 +174,43 @@ export function SelectMenu({ ariaLabel, disabled = false, onChange, options, val
         <Icon name="chevron-down" height="14" width="14" />
       </button>
       {open ? (
-        <ul aria-label={ariaLabel} className="select-menu__options" id={listId} role="listbox">
-          {options.map((option) => {
-            const isSelected = option.value === value;
-            return (
-              <li key={option.value}>
-                <button
-                  aria-selected={isSelected}
-                  className={`select-menu__option${isSelected ? " is-selected" : ""}`}
-                  disabled={option.disabled}
-                  onClick={() => selectOption(option)}
-                  role="option"
-                  type="button"
-                >
-                  <span>{option.label}</span>
-                  {isSelected ? <Icon name="check" height="14" width="14" /> : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="select-menu__popover">
+          {searchable ? (
+            <input
+              aria-label={`${ariaLabel}搜索`}
+              autoComplete="off"
+              className="select-menu__search"
+              onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              placeholder={searchPlaceholder}
+              ref={searchRef}
+              type="search"
+              value={searchQuery}
+            />
+          ) : null}
+          <ul aria-label={ariaLabel} className="select-menu__options" id={listId} role="listbox">
+            {filteredOptions.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <li key={option.value}>
+                  <button
+                    aria-selected={isSelected}
+                    className={`select-menu__option${isSelected ? " is-selected" : ""}`}
+                    disabled={option.disabled}
+                    onClick={() => selectOption(option)}
+                    role="option"
+                    type="button"
+                  >
+                    <span>{option.label}</span>
+                    {isSelected ? <Icon name="check" height="14" width="14" /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {searchable && filteredOptions.length === 0 ? (
+            <div className="select-menu__empty">未找到匹配字体</div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
