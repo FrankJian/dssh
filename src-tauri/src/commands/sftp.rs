@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::UNIX_EPOCH};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -69,6 +70,90 @@ fn local_display_path(path: &std::path::Path) -> String {
         }
     }
     value.into_owned()
+}
+
+const LOCAL_MAX_EDITABLE_TEXT_BYTES: u64 = 1_024 * 1_024 * 1_024;
+const LOCAL_MAX_PREVIEW_IMAGE_BYTES: u64 = 10 * 1_024 * 1_024;
+
+fn local_known_binary_path(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "7z" | "apk"
+            | "bin"
+            | "bz2"
+            | "class"
+            | "db"
+            | "dmg"
+            | "dll"
+            | "doc"
+            | "docx"
+            | "ear"
+            | "exe"
+            | "gz"
+            | "iso"
+            | "jar"
+            | "msi"
+            | "o"
+            | "odp"
+            | "ods"
+            | "odt"
+            | "pdf"
+            | "pyc"
+            | "rar"
+            | "so"
+            | "tar"
+            | "tgz"
+            | "war"
+            | "woff"
+            | "woff2"
+            | "xls"
+            | "xlsx"
+            | "xz"
+            | "zip"
+            | "zst"
+    )
+}
+
+fn local_image_mime(path: &std::path::Path) -> AppResult<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => Ok("image/png"),
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "gif" => Ok("image/gif"),
+        "webp" => Ok("image/webp"),
+        "bmp" => Ok("image/bmp"),
+        "svg" => Ok("image/svg+xml"),
+        _ => Err(AppError::new(
+            "local_image_type",
+            "该文件不是支持的图片格式。",
+        )),
+    }
+}
+
+fn local_child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty()
+        || trimmed_name == "."
+        || trimmed_name == ".."
+        || trimmed_name.contains('/')
+        || trimmed_name.contains('\\')
+        || trimmed_name.contains('\0')
+    {
+        return Err(AppError::new(
+            "local_invalid_name",
+            "文件名不能包含路径分隔符。",
+        ));
+    }
+    Ok(PathBuf::from(parent.trim()).join(trimmed_name))
 }
 
 #[tauri::command]
@@ -147,6 +232,180 @@ pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
         path: local_display_path(&canonical),
         entries,
     })
+}
+
+#[tauri::command]
+pub async fn sftp_local_read_text(path: String) -> AppResult<SftpTextFile> {
+    let requested = PathBuf::from(path.trim());
+    let canonical = tokio::fs::canonicalize(&requested)
+        .await
+        .map_err(local_error)?;
+    if local_known_binary_path(&canonical) {
+        return Err(AppError::new(
+            "local_text_binary",
+            "该文件是二进制或压缩格式，无法在内置编辑器中预览。",
+        ));
+    }
+    let metadata = tokio::fs::metadata(&canonical).await.map_err(local_error)?;
+    if metadata.len() > LOCAL_MAX_EDITABLE_TEXT_BYTES {
+        return Err(AppError::new(
+            "local_text_too_large",
+            "文件超过 1 GiB，无法在内置编辑器中打开。",
+        ));
+    }
+    let data = tokio::fs::read(&canonical).await.map_err(local_error)?;
+    if data.contains(&0) {
+        return Err(AppError::new(
+            "local_text_binary",
+            "检测到二进制内容，无法在内置编辑器中预览。",
+        ));
+    }
+    let content = String::from_utf8(data).map_err(|_| {
+        AppError::new(
+            "local_text_encoding",
+            "该文件不是 UTF-8 文本，无法在内置编辑器中打开。",
+        )
+    })?;
+    Ok(SftpTextFile { content })
+}
+
+#[tauri::command]
+pub async fn sftp_local_write_text(path: String, content: String) -> AppResult<()> {
+    if content.len() as u64 > LOCAL_MAX_EDITABLE_TEXT_BYTES {
+        return Err(AppError::new(
+            "local_text_too_large",
+            "文件超过 1 GiB，无法通过内置编辑器保存。",
+        ));
+    }
+    if content.contains('\0') {
+        return Err(AppError::new(
+            "local_text_binary",
+            "文本内容不能包含 NUL 字符。",
+        ));
+    }
+    let requested = PathBuf::from(path.trim());
+    let canonical = tokio::fs::canonicalize(&requested)
+        .await
+        .map_err(local_error)?;
+    let metadata = tokio::fs::metadata(&canonical).await.map_err(local_error)?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            "local_file_not_regular",
+            "只能保存普通文件。",
+        ));
+    }
+    tokio::fs::write(&canonical, content.as_bytes())
+        .await
+        .map_err(local_error)
+}
+
+#[tauri::command]
+pub async fn sftp_local_read_image(path: String) -> AppResult<SftpImageFile> {
+    let requested = PathBuf::from(path.trim());
+    let canonical = tokio::fs::canonicalize(&requested)
+        .await
+        .map_err(local_error)?;
+    let mime = local_image_mime(&canonical)?;
+    let metadata = tokio::fs::metadata(&canonical).await.map_err(local_error)?;
+    if metadata.len() > LOCAL_MAX_PREVIEW_IMAGE_BYTES {
+        return Err(AppError::new(
+            "local_image_too_large",
+            "图片超过 10 MiB，无法在内置预览中打开。",
+        ));
+    }
+    let data = tokio::fs::read(&canonical).await.map_err(local_error)?;
+    Ok(SftpImageFile {
+        data_url: format!("data:{mime};base64,{}", BASE64.encode(data)),
+    })
+}
+
+#[tauri::command]
+pub async fn sftp_local_create_dir(parent_path: String, name: String) -> AppResult<()> {
+    let parent = tokio::fs::canonicalize(PathBuf::from(parent_path.trim()))
+        .await
+        .map_err(local_error)?;
+    tokio::fs::create_dir(local_child_path(&parent.to_string_lossy(), &name)?)
+        .await
+        .map_err(local_error)
+}
+
+#[tauri::command]
+pub async fn sftp_local_create_file(parent_path: String, name: String) -> AppResult<()> {
+    let parent = tokio::fs::canonicalize(PathBuf::from(parent_path.trim()))
+        .await
+        .map_err(local_error)?;
+    tokio::fs::File::create(local_child_path(&parent.to_string_lossy(), &name)?)
+        .await
+        .map(|_| ())
+        .map_err(local_error)
+}
+
+#[tauri::command]
+pub async fn sftp_local_rename(path: String, new_path: String) -> AppResult<()> {
+    let requested_source = PathBuf::from(path.trim());
+    let source_metadata = tokio::fs::symlink_metadata(&requested_source)
+        .await
+        .map_err(local_error)?;
+    let source = if source_metadata.file_type().is_symlink() {
+        requested_source
+    } else {
+        tokio::fs::canonicalize(&requested_source)
+            .await
+            .map_err(local_error)?
+    };
+    let destination = PathBuf::from(new_path.trim());
+    if destination.as_os_str().is_empty() {
+        return Err(AppError::new("local_invalid_name", "目标路径不能为空。"));
+    }
+    if source == destination {
+        return Ok(());
+    }
+    if tokio::fs::try_exists(&destination)
+        .await
+        .map_err(local_error)?
+    {
+        return Err(AppError::new(
+            "local_destination_exists",
+            "目标位置已经存在同名文件或目录。",
+        ));
+    }
+    if source_metadata.is_dir() {
+        let canonical_destination = if let Some(parent) = destination.parent() {
+            Some(tokio::fs::canonicalize(parent).await.map_err(local_error)?)
+        } else {
+            None
+        };
+        if let Some(parent) = canonical_destination
+            && parent.starts_with(&source)
+        {
+            return Err(AppError::new(
+                "local_move_descendant",
+                "不能移动到自身或其子目录。",
+            ));
+        }
+    }
+    tokio::fs::rename(source, destination)
+        .await
+        .map_err(local_error)
+}
+
+#[tauri::command]
+pub async fn sftp_local_delete(path: String) -> AppResult<()> {
+    let requested = PathBuf::from(path.trim());
+    let metadata = tokio::fs::symlink_metadata(&requested)
+        .await
+        .map_err(local_error)?;
+    if metadata.file_type().is_symlink() {
+        return tokio::fs::remove_file(requested).await.map_err(local_error);
+    }
+    let target = tokio::fs::canonicalize(&requested)
+        .await
+        .map_err(local_error)?;
+    if metadata.is_dir() {
+        tokio::fs::remove_dir_all(target).await.map_err(local_error)
+    } else {
+        tokio::fs::remove_file(target).await.map_err(local_error)
+    }
 }
 
 #[tauri::command]

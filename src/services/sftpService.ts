@@ -121,6 +121,34 @@ export function sftpLocalList(path: string) {
   return invokeCommand<LocalListing>("sftp_local_list", { path });
 }
 
+export function sftpLocalReadText(path: string) {
+  return invokeCommand<SftpTextFile>("sftp_local_read_text", { path });
+}
+
+export function sftpLocalWriteText(path: string, content: string) {
+  return invokeCommand<void>("sftp_local_write_text", { content, path });
+}
+
+export function sftpLocalReadImage(path: string) {
+  return invokeCommand<SftpImageFile>("sftp_local_read_image", { path });
+}
+
+export function sftpLocalCreateDir(parentPath: string, name: string) {
+  return invokeCommand<void>("sftp_local_create_dir", { name, parentPath });
+}
+
+export function sftpLocalCreateFile(parentPath: string, name: string) {
+  return invokeCommand<void>("sftp_local_create_file", { name, parentPath });
+}
+
+export function sftpLocalRename(path: string, newPath: string) {
+  return invokeCommand<void>("sftp_local_rename", { newPath, path });
+}
+
+export function sftpLocalDelete(path: string) {
+  return invokeCommand<void>("sftp_local_delete", { path });
+}
+
 export function sftpReadText(profileId: string, remotePath: string) {
   return invokeCommand<SftpTextFile>("sftp_read_text", { profileId, remotePath });
 }

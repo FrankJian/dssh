@@ -550,7 +550,9 @@ async fn connect_and_run(
                         emit_output(&read_app_handle, &read_session_id, text);
                     }
                 }
-                Some(ChannelMsg::ExitStatus { .. }) => clean_exit = true,
+                Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::ExitSignal { .. }) => {
+                    clean_exit = true;
+                }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                 _ => {}
             }
@@ -558,12 +560,15 @@ async fn connect_and_run(
         let _ = drop_tx.send(clean_exit);
     });
 
+    let mut pending_command = String::new();
+    let mut close_requested = false;
     let outcome = loop {
         tokio::select! {
             command = rx.recv() => match command {
                 Some(SessionCommand::Input(data)) => {
+                    close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
-                        break ConnOutcome::Dropped;
+                        break if close_requested { ConnOutcome::Closed } else { ConnOutcome::Dropped };
                     }
                 }
                 Some(SessionCommand::Resize(new_size)) => {
@@ -581,6 +586,7 @@ async fn connect_and_run(
             result = &mut drop_rx => {
                 break match result {
                     Ok(true) => ConnOutcome::Closed,
+                    _ if close_requested => ConnOutcome::Closed,
                     _ => ConnOutcome::Dropped,
                 };
             }
@@ -993,6 +999,44 @@ fn normalize_input(data: &str) -> Vec<u8> {
     data.as_bytes().to_vec()
 }
 
+/// Detect an intentional interactive-shell exit before the SSH channel closes.
+/// PTY shells are not required to send `ExitStatus` (some servers only send
+/// EOF/Close), so relying on the channel message alone can incorrectly enter
+/// the network reconnect path after the user types `exit` or `logout`.
+fn input_requests_clean_exit(pending_command: &mut String, data: &str) -> bool {
+    let mut clean_exit = false;
+    for character in data.chars() {
+        match character {
+            '\r' | '\n' => {
+                let command = pending_command.trim();
+                let command_name = command.split_whitespace().next().unwrap_or_default();
+                if matches!(command_name, "exit" | "logout") {
+                    clean_exit = true;
+                }
+                pending_command.clear();
+            }
+            '\u{8}' | '\u{7f}' => {
+                pending_command.pop();
+            }
+            '\u{4}' if pending_command.trim().is_empty() => {
+                clean_exit = true;
+            }
+            character if character.is_control() => {
+                // Ignore other control keys (Ctrl-C, arrows, function keys)
+                // rather than treating their escape sequences as shell text.
+                pending_command.clear();
+            }
+            character => {
+                pending_command.push(character);
+                if pending_command.len() > 256 {
+                    pending_command.clear();
+                }
+            }
+        }
+    }
+    clean_exit
+}
+
 /// Decode a stream of PTY bytes into UTF-8 text while tolerating multi-byte
 /// characters (e.g. CJK) that are split across packet boundaries. Any trailing
 /// incomplete sequence is held in `carry` until the next chunk arrives;
@@ -1082,12 +1126,35 @@ fn lock_error(error: impl std::fmt::Display) -> AppError {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{RemoteForwardTarget, normalize_input, resolve_remote_forward_target};
+    use super::{
+        RemoteForwardTarget, input_requests_clean_exit, normalize_input,
+        resolve_remote_forward_target,
+    };
 
     #[test]
     fn terminal_input_preserves_carriage_return_for_raw_mode_programs() {
         assert_eq!(normalize_input("\r"), b"\r");
         assert_eq!(normalize_input("\r\n"), b"\r\n");
+    }
+
+    #[test]
+    fn clean_exit_detection_handles_chunked_commands_and_ctrl_d() {
+        let mut pending = String::new();
+        assert!(!input_requests_clean_exit(&mut pending, "ex"));
+        assert!(input_requests_clean_exit(&mut pending, "it\r"));
+
+        pending.clear();
+        assert!(input_requests_clean_exit(&mut pending, "logout\n"));
+
+        pending.clear();
+        assert!(input_requests_clean_exit(&mut pending, "\u{4}"));
+    }
+
+    #[test]
+    fn clean_exit_detection_does_not_match_commands_containing_exit() {
+        let mut pending = String::new();
+        assert!(!input_requests_clean_exit(&mut pending, "echo exit\r"));
+        assert!(!input_requests_clean_exit(&mut pending, "exitless\r"));
     }
 
     #[test]

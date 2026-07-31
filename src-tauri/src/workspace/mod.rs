@@ -137,7 +137,7 @@ impl DetachedWorkspaceManager {
         let manager = self.clone();
         let label = workspace.label.clone();
         let event_app_handle = app_handle.clone();
-        let build_result = WebviewWindowBuilder::new(
+        let window_builder = WebviewWindowBuilder::new(
             app_handle,
             &workspace.label,
             WebviewUrl::App("index.html".into()),
@@ -145,8 +145,21 @@ impl DetachedWorkspaceManager {
         .title(format!("{} · Duo SSH", workspace.title))
         .inner_size(1080.0, 720.0)
         .min_inner_size(640.0, 460.0)
-        .decorations(false)
-        .build();
+        .resizable(true);
+
+        // Keep the native macOS window frame available for edge resizing while
+        // retaining the custom HTML title bar. Windows and Linux continue to
+        // use the borderless title bar; Tauri's runtime resize handler covers
+        // those platforms when the window is explicitly marked resizable.
+        #[cfg(target_os = "macos")]
+        let window_builder = window_builder
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+        #[cfg(not(target_os = "macos"))]
+        let window_builder = window_builder.decorations(false);
+
+        let build_result = window_builder.build();
 
         let window = match build_result {
             Ok(window) => window,

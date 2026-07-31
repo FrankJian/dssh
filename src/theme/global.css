@@ -2963,6 +2963,31 @@ button {
   color: var(--text-faint);
 }
 
+.remote-file-tree__path > .local-file-tree__root-select {
+  flex: 0 0 78px;
+  width: 78px;
+}
+
+.remote-file-tree__path > .local-file-tree__root-select .select-menu__trigger {
+  width: 100%;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+.remote-file-tree__path > .local-file-tree__root-select .select-menu__trigger:hover,
+.remote-file-tree__path > .local-file-tree__root-select .select-menu__trigger.is-open {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-base);
+}
+
 .remote-file-tree__refresh {
   display: inline-flex;
   width: 26px;
@@ -3011,6 +3036,14 @@ button {
   display: flex;
   min-width: 0;
   align-items: center;
+}
+
+/* LocalFileTree renders recursive children directly below their parent. The
+ * remote tree keeps its entry wrapper as a row for transfer affordances, but
+ * that would make local descendants line up horizontally with the parent. */
+.local-file-tree .remote-file-tree__entry {
+  display: block;
+  width: 100%;
 }
 
 .remote-file-tree__entry > .remote-file-tree__row {
@@ -3117,6 +3150,13 @@ button.remote-file-tree__row--root:hover {
 
 button.remote-file-tree__row--directory[data-remote-drop-target="true"],
 button.remote-file-tree__row--root[data-remote-drop-target="true"] {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--accent-strong);
+}
+
+button.remote-file-tree__row--directory[data-local-drop-target="true"],
+button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--bg-selected);
   box-shadow: inset 0 0 0 1px var(--accent-border);
   color: var(--accent-strong);

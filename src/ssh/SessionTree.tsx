@@ -225,7 +225,7 @@ export function SessionTree({
                         <span>端口转发</span>
                       </button>
                     ) : null}
-                    {node.kind === "ssh" && node.profile ? (
+                    {node.kind === "local" || (node.kind === "ssh" && node.profile) ? (
                     <button
                       className="session-child"
                       onClick={() => onOpenFileList(node)}

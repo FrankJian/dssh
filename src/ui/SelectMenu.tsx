@@ -29,15 +29,20 @@ function normalizeSearchText(value: string): string {
   return value.toLocaleLowerCase().replace(/[\s\-_/,.'"]+/g, "");
 }
 
-function fuzzyMatches(query: string, option: SelectMenuOption): boolean {
+/**
+ * Returns the match tier used by the searchable menu:
+ * 0 = contiguous substring, 1 = ordered but non-contiguous characters,
+ * null = no match.
+ */
+function fuzzyMatchTier(query: string, option: SelectMenuOption): number | null {
   const needle = normalizeSearchText(query);
   if (!needle) {
-    return true;
+    return 0;
   }
 
   const haystack = normalizeSearchText(`${option.label} ${option.value}`);
   if (haystack.includes(needle)) {
-    return true;
+    return 0;
   }
 
   let needleIndex = 0;
@@ -45,11 +50,11 @@ function fuzzyMatches(query: string, option: SelectMenuOption): boolean {
     if (character === needle[needleIndex]) {
       needleIndex += 1;
       if (needleIndex === needle.length) {
-        return true;
+        return 1;
       }
     }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -74,7 +79,17 @@ export function SelectMenu({
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
   const filteredOptions = useMemo(
-    () => (searchable ? options.filter((option) => fuzzyMatches(searchQuery, option)) : options),
+    () => {
+      if (!searchable || !searchQuery.trim()) {
+        return options;
+      }
+
+      return options
+        .map((option, index) => ({ index, option, tier: fuzzyMatchTier(searchQuery, option) }))
+        .filter((item): item is { index: number; option: SelectMenuOption; tier: number } => item.tier !== null)
+        .sort((left, right) => left.tier - right.tier || left.index - right.index)
+        .map((item) => item.option);
+    },
     [options, searchable, searchQuery],
   );
 

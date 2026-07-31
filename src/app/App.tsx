@@ -27,6 +27,7 @@ import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
 import { RemoteFileTree } from "../sftp/RemoteFileTree";
+import { LocalFileTree } from "../sftp/LocalFileTree";
 import { ProfileEditor } from "../ssh/ProfileEditor";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
@@ -922,7 +923,7 @@ function MainApp() {
   }
 
   function handleOpenFileListForNode(node: SessionNode) {
-    if (node.kind !== "ssh" || !node.profile) {
+    if (node.kind === "ssh" && !node.profile) {
       return;
     }
     // Prefer the terminal already focused for this host; otherwise use its
@@ -1228,10 +1229,15 @@ function MainApp() {
       />
     ) : null;
 
+  const fileTreeSession =
+    fileTreeSessionId && fileTreeSessionId === activeSessionId
+      ? activeSession
+      : null;
   const fileTreeProfile =
     fileTreeSessionId && fileTreeSessionId === activeSessionId && activeSession?.kind === "ssh"
       ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
       : null;
+  const isLocalFileTree = fileTreeSession?.kind === "local";
 
   const terminalSurface = (
     <TerminalWorkspace
@@ -1309,18 +1315,28 @@ function MainApp() {
         />
       </div>
     );
-  } else if (fileTreeProfile) {
+  } else if (fileTreeProfile || isLocalFileTree) {
     mainSurface = (
       <TerminalFileLayout
         fileTree={
-          <RemoteFileTree
-            activeFilePath={activeRemoteFilePath}
-            onClose={() => setFileTreeSessionId(null)}
-            onFileRemoved={handleCloseRemoteFile}
-            onFileRenamed={handleRenameRemoteFile}
-            onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
-            profileId={fileTreeProfile.id}
-          />
+          fileTreeProfile ? (
+            <RemoteFileTree
+              activeFilePath={activeRemoteFilePath}
+              onClose={() => setFileTreeSessionId(null)}
+              onFileRemoved={handleCloseRemoteFile}
+              onFileRenamed={handleRenameRemoteFile}
+              onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
+              profileId={fileTreeProfile.id}
+            />
+          ) : (
+            <LocalFileTree
+              activeFilePath={activeRemoteFilePath}
+              onClose={() => setFileTreeSessionId(null)}
+              onFileRemoved={handleCloseRemoteFile}
+              onFileRenamed={handleRenameRemoteFile}
+              onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
+            />
+          )
         }
         terminal={
           activeRemoteFilePath ? (
@@ -1328,11 +1344,12 @@ function MainApp() {
               activePath={activeRemoteFilePath}
               editorOptions={editorSettings.options}
               filePaths={openRemoteFilePaths}
-              key={fileTreeProfile.id}
+              fileSystem={isLocalFileTree ? "local" : "remote"}
+              key={`${isLocalFileTree ? "local" : "remote"}:${fileTreeSessionId ?? ""}`}
               onCloseFile={handleCloseRemoteFile}
               onSelectFile={setActiveRemoteFilePath}
               onShowTerminal={() => setActiveRemoteFilePath(null)}
-              profileId={fileTreeProfile.id}
+              profileId={fileTreeProfile?.id ?? "local"}
             />
           ) : (
             terminalSurface
@@ -1448,23 +1465,23 @@ function MainApp() {
         keywords: "close 关闭",
         run: () => void closeSession(activeSession.id),
       });
+      items.push({
+        id: "act:file-list-current",
+        label: fileTreeSessionId === activeSession.id ? "关闭当前文件列表" : "打开当前文件列表",
+        hint: "文件",
+        icon: "tree",
+        keywords: "explorer files local remote",
+        run: () => {
+          if (fileTreeSessionId === activeSession.id) {
+            setFileTreeSessionId(null);
+            setActiveRemoteFilePath(null);
+          } else {
+            setFileTreeSessionId(activeSession.id);
+            showTerminalSurface();
+          }
+        },
+      });
       if (activeSessionProfile) {
-        items.push({
-          id: "act:file-list-current",
-          label: fileTreeSessionId === activeSession.id ? "关闭当前文件列表" : "打开当前文件列表",
-          hint: "文件",
-          icon: "tree",
-          keywords: "explorer files remote",
-          run: () => {
-            if (fileTreeSessionId === activeSession.id) {
-              setFileTreeSessionId(null);
-              setActiveRemoteFilePath(null);
-            } else {
-              setFileTreeSessionId(activeSession.id);
-              showTerminalSurface();
-            }
-          },
-        });
         items.push({
           id: "act:sftp-current",
           label: `打开 SFTP · ${activeSessionProfile.name}`,

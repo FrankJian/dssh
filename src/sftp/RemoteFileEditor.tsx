@@ -8,7 +8,14 @@ import {
   MonacoRemoteEditor,
 } from "./MonacoRemoteEditor";
 import { MermaidDiagram } from "./MermaidDiagram";
-import { sftpReadImage, sftpReadText, sftpWriteText } from "../services/sftpService";
+import {
+  sftpLocalReadImage,
+  sftpLocalReadText,
+  sftpLocalWriteText,
+  sftpReadImage,
+  sftpReadText,
+  sftpWriteText,
+} from "../services/sftpService";
 import type { EditorOptions } from "../settings/settings";
 import { Icon } from "../ui/Icon";
 import { toast } from "../ui/ToastHost";
@@ -21,6 +28,7 @@ interface RemoteFileEditorProps {
   onSelectFile: (path: string) => void;
   onShowTerminal: () => void;
   profileId: string;
+  fileSystem?: "remote" | "local";
 }
 
 interface EditorDocument {
@@ -87,7 +95,9 @@ export function RemoteFileEditor({
   onSelectFile,
   onShowTerminal,
   profileId,
+  fileSystem = "remote",
 }: RemoteFileEditorProps) {
+  const isLocalFileSystem = fileSystem === "local";
   const [documents, setDocuments] = useState<Record<string, EditorDocument>>({});
   const [images, setImages] = useState<Record<string, ImageDocument>>({});
   const [closePrompt, setClosePrompt] = useState<ClosePrompt | null>(null);
@@ -110,7 +120,7 @@ export function RemoteFileEditor({
     setImages({});
     setLanguageOverrides({});
     setMarkdownPreviewPath(null);
-  }, [profileId]);
+  }, [fileSystem, profileId]);
 
   useEffect(() => {
     // Do not depend on `documents`: marking a file as loading updates that
@@ -129,7 +139,7 @@ export function RemoteFileEditor({
         savedContent: "",
       },
     }));
-    void sftpReadText(profileId, activePath)
+    void (isLocalFileSystem ? sftpLocalReadText(activePath) : sftpReadText(profileId, activePath))
       .then((file) => {
         if (cancelled) {
           return;
@@ -153,7 +163,7 @@ export function RemoteFileEditor({
           ...current,
           [activePath]: {
             content: "",
-            error: error instanceof Error ? error.message : "无法读取远程文件。",
+            error: error instanceof Error ? error.message : `无法读取${isLocalFileSystem ? "本地" : "远程"}文件。`,
             isLoading: false,
             isSaving: false,
             savedContent: "",
@@ -163,7 +173,7 @@ export function RemoteFileEditor({
     return () => {
       cancelled = true;
     };
-  }, [activePath, profileId]);
+  }, [activePath, fileSystem, isLocalFileSystem, profileId]);
 
   useEffect(() => {
     if (!activePath || !isImagePath(activePath) || imagesRef.current[activePath]) {
@@ -174,7 +184,7 @@ export function RemoteFileEditor({
       ...current,
       [activePath]: { dataUrl: "", error: null, isLoading: true },
     }));
-    void sftpReadImage(profileId, activePath)
+    void (isLocalFileSystem ? sftpLocalReadImage(activePath) : sftpReadImage(profileId, activePath))
       .then((image) => {
         if (cancelled) {
           return;
@@ -192,7 +202,7 @@ export function RemoteFileEditor({
           ...current,
           [activePath]: {
             dataUrl: "",
-            error: error instanceof Error ? error.message : "无法读取远程图片。",
+            error: error instanceof Error ? error.message : `无法读取${isLocalFileSystem ? "本地" : "远程"}图片。`,
             isLoading: false,
           },
         }));
@@ -200,7 +210,7 @@ export function RemoteFileEditor({
     return () => {
       cancelled = true;
     };
-  }, [activePath, profileId]);
+  }, [activePath, fileSystem, isLocalFileSystem, profileId]);
 
   useEffect(() => {
     setDocuments((current) => {
@@ -326,7 +336,11 @@ export function RemoteFileEditor({
       [path]: { ...current[path], error: null, isSaving: true },
     }));
     try {
-      await sftpWriteText(profileId, path, content);
+      if (isLocalFileSystem) {
+        await sftpLocalWriteText(path, content);
+      } else {
+        await sftpWriteText(profileId, path, content);
+      }
       setDocuments((current) => ({
         ...current,
         [path]: {
@@ -338,7 +352,7 @@ export function RemoteFileEditor({
       toast(`已保存 ${fileName(path)}。`, "success");
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "保存远程文件失败。";
+      const message = error instanceof Error ? error.message : `保存${isLocalFileSystem ? "本地" : "远程"}文件失败。`;
       setDocuments((current) => ({
         ...current,
         [path]: { ...current[path], error: message, isSaving: false },
@@ -404,7 +418,7 @@ export function RemoteFileEditor({
   }
 
   return (
-    <section className="remote-file-editor" aria-label="远程文件编辑器">
+    <section className="remote-file-editor" aria-label={`${isLocalFileSystem ? "本地" : "远程"}文件编辑器`}>
       <header className="remote-file-editor__tabs" role="tablist" aria-label="已打开文件">
         <button
           aria-label="显示终端"
@@ -532,7 +546,7 @@ export function RemoteFileEditor({
           languageOverrides={languageOverrides}
           onContentChange={updateContent}
           onSave={() => void saveActiveFile()}
-          profileId={profileId}
+          profileId={`${fileSystem}:${profileId}`}
           shouldLoad={hasLoadedTextDocument}
         />
         {markdownPreviewPath === activePath && activeDocument ? (
