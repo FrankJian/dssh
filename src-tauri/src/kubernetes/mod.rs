@@ -1972,7 +1972,10 @@ pub async fn start_port_forward(
                     format!("无法启动本机 kubectl port-forward：{error}"),
                 )
             })?;
-            ("localKubectl".to_string(), PortForwardTask::Local(child))
+            (
+                "localKubectl".to_string(),
+                PortForwardTask::Local(Box::new(child)),
+            )
         }
         KubernetesSource::LocalImported { .. } => {
             return Err(AppError::new(
@@ -2084,7 +2087,7 @@ pub async fn list_port_forwards(manager: &KubernetesManager) -> Vec<KubernetesPo
 }
 
 enum PortForwardTask {
-    Local(tokio::process::Child),
+    Local(Box<tokio::process::Child>),
     Remote {
         channel: russh::Channel<russh::client::Msg>,
         _channel_lease: crate::ssh::ChannelLease,
