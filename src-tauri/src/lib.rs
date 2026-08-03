@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod error;
 pub mod forwarding;
 pub mod hosttools;
+pub mod kubernetes;
 pub mod models;
 pub mod s3;
 pub mod sftp;
@@ -50,6 +51,20 @@ pub fn run() {
             commands::profiles::delete_ssh_profile,
             commands::profiles::set_ssh_profile_favorite,
             commands::profiles::read_key_file,
+            commands::kubernetes::scan_local_kubeconfig,
+            commands::kubernetes::discover_remote_kubernetes,
+            commands::kubernetes::list_kubernetes_profiles,
+            commands::kubernetes::create_kubernetes_profile,
+            commands::kubernetes::update_kubernetes_profile,
+            commands::kubernetes::delete_kubernetes_profile,
+            commands::kubernetes::set_kubernetes_profile_favorite,
+            commands::kubernetes::list_kubernetes_resources,
+            commands::kubernetes::get_kubernetes_resource_document,
+            commands::kubernetes::get_kubernetes_pod_logs,
+            commands::kubernetes::start_kubernetes_pod_log_follow,
+            commands::kubernetes::cancel_kubernetes_pod_log_follow,
+            commands::kubernetes::prepare_kubernetes_cli,
+            commands::kubernetes::get_kubernetes_capabilities,
             commands::s3::list_s3_profiles,
             commands::s3::create_s3_profile,
             commands::s3::update_s3_profile,

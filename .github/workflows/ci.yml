@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - main
+      - "**"
 
 permissions:
   contents: read
@@ -62,3 +62,57 @@ jobs:
 
       - name: Build frontend
         run: pnpm build
+
+  package:
+    name: Package ${{ matrix.name }}
+    # Pull requests are validated above, but only branch pushes create downloadable
+    # test installers.
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            artifact: dssh-macos-${{ github.sha }}
+            installers: src-tauri/target/release/bundle/dmg/**/*.dmg
+          - name: Windows
+            os: windows-latest
+            artifact: dssh-windows-${{ github.sha }}
+            installers: |
+              src-tauri/target/release/bundle/msi/**/*.msi
+              src-tauri/target/release/bundle/nsis/**/*.exe
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned test installer
+        # Test builds intentionally do not consume release signing secrets or
+        # generate updater artifacts. The tag-triggered Release workflow remains
+        # responsible for signed, published releases.
+        run: pnpm tauri build --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Upload test installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.installers }}
+          if-no-files-found: error
+          retention-days: 14

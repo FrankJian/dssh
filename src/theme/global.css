@@ -1462,6 +1462,64 @@ button {
   transition: background 0.12s ease;
 }
 
+.session-manager__new-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.session-manager__new-wrap .session-manager__new {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.session-manager__new-caret {
+  display: inline-flex;
+  width: 28px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-left-color: color-mix(in srgb, var(--btn-primary-fg) 28%, transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  cursor: pointer;
+}
+
+.session-manager__new-caret:hover { background: var(--btn-primary-bg-hover); }
+
+.session-manager__new-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  min-width: 156px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-soft);
+}
+
+.session-manager__new-menu button {
+  display: flex;
+  height: 31px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-manager__new-menu button:hover { background: var(--bg-hover); color: var(--accent-strong); }
+
 .session-manager__new:hover {
   background: var(--btn-primary-bg-hover);
 }
@@ -1561,6 +1619,8 @@ button {
     justify-content: center;
     padding: 0;
   }
+
+  .session-manager__new-caret { width: 24px; }
 
   .session-manager__new > span,
   .session-manager__sort > span,
@@ -2025,7 +2085,8 @@ button {
 }
 
 /* ===== Zen mode ===== */
-.zen-exit {
+.zen-exit,
+.terminal-focus-exit {
   position: fixed;
   right: 16px;
   bottom: 16px;
@@ -2048,7 +2109,8 @@ button {
     color 0.15s ease;
 }
 
-.zen-exit:hover {
+.zen-exit:hover,
+.terminal-focus-exit:hover {
   opacity: 1;
   color: var(--text-base);
 }
@@ -4445,6 +4507,335 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   line-height: 1.4;
 }
 
+.kubernetes-profile-editor__path-row {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+}
+
+.kubernetes-profile-editor__path-row > input {
+  min-width: 0;
+  flex: 1;
+}
+
+.kubernetes-profile-editor__contexts-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kubernetes-profile-editor__contexts-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.kubernetes-profile-editor__contexts-header strong {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-profile-editor__contexts-header small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.kubernetes-profile-editor__contexts {
+  display: grid;
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.kubernetes-profile-editor__context {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  gap: 9px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+
+.kubernetes-profile-editor__context:last-child {
+  border-bottom: 0;
+}
+
+.kubernetes-profile-editor__context:hover {
+  background: var(--bg-hover);
+}
+
+.kubernetes-profile-editor__context > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.kubernetes-profile-editor__context strong,
+.kubernetes-profile-editor__context small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kubernetes-workspace {
+  display: grid;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: 48px auto minmax(0, 1fr);
+  background: var(--bg-base);
+}
+
+.kubernetes-workspace__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 12px;
+  background: var(--bg-panel);
+}
+
+.kubernetes-workspace__title {
+  display: flex;
+  min-width: 120px;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-base);
+  font-size: 13px;
+}
+
+.kubernetes-workspace__context-tabs { display: flex; min-width: 0; align-self: stretch; align-items: center; overflow: auto; }
+.kubernetes-workspace__context-tabs button { display: inline-flex; max-width: 132px; height: 30px; align-items: center; gap: 6px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); margin-right: 4px; padding: 0 7px; background: var(--bg-sunken); color: var(--text-muted); font: inherit; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.kubernetes-workspace__context-tabs button.is-active { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
+.kubernetes-workspace__context-tabs button span { color: var(--text-faint); font-size: 15px; line-height: 1; }
+.kubernetes-workspace__context-tabs button span:hover { color: var(--danger); }
+
+.kubernetes-workspace__toolbar .select-menu {
+  width: min(190px, 22vw);
+}
+
+.kubernetes-workspace__filter {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__filter input {
+  width: min(144px, 12vw);
+  height: 30px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0 8px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.kubernetes-workspace__filter input:focus { border-color: var(--accent); }
+
+.kubernetes-workspace__toolbar > .icon-button { margin-left: auto; }
+
+.kubernetes-workspace__auto-refresh {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.kubernetes-workspace__identity { overflow: hidden; max-width: 148px; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.kubernetes-workspace__error {
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.kubernetes-workspace__content {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(360px, 0.48fr) minmax(360px, 0.52fr);
+}
+
+.kubernetes-workspace__list,
+.kubernetes-workspace__detail {
+  min-width: 0;
+  overflow: auto;
+}
+
+.kubernetes-workspace__list { border-right: 1px solid var(--border-subtle); }
+
+.kubernetes-workspace__table-head,
+.kubernetes-workspace__row {
+  display: grid;
+  min-width: 640px;
+  grid-template-columns: minmax(190px, 1.8fr) minmax(100px, 1fr) minmax(90px, 0.8fr) minmax(145px, 1.1fr);
+  column-gap: 12px;
+  align-items: center;
+}
+
+.kubernetes-workspace__table-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 12px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__row {
+  width: 100%;
+  min-height: 35px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kubernetes-workspace__row:hover { background: var(--bg-hover); }
+.kubernetes-workspace__row.is-selected { background: var(--accent-soft); color: var(--accent-strong); }
+
+.kubernetes-workspace__row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kubernetes-workspace__load-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+}
+
+.kubernetes-workspace__detail { background: var(--bg-sunken); }
+
+.kubernetes-workspace__detail-head {
+  display: flex;
+  height: 33px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 12px;
+  background: var(--bg-panel);
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-workspace__detail-head span { color: var(--warning); font-size: 11px; }
+.kubernetes-workspace__detail-head > div { display: inline-flex; align-items: center; gap: 8px; }
+
+.kubernetes-workspace__detail pre {
+  margin: 0;
+  padding: 14px;
+  color: var(--text-base);
+  font-family: var(--editor-font-family, var(--terminal-font-family));
+  font-size: var(--editor-font-size, 12px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kubernetes-workspace__detail pre.kubernetes-workspace__logs {
+  min-height: calc(100% - 34px);
+  background: var(--terminal-background, var(--bg-sunken));
+  color: var(--terminal-foreground, var(--text-base));
+}
+
+.kubernetes-workspace__log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 7px 12px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__log-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.kubernetes-workspace__log-controls input[type="number"] {
+  width: 64px;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0 5px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font: inherit;
+}
+
+.kubernetes-workspace__log-search {
+  width: 132px;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0 7px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+
+.kubernetes-workspace__log-search:focus { border-color: var(--accent); }
+
+.kubernetes-workspace__log-controls .select-menu { width: 150px; }
+
+.kubernetes-workspace__log-note {
+  margin: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding: 7px 14px;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__empty { padding: 24px; color: var(--text-muted); font-size: 12px; text-align: center; }
+
+@media (max-width: 920px) {
+  .kubernetes-workspace__toolbar { flex-wrap: wrap; height: auto; min-height: 48px; padding-block: 6px; }
+  .kubernetes-workspace__toolbar .select-menu { width: min(180px, 42vw); }
+  .kubernetes-workspace__filter input { width: min(132px, 30vw); }
+  .kubernetes-workspace__content { grid-template-columns: minmax(300px, 1fr); grid-template-rows: minmax(220px, 0.45fr) minmax(220px, 0.55fr); }
+  .kubernetes-workspace__list { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+}
+
+.kubernetes-profile-editor__context strong {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-profile-editor__context small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .select-menu {
   position: relative;
   width: 100%;
@@ -5534,6 +5925,158 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.shortcuts-section__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcuts-section__head > div {
+  min-width: 0;
+}
+
+.shortcuts-reset-all {
+  flex: 0 0 auto;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.shortcut-settings__message {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.shortcut-group {
+  display: grid;
+  gap: 6px;
+}
+
+.shortcut-group h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shortcut-group__list {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-muted);
+}
+
+.shortcut-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+}
+
+.shortcut-row + .shortcut-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.shortcut-row__info {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.shortcut-row__label {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.shortcut-row__description {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.shortcut-row__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.shortcut-recorder {
+  display: inline-flex;
+  min-width: 124px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-sunken);
+  color: var(--text-strong);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.shortcut-recorder__keys {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.shortcut-recorder__key {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.shortcut-recorder:hover,
+.shortcut-recorder:focus-visible,
+.shortcut-recorder.is-recording {
+  border-color: var(--accent);
+  outline: none;
+  background: var(--bg-selected);
+  color: var(--accent-strong);
+}
+
+.shortcut-reset {
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 0 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.shortcut-reset:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-base);
+}
+
+.shortcut-reset:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .about-hero {

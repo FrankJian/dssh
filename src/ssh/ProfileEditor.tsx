@@ -24,6 +24,7 @@ interface ProfileEditorProps {
   profile: SshProfile | null;
   allTags: string[];
   onClose: () => void;
+  onCreateKubernetes?: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
 }
 
@@ -37,7 +38,7 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, mode, onClose, onCreateKubernetes, onSubmit, profile }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     profile ? profileToDraft(profile) : createEmptyProfileDraft(),
   );
@@ -139,7 +140,14 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
                 <span>连接类型</span>
                 <SelectMenu
                   ariaLabel="连接类型"
-                  onChange={(value) => setConnectionType(value as ConnectionType)}
+                  onChange={(value) => {
+                    if (value === "kubernetes") {
+                      onClose();
+                      onCreateKubernetes?.();
+                      return;
+                    }
+                    setConnectionType(value as ConnectionType);
+                  }}
                   options={CONNECTION_TYPE_OPTIONS.map((option) => ({
                     disabled: !option.available,
                     label: option.available ? option.label : `${option.label}（即将支持）`,

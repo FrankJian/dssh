@@ -10,6 +10,8 @@ const MIN_RATIO = 0.12;
 interface PaneGridProps {
   layout: PaneLayout;
   focusedPaneId: string | null;
+  /** Temporarily render one leaf while preserving the underlying pane tree. */
+  zoomedPaneId?: string | null;
   sessions: TerminalSession[];
   getPaneLabel: (sessionId: string) => string;
   getBacklog: (sessionId: string) => string;
@@ -32,6 +34,7 @@ interface PaneGridProps {
 export function PaneGrid({
   layout,
   focusedPaneId,
+  zoomedPaneId,
   sessions,
   getPaneLabel,
   getBacklog,
@@ -145,9 +148,18 @@ export function PaneGrid({
     );
   }
 
+  function findLeaf(node: PaneNode, sessionId: string): PaneNode | null {
+    if (node.type === "leaf") {
+      return node.sessionId === sessionId ? node : null;
+    }
+    return findLeaf(node.children[0], sessionId) ?? findLeaf(node.children[1], sessionId);
+  }
+
+  const zoomedLeaf = zoomedPaneId ? findLeaf(layout.root, zoomedPaneId) : null;
+
   return (
-    <section className="pane-workspace" aria-label="终端分屏">
-      {renderNode(layout.root)}
+    <section className="pane-workspace" aria-label={zoomedLeaf ? "聚焦终端分屏" : "终端分屏"}>
+      {renderNode(zoomedLeaf ?? layout.root)}
     </section>
   );
 }

@@ -4,7 +4,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalSize } from "../models";
-import { hasPrimaryModifier, isAppShortcut } from "../app/shortcuts";
+import { isAppShortcut, matchesShortcut, matchesWheelShortcut } from "../app/shortcuts";
 import {
   clampFontSize,
   COPY_ON_SELECT_DEFAULT,
@@ -183,32 +183,25 @@ export function TerminalView({
         return false;
       }
 
-      // App-level shortcuts use the platform's primary modifier: Cmd on macOS,
-      // Ctrl elsewhere. This keeps Ctrl free for the shell on macOS (e.g. Ctrl+C
-      // must interrupt, not copy), while preserving familiar bindings on Windows.
-      const primaryMod = hasPrimaryModifier(event);
-
-      if (primaryMod) {
-        if (event.key === "+" || event.key === "=") {
-          event.preventDefault();
-          adjustFontSize(FONT_SIZE_STEP);
-          return false;
-        }
-        if (event.key === "-" || event.key === "_") {
-          event.preventDefault();
-          adjustFontSize(-FONT_SIZE_STEP);
-          return false;
-        }
-        if (event.key === "0") {
-          event.preventDefault();
-          onFontSizeChangeRef.current?.(FONT_SIZE_DEFAULT);
-          return false;
-        }
+      if (matchesShortcut(event, "increaseTerminalFont")) {
+        event.preventDefault();
+        adjustFontSize(FONT_SIZE_STEP);
+        return false;
+      }
+      if (matchesShortcut(event, "decreaseTerminalFont")) {
+        event.preventDefault();
+        adjustFontSize(-FONT_SIZE_STEP);
+        return false;
+      }
+      if (matchesShortcut(event, "resetTerminalFont")) {
+        event.preventDefault();
+        onFontSizeChangeRef.current?.(FONT_SIZE_DEFAULT);
+        return false;
       }
 
       // Copy only when there is a selection; otherwise let the key through so
       // Ctrl+C still sends SIGINT (on Windows/Linux) instead of being swallowed.
-      if (primaryMod && event.key.toLowerCase() === "c") {
+      if (matchesShortcut(event, "copyTerminalSelection")) {
         const selection = terminal.getSelection();
         if (selection) {
           void navigator.clipboard?.writeText(selection);
@@ -216,7 +209,7 @@ export function TerminalView({
         }
       }
 
-      if (primaryMod && event.key.toLowerCase() === "v") {
+      if (matchesShortcut(event, "pasteTerminalClipboard")) {
         // Let the WebView dispatch its native `paste` event. Reading through
         // navigator.clipboard here makes macOS WebKit show a Paste permission
         // affordance; the capture handler below receives the same data without
@@ -246,7 +239,7 @@ export function TerminalView({
     // Ctrl + mouse wheel resizes the font. Use a non-passive native listener so
     // we can suppress the browser's default zoom/scroll behaviour.
     function handleWheel(event: WheelEvent) {
-      if (!(event.ctrlKey || event.metaKey)) {
+      if (!matchesWheelShortcut(event, "adjustTerminalFontWheel")) {
         return;
       }
       event.preventDefault();

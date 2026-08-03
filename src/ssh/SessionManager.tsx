@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import type { SshProfile } from "../models";
+import type { KubernetesProfile, SshProfile } from "../models";
+import { KubernetesConnectionCard } from "../kubernetes/KubernetesConnectionCard";
 import { Icon } from "../ui/Icon";
 import { SelectMenu } from "../ui/SelectMenu";
 import { ConnectionCard } from "./ConnectionCard";
@@ -49,38 +50,51 @@ function loadSort(): SortKey {
 
 function loadTypeFilter(): ConnectionTypeFilter {
   const raw = localStorage.getItem(TYPE_FILTER_KEY);
-  return raw === "ssh" || raw === "telnet" || raw === "sftp" ? raw : "all";
+  return raw === "ssh" || raw === "kubernetes" || raw === "telnet" || raw === "sftp" ? raw : "all";
 }
 
 interface SessionManagerProps {
   profiles: SshProfile[];
+  kubernetesProfiles: KubernetesProfile[];
   recentIds: string[];
   activeSessionCount: number;
   isLoading: boolean;
   errorMessage: string | null;
   onConnect: (profile: SshProfile) => void;
   onCreate: () => void;
+  onCreateKubernetes: () => void;
   onEdit: (profile: SshProfile) => void;
   onDelete: (profileId: string) => void;
   onToggleFavorite: (profileId: string) => void;
+  onOpenKubernetes: (profile: KubernetesProfile) => void;
+  onEditKubernetes: (profile: KubernetesProfile) => void;
+  onDeleteKubernetes: (profile: KubernetesProfile) => void;
+  onToggleKubernetesFavorite: (profileId: string) => void;
 }
 
 export function SessionManager({
   profiles,
+  kubernetesProfiles,
   recentIds,
   activeSessionCount,
   isLoading,
   errorMessage,
   onConnect,
   onCreate,
+  onCreateKubernetes,
   onEdit,
   onDelete,
   onToggleFavorite,
+  onOpenKubernetes,
+  onEditKubernetes,
+  onDeleteKubernetes,
+  onToggleKubernetesFavorite,
 }: SessionManagerProps) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewMode>(() => loadView());
   const [sort, setSort] = useState<SortKey>(() => loadSort());
   const [typeFilter, setTypeFilter] = useState<ConnectionTypeFilter>(() => loadTypeFilter());
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
 
   function changeView(next: ViewMode) {
     setView(next);
@@ -131,6 +145,17 @@ export function SessionManager({
     return list;
   }, [filtered, sort, recentIds]);
 
+  const filteredKubernetesProfiles = useMemo(() => {
+    if (typeFilter !== "all" && typeFilter !== "kubernetes") return [];
+    return kubernetesProfiles.filter((profile) => !isSearching || [
+      profile.name,
+      profile.description ?? "",
+      profile.tags.join(" "),
+      profile.source.kind === "local" ? "local kubeconfig" : "remote ssh",
+      ...profile.selectedContexts.map((context) => context.name),
+    ].join(" ").toLowerCase().includes(normalizedQuery));
+  }, [isSearching, kubernetesProfiles, normalizedQuery, typeFilter]);
+
   const recentProfiles = useMemo(() => {
     if (isSearching) {
       return [];
@@ -168,6 +193,12 @@ export function SessionManager({
     );
   }
 
+  function renderKubernetesCards(list: KubernetesProfile[]) {
+    return <div className={`session-manager__cards ${view === "list" ? "is-list" : "is-grid"}`}>
+      {list.map((profile) => <KubernetesConnectionCard key={profile.id} profile={profile} variant={cardVariant} onDelete={() => onDeleteKubernetes(profile)} onEdit={() => onEditKubernetes(profile)} onOpen={() => onOpenKubernetes(profile)} onToggleFavorite={() => onToggleKubernetesFavorite(profile.id)} />)}
+    </div>;
+  }
+
   return (
     <section className="session-manager" aria-label="会话管理器">
       <div className="session-manager__toolbar">
@@ -181,10 +212,19 @@ export function SessionManager({
             spellCheck={false}
           />
         </div>
-        <button className="session-manager__new" onClick={onCreate} type="button">
-          <Icon name="plus" height="15" width="15" />
-          <span>新建连接</span>
-        </button>
+        <div className="session-manager__new-wrap">
+          <button className="session-manager__new" onClick={onCreate} type="button">
+            <Icon name="plus" height="15" width="15" />
+            <span>新建连接</span>
+          </button>
+          <button aria-expanded={newMenuOpen} aria-label="选择新建连接类型" className="session-manager__new-caret" onClick={() => setNewMenuOpen((current) => !current)} type="button">
+            <Icon name="chevron-down" height="14" width="14" />
+          </button>
+          {newMenuOpen ? <div className="session-manager__new-menu" role="menu">
+            <button onClick={() => { setNewMenuOpen(false); onCreate(); }} role="menuitem" type="button"><Icon name="ssh" height="15" width="15" />SSH</button>
+            <button onClick={() => { setNewMenuOpen(false); onCreateKubernetes(); }} role="menuitem" type="button"><Icon name="database" height="15" width="15" />Kubernetes</button>
+          </div> : null}
+        </div>
         <div className="session-manager__sort">
           <span>排序</span>
           <SelectMenu
@@ -226,7 +266,7 @@ export function SessionManager({
         {errorMessage ? <div className="sidebar__error">{errorMessage}</div> : null}
         {isLoading ? (
           <div className="session-manager__empty">正在加载连接...</div>
-        ) : profiles.length === 0 ? (
+        ) : profiles.length === 0 && kubernetesProfiles.length === 0 ? (
           <div className="session-manager__empty">
             <Icon name="connections" height="28" width="28" />
             <p className="session-manager__empty-title">还没有保存的连接</p>
@@ -256,24 +296,18 @@ export function SessionManager({
                 <div className="session-manager__empty">没有匹配的连接。</div>
               )
             ) : (
-              <section className="session-manager__section">
-                <div className="session-manager__section-head">
-                  {isSearching ? "搜索结果" : "全部连接"}
-                  <span className="session-manager__section-count">{sorted.length}</span>
-                </div>
-                {sorted.length > 0 ? (
-                  renderCards(sorted)
-                ) : (
-                  <div className="session-manager__empty">没有匹配的连接。</div>
-                )}
-              </section>
+              <>
+                {sorted.length > 0 ? <section className="session-manager__section"><div className="session-manager__section-head">{isSearching ? "SSH 搜索结果" : "SSH 连接"}<span className="session-manager__section-count">{sorted.length}</span></div>{renderCards(sorted)}</section> : null}
+                {filteredKubernetesProfiles.length > 0 ? <section className="session-manager__section"><div className="session-manager__section-head">{isSearching ? "Kubernetes 搜索结果" : "Kubernetes 连接"}<span className="session-manager__section-count">{filteredKubernetesProfiles.length}</span></div>{renderKubernetesCards(filteredKubernetesProfiles)}</section> : null}
+                {sorted.length === 0 && filteredKubernetesProfiles.length === 0 ? <div className="session-manager__empty">没有匹配的连接。</div> : null}
+              </>
             )}
           </>
         )}
       </div>
 
       <div className="session-manager__status">
-        <span>{profiles.length} 个连接</span>
+        <span>{profiles.length + kubernetesProfiles.length} 个连接</span>
         <span className="session-manager__status-dot" />
         <span>{activeSessionCount} 个活动会话</span>
       </div>

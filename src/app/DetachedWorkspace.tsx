@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DetachedWorkspace } from "../models";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
@@ -14,6 +14,12 @@ import { toast, ToastHost } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
 import { isMacOS } from "../platform";
 import { discardDetachedWorkspace, updateDetachedTerminalWorkspace } from "../services/workspaceService";
+import {
+  formatShortcut,
+  getShortcutBinding,
+  isFocusModeExitShortcut,
+  isTerminalFullscreenShortcut,
+} from "./shortcuts";
 
 interface DetachedWorkspaceProps {
   workspace: DetachedWorkspace;
@@ -93,6 +99,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const panes = usePaneLayout();
   const settings = useTerminalSettings();
   const appliedInitialLayout = useRef(false);
+  const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
 
   const visibleSessions = useMemo(() => {
     const ids = new Set(descriptor?.sessionIds ?? []);
@@ -106,6 +113,32 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const activeProfile = activeSession?.kind === "ssh"
     ? profilesState.profiles.find((profile) => profile.id === activeSession.profileId) ?? null
     : null;
+
+  const toggleTerminalFullscreen = useCallback(() => {
+    const paneId = layout?.focusedPaneId ?? activeSession?.id;
+    if (!paneId) return;
+    setTerminalFullscreenPaneId((current) => current === paneId ? null : paneId);
+  }, [activeSession?.id, layout?.focusedPaneId]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTerminalFullscreenShortcut(event)) {
+        event.preventDefault();
+        toggleTerminalFullscreen();
+      } else if (isFocusModeExitShortcut(event) && terminalFullscreenPaneId) {
+        event.preventDefault();
+        setTerminalFullscreenPaneId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [terminalFullscreenPaneId, toggleTerminalFullscreen]);
+
+  useEffect(() => {
+    setTerminalFullscreenPaneId((current) =>
+      current && visibleSessions.some((session) => session.id === current) ? current : null,
+    );
+  }, [visibleSessions]);
 
   useEffect(() => {
     if (!descriptor || appliedInitialLayout.current) return;
@@ -138,6 +171,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const closeTab = useCallback(async () => {
     const ids = layout ? paneSessionIds(layout) : visibleSessions.map((session) => session.id);
     await Promise.all(ids.map((id) => terminal.closeSession(id)));
+    setTerminalFullscreenPaneId(null);
     await discardDetachedWorkspace(workspace.label).catch(() => {});
     await currentWindow.close();
   }, [currentWindow, layout, terminal.closeSession, visibleSessions, workspace.label]);
@@ -159,13 +193,16 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     const currentLayout = panes.findLayout(sessionId);
     const remaining = paneSessionIds(currentLayout).filter((id) => id !== sessionId);
     void terminal.closeSession(sessionId);
+    if (terminalFullscreenPaneId === sessionId) {
+      setTerminalFullscreenPaneId(null);
+    }
     if (remaining.length === 0) {
       void discardDetachedWorkspace(workspace.label).finally(() => void currentWindow.close());
       return;
     }
     panes.removePane(sessionId);
     terminal.setActiveSessionId(remaining[0] ?? null);
-  }, [currentWindow, panes, terminal, workspace.label]);
+  }, [currentWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
 
   const sessionLabel = activeSession
     ? activeProfile ? `${activeProfile.username}@${activeProfile.host}:${activeProfile.port}` : activeSession.title
@@ -204,8 +241,8 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
 
   return (
     <div className="detached-workspace">
-      <DetachedTitlebar title={workspace.title} onReturn={handleReturn} />
-      <div className="detached-workspace__tabbar">
+      {terminalFullscreenPaneId ? null : <DetachedTitlebar title={workspace.title} onReturn={handleReturn} />}
+      {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar">
         <div className="detached-workspace__tab">
           <span className="detached-workspace__tab-title" title={workspace.title}>
             <Icon name="terminalTool" height="15" width="15" />
@@ -224,7 +261,8 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         <span className="detached-workspace__tab-spacer" />
         <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title="左右分屏（同一主机）" type="button"><Icon name="splitH" height="15" width="15" /></button>
         <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title="上下分屏（同一主机）" type="button"><Icon name="splitV" height="15" width="15" /></button>
-      </div>
+        <button aria-label="终端全屏" className="tab-action" onClick={toggleTerminalFullscreen} title={`终端全屏（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`} type="button"><Icon name="maximize" height="15" width="15" /></button>
+      </div>}
       <main className="detached-workspace__content">
         {!terminal.isSessionsLoaded ? (
           <div className="terminal-loading">正在连接独立终端…</div>
@@ -232,6 +270,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           <PaneGrid
             layout={layout}
             focusedPaneId={layout.focusedPaneId}
+            zoomedPaneId={terminalFullscreenPaneId}
             sessions={visibleSessions}
             getPaneLabel={(sessionId) => `Pane ${Math.max(0, paneSessionIds(layout).indexOf(sessionId)) + 1}`}
             getBacklog={terminal.getBacklog}
@@ -252,6 +291,17 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           />
         ) : terminalSurface}
       </main>
+      {terminalFullscreenPaneId ? (
+        <button
+          className="terminal-focus-exit"
+          onClick={() => setTerminalFullscreenPaneId(null)}
+          title={`恢复终端视图（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
+          type="button"
+        >
+          <Icon name="restore" height="15" width="15" />
+          <span>恢复终端视图</span>
+        </button>
+      ) : null}
       <ToastHost />
     </div>
   );

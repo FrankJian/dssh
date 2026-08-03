@@ -18,7 +18,9 @@ interface MonacoRemoteEditorProps {
   languageOverrides: Record<string, string>;
   onContentChange: (path: string, content: string) => void;
   onSave: () => void;
+  onScroll?: (scrollTop: number, maxScrollTop: number) => void;
   profileId: string;
+  scrollTop?: number;
   shouldLoad: boolean;
 }
 
@@ -112,7 +114,9 @@ export function MonacoRemoteEditor({
   languageOverrides,
   onContentChange,
   onSave,
+  onScroll,
   profileId,
+  scrollTop = 0,
   shouldLoad,
 }: MonacoRemoteEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -122,11 +126,13 @@ export function MonacoRemoteEditor({
   const profileRef = useRef(profileId);
   const onContentChangeRef = useRef(onContentChange);
   const onSaveRef = useRef(onSave);
+  const onScrollRef = useRef(onScroll);
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   onContentChangeRef.current = onContentChange;
   onSaveRef.current = onSave;
+  onScrollRef.current = onScroll;
 
   useEffect(() => {
     if (!shouldLoad) {
@@ -134,6 +140,7 @@ export function MonacoRemoteEditor({
     }
     let disposed = false;
     let resizeObserver: ResizeObserver | null = null;
+    let scrollListener: Monaco.IDisposable | null = null;
     void loadMonaco()
       .then((monaco) => {
         if (disposed || !hostRef.current) return;
@@ -156,6 +163,10 @@ export function MonacoRemoteEditor({
           wordWrap: editorOptions.wordWrap,
         });
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSaveRef.current());
+        scrollListener = editor.onDidScrollChange((event) => {
+          const maxScrollTop = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height);
+          onScrollRef.current?.(event.scrollTop, maxScrollTop);
+        });
         editorRef.current = editor;
         resizeObserver = new ResizeObserver(() => editor.layout());
         resizeObserver.observe(hostRef.current);
@@ -167,6 +178,7 @@ export function MonacoRemoteEditor({
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
+      scrollListener?.dispose();
       for (const entry of modelsRef.current.values()) disposeEntry(entry);
       modelsRef.current.clear();
       editorRef.current?.dispose();
@@ -175,6 +187,13 @@ export function MonacoRemoteEditor({
       setIsReady(false);
     };
   }, [shouldLoad]);
+
+  useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+    editorRef.current?.setScrollTop(scrollTop);
+  }, [isReady, scrollTop]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({
@@ -234,6 +253,13 @@ export function MonacoRemoteEditor({
     if (editorRef.current?.getModel() !== activeModel) {
       editorRef.current?.setModel(activeModel);
       if (activeModel) editorRef.current?.focus();
+    }
+    if (editorRef.current) {
+      const maxScrollTop = Math.max(
+        0,
+        editorRef.current.getScrollHeight() - editorRef.current.getLayoutInfo().height,
+      );
+      onScrollRef.current?.(editorRef.current.getScrollTop(), maxScrollTop);
     }
   }, [activePath, documents, filePaths, isReady, languageOverrides, profileId]);
 

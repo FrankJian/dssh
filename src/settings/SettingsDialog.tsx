@@ -4,6 +4,7 @@ import { AiSettingsSection } from "../ai/AiSettingsSection";
 import type { AiConfig } from "../ai/useAiConfig";
 import { AboutSection } from "./AboutSection";
 import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
+import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
 import {
   exportProfilesEncrypted,
@@ -39,7 +40,7 @@ import {
   systemFontFamilyValue,
 } from "./settings";
 
-export type SettingsCategory = "appearance" | "terminal" | "editor" | "s3" | "ai" | "config" | "about";
+export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
   aiConfig: AiConfig;
@@ -77,11 +78,12 @@ interface SettingsDialogProps {
 const categories: Array<{
   id: SettingsCategory;
   label: string;
-  icon: "sun" | "monitor" | "fileCode" | "bucket" | "file" | "bot" | "info";
+  icon: "sun" | "monitor" | "fileCode" | "command" | "bucket" | "file" | "bot" | "info";
 }> = [
   { icon: "sun", id: "appearance", label: "外观" },
   { icon: "monitor", id: "terminal", label: "终端" },
   { icon: "fileCode", id: "editor", label: "文件编辑器" },
+  { icon: "command", id: "shortcuts", label: "快捷键" },
   { icon: "bucket", id: "s3", label: "对象存储" },
   { icon: "bot", id: "ai", label: "AI" },
   { icon: "file", id: "config", label: "配置文件" },
@@ -504,7 +506,7 @@ export function SettingsDialog({
               <section className="settings-section" aria-label="终端字体">
                 <div className="settings-section__head">
                   <h3>字体大小</h3>
-                  <p>也可在终端中使用 Ctrl + 鼠标滚轮，或 Ctrl 加 +/- 调整。</p>
+                  <p>终端内的字号快捷键和鼠标滚轮组合可在“快捷键”设置中修改。</p>
                 </div>
                 <div className="settings-stepper">
                   <button
@@ -761,6 +763,8 @@ export function SettingsDialog({
                 </div>
               </section>
             ) : null}
+
+            {category === "shortcuts" ? <ShortcutSettingsSection /> : null}
 
             {s3NavigationEnabled && category === "s3" ? (
               <section className="settings-section" aria-label="对象存储传输">

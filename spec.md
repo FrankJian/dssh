@@ -175,3 +175,8 @@ AI Agent 除了读取终端和执行经确认的远程命令，还可通过受 R
 | 进程内存 | SSH transport / channel lease、活动终端、独立窗口登记与 pane 布局回收状态 |
 
 Tauri 载荷统一 **camelCase**；改命令 / 事件时同步 Rust serde DTO 与 TS 类型和服务层。
+
+## 7. 已规划功能规格
+
+- [Kubernetes 集群工作区](features/kubernetes-workspace.md)：本地 kubeconfig 与远端 SSH / kubectl 双来源、
+  多 context、资源 GUI、CLI 及安全修改流程。该能力尚未实现，不应被视为当前发布功能。

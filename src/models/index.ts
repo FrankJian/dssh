@@ -6,6 +6,25 @@ export type {
 } from "./forwarding";
 export type { AuthMethod, SshProfile, SshProxy } from "./sshProfile";
 export type {
+  KubernetesContextSelection,
+  KubernetesContextSummary,
+  KubernetesCapabilities,
+  KubernetesCliLaunch,
+  KubernetesLabel,
+  KubernetesProfile,
+  KubernetesPodLogs,
+  KubernetesPodLogEvent,
+  KubernetesResourceDocument,
+  KubernetesResourceItem,
+  KubernetesResourceKind,
+  KubernetesResourceList,
+  KubernetesResourceType,
+  KubernetesSource,
+  LocalKubeconfigScanResult,
+  RemoteKubeconfigCandidate,
+  RemoteKubernetesDiscoveryResult,
+} from "./kubernetes";
+export type {
   S3Bucket,
   S3Bookmark,
   S3CannedAcl,

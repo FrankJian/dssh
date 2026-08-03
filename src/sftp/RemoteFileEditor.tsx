@@ -105,10 +105,16 @@ export function RemoteFileEditor({
   const [markdownPreviewPath, setMarkdownPreviewPath] = useState<string | null>(null);
   const [previewWidth, setPreviewWidth] = useState(DEFAULT_PREVIEW_WIDTH);
   const [languageOverrides, setLanguageOverrides] = useState<Record<string, string>>({});
+  const [editorScrollTop, setEditorScrollTop] = useState(0);
   const documentsRef = useRef(documents);
   documentsRef.current = documents;
   const imagesRef = useRef(images);
   imagesRef.current = images;
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const editorMaxScrollTopRef = useRef(0);
+  const editorScrollTopRef = useRef(0);
+  const programmaticEditorScrollRef = useRef<number | null>(null);
+  const programmaticPreviewScrollRef = useRef<number | null>(null);
 
   useEffect(() => {
     // Each SFTP profile has an independent remote namespace. Clear cached
@@ -255,6 +261,34 @@ export function RemoteFileEditor({
       setMarkdownPreviewPath(null);
     }
   }, [activePath]);
+
+  useEffect(() => {
+    editorScrollTopRef.current = 0;
+    editorMaxScrollTopRef.current = 0;
+    programmaticEditorScrollRef.current = null;
+    programmaticPreviewScrollRef.current = null;
+    setEditorScrollTop(0);
+    if (previewRef.current) {
+      previewRef.current.scrollTop = 0;
+    }
+  }, [activePath]);
+
+  useEffect(() => {
+    programmaticEditorScrollRef.current = null;
+    programmaticPreviewScrollRef.current = null;
+    if (markdownPreviewPath !== activePath) {
+      if (previewRef.current) {
+        previewRef.current.scrollTop = 0;
+      }
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      // When preview opens, preserve the editor's current relative position
+      // instead of jumping either pane to an unrelated location.
+      handleEditorScroll(editorScrollTopRef.current, editorMaxScrollTopRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePath, markdownPreviewPath]);
 
   useEffect(() => {
     setImages((current) => {
@@ -417,6 +451,58 @@ export function RemoteFileEditor({
     document.body.style.userSelect = "none";
   }
 
+  function handleEditorScroll(scrollTop: number, maxScrollTop: number) {
+    editorScrollTopRef.current = scrollTop;
+    editorMaxScrollTopRef.current = maxScrollTop;
+    const requestedScrollTop = programmaticEditorScrollRef.current;
+    if (requestedScrollTop !== null && Math.abs(requestedScrollTop - scrollTop) <= 2) {
+      programmaticEditorScrollRef.current = null;
+      return;
+    }
+    if (requestedScrollTop !== null) {
+      programmaticEditorScrollRef.current = null;
+    }
+    const preview = previewRef.current;
+    if (!preview || markdownPreviewPath !== activePath) {
+      return;
+    }
+    const maxPreviewScrollTop = Math.max(0, preview.scrollHeight - preview.clientHeight);
+    const ratio = maxScrollTop > 0 ? scrollTop / maxScrollTop : 0;
+    const nextScrollTop = ratio * maxPreviewScrollTop;
+    programmaticPreviewScrollRef.current = nextScrollTop;
+    preview.scrollTop = nextScrollTop;
+    window.requestAnimationFrame(() => {
+      if (programmaticPreviewScrollRef.current === nextScrollTop) {
+        programmaticPreviewScrollRef.current = null;
+      }
+    });
+  }
+
+  function handlePreviewScroll(event: React.UIEvent<HTMLDivElement>) {
+    const preview = event.currentTarget;
+    const requestedScrollTop = programmaticPreviewScrollRef.current;
+    if (requestedScrollTop !== null && Math.abs(requestedScrollTop - preview.scrollTop) <= 2) {
+      programmaticPreviewScrollRef.current = null;
+      return;
+    }
+    if (requestedScrollTop !== null) {
+      programmaticPreviewScrollRef.current = null;
+    }
+    if (markdownPreviewPath !== activePath) {
+      return;
+    }
+    const maxPreviewScrollTop = Math.max(0, preview.scrollHeight - preview.clientHeight);
+    const ratio = maxPreviewScrollTop > 0 ? preview.scrollTop / maxPreviewScrollTop : 0;
+    const nextScrollTop = ratio * editorMaxScrollTopRef.current;
+    programmaticEditorScrollRef.current = nextScrollTop;
+    setEditorScrollTop(nextScrollTop);
+    window.requestAnimationFrame(() => {
+      if (programmaticEditorScrollRef.current === nextScrollTop) {
+        programmaticEditorScrollRef.current = null;
+      }
+    });
+  }
+
   return (
     <section className="remote-file-editor" aria-label={`${isLocalFileSystem ? "本地" : "远程"}文件编辑器`}>
       <header className="remote-file-editor__tabs" role="tablist" aria-label="已打开文件">
@@ -546,7 +632,9 @@ export function RemoteFileEditor({
           languageOverrides={languageOverrides}
           onContentChange={updateContent}
           onSave={() => void saveActiveFile()}
+          onScroll={handleEditorScroll}
           profileId={`${fileSystem}:${profileId}`}
+          scrollTop={editorScrollTop}
           shouldLoad={hasLoadedTextDocument}
         />
         {markdownPreviewPath === activePath && activeDocument ? (
@@ -571,7 +659,7 @@ export function RemoteFileEditor({
                     <Icon name="close" height="14" width="14" />
                   </button>
                 </header>
-                <div className="remote-file-editor__markdown">
+                <div className="remote-file-editor__markdown" onScroll={handlePreviewScroll} ref={previewRef}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     components={{

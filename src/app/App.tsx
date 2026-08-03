@@ -14,7 +14,11 @@ import {
   type HostKeyPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
-import type { S3Profile, SshProfile, TerminalSession } from "../models";
+import type { KubernetesProfile, S3Profile, SshProfile, TerminalSession } from "../models";
+import { KubernetesProfileEditor, type KubernetesProfileEditorMode } from "../kubernetes/KubernetesProfileEditor";
+import { KubernetesWorkspace } from "../kubernetes/KubernetesWorkspace";
+import { useKubernetesProfiles } from "../kubernetes/useKubernetesProfiles";
+import { prepareKubernetesCli } from "../services/kubernetesService";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
 import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
@@ -53,7 +57,13 @@ import {
 } from "./ActivityBar";
 import { AppLayout } from "./AppLayout";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
-import { isCommandPaletteShortcut } from "./shortcuts";
+import {
+  formatShortcut,
+  getShortcutBinding,
+  isCommandPaletteShortcut,
+  isFocusModeExitShortcut,
+  isTerminalFullscreenShortcut,
+} from "./shortcuts";
 import { useWorkspace } from "./useWorkspace";
 import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
 import { DetachedWorkspaceWindow } from "./DetachedWorkspace";
@@ -77,6 +87,16 @@ interface S3EditorState {
   profile: S3Profile | null;
 }
 
+interface KubernetesEditorState {
+  mode: KubernetesProfileEditorMode;
+  profile: KubernetesProfile | null;
+}
+
+interface KubernetesWorkspaceState {
+  profileId: string;
+  contextKey: string;
+}
+
 interface ForwardTarget {
   sessionId: string;
   profile: SshProfile;
@@ -95,11 +115,16 @@ const AI_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "appearance",
   "terminal",
   "editor",
+  "shortcuts",
   "s3",
   "ai",
   "config",
   "about",
 ];
+
+function contextKeyForKubernetes(context: { sourceId: string; name: string }) {
+  return `${context.sourceId}\u0000${context.name}`;
+}
 
 function isAiSettingsCategory(value: unknown): value is SettingsCategory {
   return typeof value === "string" && AI_SETTINGS_CATEGORIES.includes(value as SettingsCategory);
@@ -158,6 +183,8 @@ function MainApp() {
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
+  const [kubernetesEditorState, setKubernetesEditorState] = useState<KubernetesEditorState | null>(null);
+  const [kubernetesWorkspaceState, setKubernetesWorkspaceState] = useState<KubernetesWorkspaceState | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
   const [s3TabProfileIds, setS3TabProfileIds] = useState<string[]>([]);
   const [activeS3ProfileId, setActiveS3ProfileId] = useState<string | null>(null);
@@ -171,6 +198,7 @@ function MainApp() {
   const [zenMode, setZenMode] = useState<boolean>(
     () => localStorage.getItem("dssh.zenMode") === "true",
   );
+  const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("dssh.zenMode", String(zenMode));
@@ -259,6 +287,7 @@ function MainApp() {
     updateProfile,
   } = useProfiles();
   const s3Profiles = useS3Profiles();
+  const kubernetesProfiles = useKubernetesProfiles();
   const {
     activeSession,
     activeSessionId,
@@ -450,7 +479,16 @@ function MainApp() {
   }, [terminalWorkspaceInset]);
 
   const isS3 = activeActivity === "s3";
-  const isConnections = activeActivity === "connections";
+  const activeKubernetesProfile = kubernetesWorkspaceState
+    ? kubernetesProfiles.profiles.find((profile) => profile.id === kubernetesWorkspaceState.profileId) ?? null
+    : null;
+  const activeKubernetesContext = activeKubernetesProfile && kubernetesWorkspaceState
+    ? activeKubernetesProfile.selectedContexts.find(
+      (context) => `${context.sourceId}\u0000${context.name}` === kubernetesWorkspaceState.contextKey,
+    )
+    : undefined;
+  const isKubernetesWorkspace = activeKubernetesProfile != null;
+  const isConnections = activeActivity === "connections" && !isKubernetesWorkspace;
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
 
@@ -665,20 +703,6 @@ function MainApp() {
     setThemeMode,
   ]);
 
-  // ⌘K / Ctrl+K toggles the command palette; Escape leaves zen mode.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (isCommandPaletteShortcut(event)) {
-        event.preventDefault();
-        setIsPaletteOpen((open) => !open);
-      } else if (event.key === "Escape" && zenMode) {
-        setZenMode(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [zenMode]);
-
   // Closing/disconnecting the target session also closes its adjacent tree.
   useEffect(() => {
     setFileTreeSessionId((current) =>
@@ -686,6 +710,12 @@ function MainApp() {
     );
     panes.pruneSessions(new Set(sessions.map((session) => session.id)));
   }, [panes.pruneSessions, sessions]);
+
+  useEffect(() => {
+    setTerminalFullscreenPaneId((current) =>
+      current && sessions.some((session) => session.id === current) ? current : null,
+    );
+  }, [sessions]);
 
   useEffect(() => {
     setOpenRemoteFilePaths([]);
@@ -747,6 +777,14 @@ function MainApp() {
     setEditorState({ mode: "create", profile: null });
   }
 
+  function openCreateKubernetesProfile() {
+    setKubernetesEditorState({ mode: "create", profile: null });
+  }
+
+  function openEditKubernetesProfile(profile: KubernetesProfile) {
+    setKubernetesEditorState({ mode: "edit", profile });
+  }
+
   function openEditProfile(profile: SshProfile) {
     setEditorState({ mode: "edit", profile });
   }
@@ -797,6 +835,29 @@ function MainApp() {
     setS3EditorState(null);
   }
 
+  async function handleSubmitKubernetesProfile(
+    request: Parameters<typeof kubernetesProfiles.createProfile>[0],
+  ) {
+    if (kubernetesEditorState?.mode === "edit" && kubernetesEditorState.profile) {
+      await kubernetesProfiles.updateProfile({
+        ...request,
+        id: kubernetesEditorState.profile.id,
+      });
+    } else {
+      await kubernetesProfiles.createProfile(request);
+    }
+    setKubernetesEditorState(null);
+  }
+
+  async function handleDeleteKubernetesProfile(profile: KubernetesProfile) {
+    if (!window.confirm(`确定删除 Kubernetes 配置“${profile.name}”吗？`)) return;
+    try {
+      await kubernetesProfiles.deleteProfile(profile.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "删除 Kubernetes 配置失败。");
+    }
+  }
+
   async function confirmDeleteS3Profile(profile: S3Profile) {
     try {
       await s3Profiles.deleteProfile(profile.id);
@@ -845,6 +906,39 @@ function MainApp() {
     }
   }
 
+  async function handleOpenKubernetesCli(
+    kubernetesProfile: KubernetesProfile,
+    context: KubernetesProfile["selectedContexts"][number],
+  ) {
+    try {
+      const launch = await prepareKubernetesCli(kubernetesProfile.id, context);
+      const sourceProfile = launch.sshProfileId
+        ? profiles.find((profile) => profile.id === launch.sshProfileId)
+        : undefined;
+      if (launch.sshProfileId && !sourceProfile) {
+        throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
+      }
+      const session = sourceProfile
+        ? await startSession(sourceProfile)
+        : await startLocalSession();
+      setTerminalNames((current) => ({
+        ...current,
+        [session.id]: `kubectl · ${context.name}`,
+      }));
+      await writeToSession(session.id, `${launch.command}\n`);
+      showTerminalSurface();
+      toast(
+        launch.kubectlVersion
+          ? `已打开${launch.sourceLabel}（${launch.kubectlVersion}）。`
+          : `已打开${launch.sourceLabel}。`,
+        "success",
+      );
+      if (launch.warning) toast(launch.warning, "warning");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "打开 Kubernetes CLI 失败。", "error");
+    }
+  }
+
   // --- Split panes ----------------------------------------------------------
   async function handleSplit(dir: SplitDir) {
     if (!activeSessionId) {
@@ -875,6 +969,9 @@ function MainApp() {
     if (fileTreeSessionId === sessionId) {
       setFileTreeSessionId(null);
     }
+    if (terminalFullscreenPaneId === sessionId) {
+      setTerminalFullscreenPaneId(null);
+    }
     panes.removePane(sessionId);
     const next = remaining[0];
     if (next) {
@@ -886,8 +983,14 @@ function MainApp() {
   function handleCloseTerminalWindow(tabSessionId: string) {
     const layout = panes.findLayoutByTab(tabSessionId);
     if (!layout) {
+      if (terminalFullscreenPaneId === tabSessionId) {
+        setTerminalFullscreenPaneId(null);
+      }
       void closeSession(tabSessionId);
       return;
+    }
+    if (paneSessionIds(layout).includes(terminalFullscreenPaneId ?? "")) {
+      setTerminalFullscreenPaneId(null);
     }
     panes.removeLayout(tabSessionId);
     for (const sessionId of paneSessionIds(layout)) {
@@ -1048,6 +1151,43 @@ function MainApp() {
   }
   const activePaneLayout = panes.findLayout(activeSessionId);
 
+  const toggleTerminalFullscreen = useCallback(() => {
+    const paneId = activePaneLayout?.focusedPaneId ?? activeSessionId;
+    if (!paneId) {
+      return;
+    }
+    setTerminalFullscreenPaneId((current) => current === paneId ? null : paneId);
+    if (terminalFullscreenPaneId !== paneId) {
+      // A focused terminal should never be hidden by its file editor. The tree
+      // itself remains open, so restoring fullscreen returns to the same view.
+      setActiveRemoteFilePath(null);
+      focusTerminal();
+      setActiveActivity("sessions");
+      setZenMode(false);
+    }
+  }, [activePaneLayout, activeSessionId, focusTerminal, terminalFullscreenPaneId]);
+
+  // ⌘K / Ctrl+K toggles the command palette; ⌘⇧↵ / Ctrl+Shift+Enter focuses
+  // the current terminal pane. Escape restores that pane first, then zen mode.
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        setIsPaletteOpen((open) => !open);
+      } else if (isTerminalFullscreenShortcut(event)) {
+        event.preventDefault();
+        toggleTerminalFullscreen();
+      } else if (isFocusModeExitShortcut(event) && terminalFullscreenPaneId) {
+        event.preventDefault();
+        setTerminalFullscreenPaneId(null);
+      } else if (isFocusModeExitShortcut(event) && zenMode) {
+        setZenMode(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [terminalFullscreenPaneId, toggleTerminalFullscreen, zenMode]);
+
   // Every pane tree has one terminal-window tab. Child panes never appear as
   // independent tabs, even while another terminal window is active.
   const workspaceTabs: WorkspaceTabItem[] = [
@@ -1069,6 +1209,12 @@ function MainApp() {
       title: `SFTP · ${tab.title}`,
       active: isSftpActive && tab.id === activeSftpId,
     })),
+    ...(activeKubernetesProfile && kubernetesWorkspaceState ? [{
+      id: `kubernetes:${activeKubernetesProfile.id}:${kubernetesWorkspaceState.contextKey}`,
+      kind: "kubernetes" as const,
+      title: `Kubernetes · ${activeKubernetesProfile.name}${activeKubernetesContext ? ` · ${activeKubernetesContext.name}` : ""}`,
+      active: true,
+    }] : []),
   ];
 
   // Apply the user's drag-reordering: explicitly ordered tabs first (in that
@@ -1083,6 +1229,10 @@ function MainApp() {
   }
 
   function handleSelectTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "kubernetes") {
+      setActiveActivity("connections");
+      return;
+    }
     if (tab.kind === "sftp") {
       setFileTreeSessionId(null);
       focusSftpTab(tab.id);
@@ -1109,6 +1259,9 @@ function MainApp() {
   function handleCloseTab(tab: WorkspaceTabItem) {
     if (tab.kind === "sftp") {
       closeSftpTab(tab.id);
+    } else if (tab.kind === "kubernetes") {
+      setKubernetesWorkspaceState(null);
+      setActiveActivity("connections");
     } else if (panes.findLayoutByTab(tab.id)) {
       const layout = panes.findLayoutByTab(tab.id)!;
       const sessionIds = paneSessionIds(layout);
@@ -1155,6 +1308,9 @@ function MainApp() {
         },
       });
       addWorkspace(workspace);
+      if (sessionIds.includes(terminalFullscreenPaneId ?? "")) {
+        setTerminalFullscreenPaneId(null);
+      }
       if (sessionIds.includes(fileTreeSessionId ?? "")) {
         setFileTreeSessionId(null);
       }
@@ -1271,19 +1427,44 @@ function MainApp() {
   );
 
   let mainSurface: ReactNode;
-  if (isConnections) {
+  if (isKubernetesWorkspace) {
+    mainSurface = (
+      <KubernetesWorkspace
+        initialContext={activeKubernetesContext}
+        onClose={() => {
+          setKubernetesWorkspaceState(null);
+          setActiveActivity("connections");
+        }}
+        profile={activeKubernetesProfile}
+        onOpenCli={(profile, context) => void handleOpenKubernetesCli(profile, context)}
+      />
+    );
+  } else if (isConnections) {
     mainSurface = (
       <SessionManager
         profiles={profiles}
+        kubernetesProfiles={kubernetesProfiles.profiles}
         recentIds={recentIds}
         activeSessionCount={visibleSessions.length}
         isLoading={isLoading}
         errorMessage={errorMessage}
         onConnect={handleConnectProfile}
         onCreate={openCreateProfile}
+        onCreateKubernetes={openCreateKubernetesProfile}
         onEdit={openEditProfile}
         onDelete={handleDeleteProfile}
         onToggleFavorite={handleToggleFavorite}
+        onOpenKubernetes={(profile) => {
+          const context = profile.selectedContexts[0];
+          if (!context) {
+            openEditKubernetesProfile(profile);
+            return;
+          }
+          setKubernetesWorkspaceState({ profileId: profile.id, contextKey: contextKeyForKubernetes(context) });
+        }}
+        onEditKubernetes={openEditKubernetesProfile}
+        onDeleteKubernetes={(profile) => void handleDeleteKubernetesProfile(profile)}
+        onToggleKubernetesFavorite={(profileId) => void kubernetesProfiles.toggleFavorite(profileId)}
       />
     );
   } else if (isS3) {
@@ -1315,7 +1496,7 @@ function MainApp() {
         />
       </div>
     );
-  } else if (fileTreeProfile || isLocalFileTree) {
+  } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
     mainSurface = (
       <TerminalFileLayout
         fileTree={
@@ -1362,6 +1543,7 @@ function MainApp() {
       <PaneGrid
         layout={activePaneLayout}
         focusedPaneId={activePaneLayout.focusedPaneId}
+        zoomedPaneId={terminalFullscreenPaneId}
         sessions={sessions}
         getPaneLabel={paneName}
         getBacklog={getBacklog}
@@ -1392,6 +1574,7 @@ function MainApp() {
     const items: PaletteItem[] = [
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
+      { id: "act:new-kubernetes", label: "新建 Kubernetes 连接", hint: "连接", icon: "database", keywords: "kubernetes kubeconfig context cluster", run: openCreateKubernetesProfile },
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
@@ -1402,6 +1585,7 @@ function MainApp() {
       { id: "act:settings-appearance", label: "设置：外观", hint: "设置", icon: "sun", keywords: "appearance theme", run: () => openSettings("appearance") },
       { id: "act:settings-terminal", label: "设置：终端", hint: "设置", icon: "terminalTool", keywords: "terminal font background", run: () => openSettings("terminal") },
       { id: "act:settings-editor", label: "设置：文件编辑器", hint: "设置", icon: "fileCode", keywords: "editor monaco font", run: () => openSettings("editor") },
+      { id: "act:settings-shortcuts", label: "设置：快捷键", hint: "设置", icon: "command", keywords: "shortcut keybinding hotkey", run: () => openSettings("shortcuts") },
       { id: "act:settings-s3", label: "设置：对象存储", hint: "设置", icon: "bucket", keywords: "s3 transfer", run: () => openSettings("s3") },
       { id: "act:settings-ai", label: "设置：AI", hint: "设置", icon: "bot", keywords: "ai api", run: () => openSettings("ai") },
       { id: "act:settings-config", label: "设置：配置文件", hint: "设置", icon: "file", keywords: "import export", run: () => openSettings("config") },
@@ -1420,6 +1604,14 @@ function MainApp() {
         icon: "terminalTool",
         keywords: "focus terminal",
         run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); },
+      });
+      items.push({
+        id: "act:terminal-fullscreen",
+        label: terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏",
+        hint: "终端",
+        icon: terminalFullscreenPaneId ? "restore" : "maximize",
+        keywords: "fullscreen focus pane 最大化 全屏 聚焦",
+        run: toggleTerminalFullscreen,
       });
       if (activeCanSplit) {
         items.push({
@@ -1631,19 +1823,69 @@ function MainApp() {
         run: () => void s3Profiles.toggleFavorite(profile.id),
       });
     }
+    for (const profile of kubernetesProfiles.profiles) {
+      for (const context of profile.selectedContexts) {
+        items.push({
+          id: `kubernetes:open:${profile.id}:${contextKeyForKubernetes(context)}`,
+          label: `打开 Kubernetes：${profile.name} · ${context.name}`,
+          hint: profile.source.kind === "local" ? "本机来源" : "远端 SSH 来源",
+          icon: "database",
+          keywords: `${profile.tags.join(" ")} kubernetes kubeconfig context cluster`,
+          run: () => {
+            setKubernetesWorkspaceState({
+              profileId: profile.id,
+              contextKey: contextKeyForKubernetes(context),
+            });
+            setActiveActivity("connections");
+          },
+        });
+        items.push({
+          id: `kubernetes:cli:${profile.id}:${contextKeyForKubernetes(context)}`,
+          label: `打开 Kubernetes CLI：${profile.name} · ${context.name}`,
+          hint: profile.source.kind === "local" ? "本机终端" : "远端 SSH 终端",
+          icon: "terminalTool",
+          keywords: `${profile.tags.join(" ")} kubernetes kubectl cli terminal context`,
+          run: () => void handleOpenKubernetesCli(profile, context),
+        });
+      }
+      items.push({
+        id: `kubernetes:edit:${profile.id}`,
+        label: `编辑 Kubernetes 配置：${profile.name}`,
+        hint: profile.source.kind === "local" ? "本机 kubeconfig" : "远端 SSH",
+        icon: "database",
+        keywords: `${profile.tags.join(" ")} kubernetes kubeconfig context edit`,
+        run: () => openEditKubernetesProfile(profile),
+      });
+      items.push({
+        id: `kubernetes:favorite:${profile.id}`,
+        label: `${profile.favorite ? "取消收藏" : "收藏"} Kubernetes：${profile.name}`,
+        hint: "Kubernetes 配置",
+        icon: "star",
+        keywords: `${profile.tags.join(" ")} kubernetes favorite 收藏`,
+        run: () => void kubernetesProfiles.toggleFavorite(profile.id),
+      });
+      items.push({
+        id: `kubernetes:delete:${profile.id}`,
+        label: `删除 Kubernetes 配置：${profile.name}`,
+        hint: "Kubernetes 配置",
+        icon: "trash",
+        keywords: `${profile.tags.join(" ")} kubernetes delete 删除`,
+        run: () => void handleDeleteKubernetesProfile(profile),
+      });
+    }
     return items;
   }
 
   return (
     <div className="app-root" onContextMenu={handleContextMenu}>
       <AppLayout
-        sidebar={zenMode ? null : sidebarContent}
+        sidebar={zenMode || terminalFullscreenPaneId ? null : sidebarContent}
         sidebarWidth={sidebarWidth}
         onSidebarWidthChange={setSidebarWidth}
-        rightPanel={zenMode ? null : rightPanelContent}
+        rightPanel={zenMode || terminalFullscreenPaneId ? null : rightPanelContent}
         rightPanelWidth={rightPanelWidth}
         onRightPanelWidthChange={setRightPanelWidth}
-        titleBar={
+        titleBar={zenMode || terminalFullscreenPaneId ? null : (
           <div className={`titlebar${isMacOS ? " titlebar--mac" : ""}`}>
             {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
             <div className="titlebar__drag" data-tauri-drag-region />
@@ -1651,9 +1893,9 @@ function MainApp() {
                 our own minimize/maximize/close buttons on Windows and Linux. */}
             {isMacOS ? null : <WindowControls />}
           </div>
-        }
+        )}
         activityBar={
-          zenMode ? null : (
+          zenMode || terminalFullscreenPaneId ? null : (
             <ActivityBar
               activeActivity={activeActivity}
               visibleNavigationIcons={navigationIcons}
@@ -1668,7 +1910,7 @@ function MainApp() {
           )
         }
         tabStrip={
-          zenMode || isS3 || isConnections ? null : (
+          zenMode || terminalFullscreenPaneId || isS3 || isConnections ? null : (
             <>
               <WorkspaceTabStrip
                 tabs={workspaceTabs}
@@ -1714,6 +1956,15 @@ function MainApp() {
                   >
                     <Icon name="splitV" height="15" width="15" />
                   </button>
+                  <button
+                    aria-label={terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}
+                    className="tab-action"
+                    onClick={toggleTerminalFullscreen}
+                    title={`${terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
+                    type="button"
+                  >
+                    <Icon name={terminalFullscreenPaneId ? "restore" : "maximize"} height="15" width="15" />
+                  </button>
                 </div>
               ) : null}
             </>
@@ -1726,6 +1977,7 @@ function MainApp() {
           allTags={allTags}
           mode={editorState.mode}
           onClose={closeEditor}
+          onCreateKubernetes={openCreateKubernetesProfile}
           onSubmit={handleSubmitProfile}
           profile={editorState.profile}
         />
@@ -1736,6 +1988,16 @@ function MainApp() {
           onClose={() => setS3EditorState(null)}
           onSubmit={handleSubmitS3Profile}
           profile={s3EditorState.profile}
+        />
+      ) : null}
+      {kubernetesEditorState ? (
+        <KubernetesProfileEditor
+          allTags={[...allTags, ...kubernetesProfiles.allTags]}
+          mode={kubernetesEditorState.mode}
+          onClose={() => setKubernetesEditorState(null)}
+          onSubmit={handleSubmitKubernetesProfile}
+          profile={kubernetesEditorState.profile}
+          sshProfiles={profiles}
         />
       ) : null}
       {s3ProfileDeleteTarget ? (
@@ -1806,11 +2068,22 @@ function MainApp() {
         <button
           className="zen-exit"
           onClick={() => setZenMode(false)}
-          title="退出禅模式 (Esc)"
+          title={`退出禅模式（${formatShortcut(getShortcutBinding("exitFocusMode"))}）`}
           type="button"
         >
           <Icon name="panelRight" height="15" width="15" />
           <span>退出禅模式</span>
+        </button>
+      ) : null}
+      {terminalFullscreenPaneId ? (
+        <button
+          className="terminal-focus-exit"
+          onClick={() => setTerminalFullscreenPaneId(null)}
+          title={`恢复终端视图（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
+          type="button"
+        >
+          <Icon name="restore" height="15" width="15" />
+          <span>恢复终端视图</span>
         </button>
       ) : null}
       <ToastHost />

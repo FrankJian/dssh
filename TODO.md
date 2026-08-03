@@ -1,6 +1,6 @@
 # Duo SSH 待办
 
-> 本文件**只记录尚未完成的开发项与待验收项**。已完成的阶段记录见 [`tasks.md`](tasks.md)，
+> 本文件**只记录尚未完成的开发项与待验收项**。已进入实施拆分的任务见 [`tasks.md`](tasks.md)，
 > 当前界面与机制约定见 [`spec.md`](spec.md)，架构规则见 [`AGENTS.md`](AGENTS.md)。
 >
 > 优先级：**P1 = 安全/架构优先**，**P2 = 体验与可靠性**，**P3 = 可选演进**。
@@ -63,3 +63,9 @@
 ### 7. S3 并入统一工作区标签条
 
 - 将 S3 从独立 activity 的子标签迁入 `WorkspaceTabStrip`，与终端、SFTP 使用一致的标签生命周期与重排交互。
+
+### 8. Kubernetes 集群工作区
+
+- 新增本地 / 远端 SSH 双来源的 Kubernetes 连接、多个 kubeconfig context、资源 GUI、kubectl CLI、日志与安全
+  写操作。完整安全边界和来源语义见 [`features/kubernetes-workspace.md`](features/kubernetes-workspace.md)，
+  分阶段实施清单见 [`tasks.md`](tasks.md#kubernetes-集群工作区)。
