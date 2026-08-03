@@ -107,7 +107,7 @@ jobs:
         # Test builds intentionally do not consume release signing secrets or
         # generate updater artifacts. The tag-triggered Release workflow remains
         # responsible for signed, published releases.
-        run: pnpm tauri build --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm tauri build --no-sign --config src-tauri/tauri.ci.conf.json
 
       - name: Upload test installer
         uses: actions/upload-artifact@v4
