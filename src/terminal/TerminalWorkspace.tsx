@@ -1,13 +1,10 @@
-import { lazy, Suspense, useCallback } from "react";
+import { Suspense, useCallback } from "react";
 import type { TerminalSession } from "../models";
 import type { RightClickAction } from "../settings/settings";
 import { Icon } from "../ui/Icon";
 import { EmptyTerminal } from "./EmptyTerminal";
+import { LazyTerminalView } from "./LazyTerminalView";
 import type { TerminalOutputListener } from "./useTerminalSessions";
-
-const TerminalView = lazy(() =>
-  import("./TerminalView").then((module) => ({ default: module.TerminalView })),
-);
 
 interface TerminalWorkspaceProps {
   activeSession: TerminalSession | null;
@@ -116,7 +113,7 @@ export function TerminalWorkspace({
           </div>
           <div className="terminal-stage">
             <Suspense fallback={<div className="terminal-loading">正在加载终端...</div>}>
-              <TerminalView
+              <LazyTerminalView
                 copyOnSelect={copyOnSelect}
                 fontFamily={fontFamily}
                 fontSize={fontSize}

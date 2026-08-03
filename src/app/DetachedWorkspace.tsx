@@ -1,8 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DetachedWorkspace } from "../models";
+import type { DetachedWorkspace, KubernetesPodExecRequest, KubernetesProfile } from "../models";
+import { KubernetesWorkspace } from "../kubernetes/KubernetesWorkspace";
+import { useKubernetesProfiles } from "../kubernetes/useKubernetesProfiles";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
+import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
@@ -14,6 +17,7 @@ import { toast, ToastHost } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
 import { isMacOS } from "../platform";
 import { discardDetachedWorkspace, updateDetachedTerminalWorkspace } from "../services/workspaceService";
+import { prepareKubernetesCli, prepareKubernetesPodExec } from "../services/kubernetesService";
 import {
   formatShortcut,
   getShortcutBinding,
@@ -85,6 +89,84 @@ function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
       />
       <main className="detached-workspace__content detached-workspace__content--sftp">
         <FileBrowser disableContextMenu profileId={profileId} />
+      </main>
+      <ToastHost />
+    </div>
+  );
+}
+
+function DetachedKubernetesWindow({ workspace }: DetachedWorkspaceProps) {
+  const descriptor = workspace.kubernetes;
+  const currentWindow = getCurrentWindow();
+  const kubernetesProfiles = useKubernetesProfiles();
+  const profilesState = useProfiles();
+  const terminal = useTerminalSessions();
+  const settings = useTerminalSettings();
+  const editorSettings = useEditorSettings(settings.fontFamily, settings.fontSize);
+  const [isKubernetesDirty, setIsKubernetesDirty] = useState(false);
+  const profile = descriptor
+    ? kubernetesProfiles.profiles.find((item) => item.id === descriptor.profileId) ?? null
+    : null;
+  const context = profile?.selectedContexts.find((item) => `${item.sourceId}\u0000${item.name}` === descriptor?.contextKey) ?? null;
+
+  const closeWorkspace = useCallback((skipDirtyConfirmation = false) => {
+    if (!skipDirtyConfirmation && isKubernetesDirty && !window.confirm("Kubernetes YAML 已修改但尚未保存。确定关闭独立窗口并放弃修改吗？")) {
+      return;
+    }
+    void discardDetachedWorkspace(workspace.label)
+      .then(() => currentWindow.close())
+      .catch((error: unknown) => toast(error instanceof Error ? error.message : "关闭独立 Kubernetes 窗口失败。", "error"));
+  }, [currentWindow, isKubernetesDirty, workspace.label]);
+
+  const returnToMainWindow = useCallback(() => {
+    if (isKubernetesDirty && !window.confirm("Kubernetes YAML 已修改但尚未保存。确定合并回主窗口并放弃修改吗？")) {
+      return;
+    }
+    void currentWindow.close();
+  }, [currentWindow, isKubernetesDirty]);
+
+  const openCli = useCallback(async (targetProfile: KubernetesProfile, targetContext: KubernetesProfile["selectedContexts"][number]) => {
+    try {
+      const launch = await prepareKubernetesCli(targetProfile.id, targetContext);
+      const sourceProfile = launch.sshProfileId ? profilesState.profiles.find((item) => item.id === launch.sshProfileId) : undefined;
+      if (launch.sshProfileId && !sourceProfile) throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
+      const session = sourceProfile ? await terminal.startSession(sourceProfile) : await terminal.startLocalSession();
+      await terminal.writeToSession(session.id, `${launch.command}\n`);
+      toast(`已打开${launch.sourceLabel}。`, "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "打开 Kubernetes CLI 失败。", "error");
+    }
+  }, [profilesState.profiles, terminal]);
+
+  const openExec = useCallback(async (request: KubernetesPodExecRequest) => {
+    try {
+      const launch = await prepareKubernetesPodExec(request);
+      const sourceProfile = launch.sshProfileId ? profilesState.profiles.find((item) => item.id === launch.sshProfileId) : undefined;
+      if (launch.sshProfileId && !sourceProfile) throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
+      const session = sourceProfile ? await terminal.startSession(sourceProfile) : await terminal.startLocalSession();
+      await terminal.writeToSession(session.id, `${launch.command}\n`);
+      toast(`已打开${launch.sourceLabel}。`, "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "打开 Kubernetes Pod Exec 失败。", "error");
+    }
+  }, [profilesState.profiles, terminal]);
+
+  if (!descriptor || !profile || !context) {
+    return <DetachedUnavailable message="Kubernetes 独立窗口配置已失效，请返回主窗口重新打开。" />;
+  }
+  return (
+    <div className="detached-workspace">
+      <DetachedTitlebar title={workspace.title} onClose={() => closeWorkspace()} onReturn={returnToMainWindow} />
+      <main className="detached-workspace__content">
+        {kubernetesProfiles.isLoading ? <div className="terminal-loading">正在读取 Kubernetes 配置…</div> : <KubernetesWorkspace
+          editorOptions={editorSettings.options}
+          initialContext={context}
+          onClose={() => closeWorkspace(true)}
+          onDirtyChange={setIsKubernetesDirty}
+          onOpenCli={(targetProfile, targetContext) => void openCli(targetProfile, targetContext)}
+          onOpenExec={(request) => void openExec(request)}
+          profile={profile}
+        />}
       </main>
       <ToastHost />
     </div>
@@ -314,5 +396,6 @@ function DetachedUnavailable({ message }: { message: string }) {
 export function DetachedWorkspaceWindow({ workspace }: DetachedWorkspaceProps) {
   useTheme();
   if (workspace.kind === "sftp") return <DetachedSftpWindow workspace={workspace} />;
+  if (workspace.kind === "kubernetes") return <DetachedKubernetesWindow workspace={workspace} />;
   return <DetachedTerminalWindow workspace={workspace} />;
 }

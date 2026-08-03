@@ -1,8 +1,9 @@
+import { Suspense } from "react";
 import type { TerminalSession, TerminalSize } from "../models";
 import type { RightClickAction } from "../settings/settings";
 import { Icon } from "../ui/Icon";
+import { LazyTerminalView } from "./LazyTerminalView";
 import type { PaneLayout, PaneNode, PaneSplit } from "./usePaneLayout";
-import { TerminalView } from "./TerminalView";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 
 const MIN_RATIO = 0.12;
@@ -109,21 +110,23 @@ export function PaneGrid({
             </button>
           </div>
           <div className="pane__body">
-            <TerminalView
-              backgroundAlpha={backgroundAlpha}
-              copyOnSelect={copyOnSelect}
-              fontFamily={fontFamily}
-              fontSize={fontSize}
-              getBacklog={getBacklog}
-              gpuAcceleration={gpuAcceleration}
-              hasWallpaper={hasWallpaper}
-              onData={(data) => onPaneData(node.sessionId, data)}
-              onFontSizeChange={onFontSizeChange}
-              onResize={(size) => onPaneResize(node.sessionId, size)}
-              rightClick={rightClick}
-              sessionId={node.sessionId}
-              subscribeOutput={subscribeOutput}
-            />
+            <Suspense fallback={<div className="terminal-loading">正在加载终端...</div>}>
+              <LazyTerminalView
+                backgroundAlpha={backgroundAlpha}
+                copyOnSelect={copyOnSelect}
+                fontFamily={fontFamily}
+                fontSize={fontSize}
+                getBacklog={getBacklog}
+                gpuAcceleration={gpuAcceleration}
+                hasWallpaper={hasWallpaper}
+                onData={(data) => onPaneData(node.sessionId, data)}
+                onFontSizeChange={onFontSizeChange}
+                onResize={(size) => onPaneResize(node.sessionId, size)}
+                rightClick={rightClick}
+                sessionId={node.sessionId}
+                subscribeOutput={subscribeOutput}
+              />
+            </Suspense>
           </div>
         </div>
       );

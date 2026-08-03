@@ -1,6 +1,6 @@
 import type { PaneLayout } from "../terminal/usePaneLayout";
 
-export type DetachedWorkspaceKind = "terminal" | "sftp";
+export type DetachedWorkspaceKind = "terminal" | "sftp" | "kubernetes";
 
 export interface DetachedTerminalWorkspace {
   tabSessionId: string;
@@ -12,6 +12,11 @@ export interface DetachedSftpWorkspace {
   profileId: string;
 }
 
+export interface DetachedKubernetesWorkspace {
+  profileId: string;
+  contextKey: string;
+}
+
 export interface DetachedWorkspace {
   label: string;
   parentLabel: string;
@@ -19,6 +24,7 @@ export interface DetachedWorkspace {
   title: string;
   terminal: DetachedTerminalWorkspace | null;
   sftp: DetachedSftpWorkspace | null;
+  kubernetes: DetachedKubernetesWorkspace | null;
 }
 
 export interface OpenDetachedTerminalRequest {
@@ -31,4 +37,11 @@ export interface OpenDetachedSftpRequest {
   parentLabel: string;
   title: string;
   profileId: string;
+}
+
+export interface OpenDetachedKubernetesRequest {
+  parentLabel: string;
+  title: string;
+  profileId: string;
+  contextKey: string;
 }

@@ -76,6 +76,7 @@ export function SelectMenu({
   const [searchQuery, setSearchQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const previousValueRef = useRef(value);
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
   const filteredOptions = useMemo(
@@ -105,6 +106,16 @@ export function SelectMenu({
     }
   }, [open, searchable]);
 
+  // A parent may replace the surrounding form when a selection changes. Keep
+  // the popover closed after that controlled value update as well as in the
+  // option click handler, so it cannot remain visible after a single click.
+  useEffect(() => {
+    if (previousValueRef.current === value) return;
+    previousValueRef.current = value;
+    setOpen(false);
+    setSearchQuery("");
+  }, [value]);
+
   useEffect(() => {
     if (!open) {
       return;
@@ -133,8 +144,12 @@ export function SelectMenu({
     if (option.disabled) {
       return;
     }
-    onChange(option.value);
+    // Close before notifying the parent. Some parents replace the option
+    // list or switch the surrounding form immediately; doing this first
+    // prevents that synchronous update from leaving the popover mounted.
     setOpen(false);
+    setSearchQuery("");
+    onChange(option.value);
   }
 
   function moveSelection(direction: 1 | -1) {

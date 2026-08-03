@@ -53,13 +53,13 @@ impl AppState {
 
         Ok(Self {
             profiles: ProfileRepository::initialize(
-                app_data_dir,
+                &app_data_dir,
                 storage_config.database_file_name,
             )?,
             sessions: SessionManager::new(ssh_pool.clone()),
             sftp: SftpManager::new(ssh_pool.clone()),
             s3: S3Manager::default(),
-            kubernetes: KubernetesManager::default(),
+            kubernetes: KubernetesManager::initialize(app_data_dir.to_path_buf())?,
             forwards: ForwardManager::new(ssh_pool.clone()),
             ai: AiManager::default(),
             host_keys,

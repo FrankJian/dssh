@@ -151,7 +151,7 @@ export function SessionManager({
       profile.name,
       profile.description ?? "",
       profile.tags.join(" "),
-      profile.source.kind === "local" ? "local kubeconfig" : "remote ssh",
+      profile.source.kind === "local" ? "local kubeconfig" : profile.source.kind === "localImported" ? "secure imported kubeconfig" : "remote ssh",
       ...profile.selectedContexts.map((context) => context.name),
     ].join(" ").toLowerCase().includes(normalizedQuery));
   }, [isSearching, kubernetesProfiles, normalizedQuery, typeFilter]);
@@ -195,7 +195,13 @@ export function SessionManager({
 
   function renderKubernetesCards(list: KubernetesProfile[]) {
     return <div className={`session-manager__cards ${view === "list" ? "is-list" : "is-grid"}`}>
-      {list.map((profile) => <KubernetesConnectionCard key={profile.id} profile={profile} variant={cardVariant} onDelete={() => onDeleteKubernetes(profile)} onEdit={() => onEditKubernetes(profile)} onOpen={() => onOpenKubernetes(profile)} onToggleFavorite={() => onToggleKubernetesFavorite(profile.id)} />)}
+      {list.map((profile) => {
+        const remoteSource = profile.source.kind === "remoteSsh" ? profile.source : null;
+        const sourceAvailable = remoteSource
+          ? profiles.some((sshProfile) => sshProfile.id === remoteSource.sshProfileId)
+          : true;
+        return <KubernetesConnectionCard key={profile.id} profile={profile} sourceAvailable={sourceAvailable} variant={cardVariant} onDelete={() => onDeleteKubernetes(profile)} onEdit={() => onEditKubernetes(profile)} onOpen={() => onOpenKubernetes(profile)} onToggleFavorite={() => onToggleKubernetesFavorite(profile.id)} />;
+      })}
     </div>;
   }
 

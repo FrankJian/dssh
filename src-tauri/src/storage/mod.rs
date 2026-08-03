@@ -2,7 +2,7 @@ use crate::config::DATABASE_FILE_NAME;
 
 pub mod profile_repository;
 
-pub use profile_repository::ProfileRepository;
+pub use profile_repository::{KubernetesAuditRecord, ProfileRepository};
 
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

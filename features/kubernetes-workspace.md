@@ -1,7 +1,8 @@
 # Kubernetes 集群工作区规格
 
-> 状态：Phase 0–2 与 Phase 3 正在实施。本文定义 Kubernetes 连接、资源 GUI 与 CLI 工作流的产品边界、双来源架构、
-> 安全要求和分阶段交付顺序。具体实施清单见 [`../tasks.md`](../tasks.md)，优先级入口见
+> 状态：Phase 0–5 的代码基础已完成，仍需真实集群、平台、权限和故障矩阵验收；Phase 6 为可选增强。本文定义 Kubernetes
+> 连接、资源 GUI 与 CLI 工作流的产品边界、双来源架构、安全要求和分阶段交付顺序。具体实施清单见
+> [`../tasks.md`](../tasks.md)，优先级入口见
 > [`../TODO.md`](../TODO.md)。
 
 ## 1. 目标与非目标
@@ -60,15 +61,19 @@
 | --- | --- | --- |
 | 自动发现 | 使用 `KUBECONFIG`，未设置时使用 `~/.kube/config` | 常规本机 kubectl 环境 |
 | 引用路径 | 手工输入路径，或通过文件选择器选择但不复制；连接时重新读取 | kubeconfig 会被外部工具更新 |
-| 导入文件 | 选择一个或多个文件并复制到应用管理的安全存储 | 原文件可能被移动、临时下发或需要应用独立管理 |
+| 导入文件 | 选择一个或多个文件；Rust 合并并直接保存到系统凭据存储 | 原文件可能被移动、临时下发或需要应用独立管理 |
 
 约束：
 
 - 路径输入支持绝对路径、`~` 展开和平台原生 `KUBECONFIG` 路径列表；规范化与读取仅在 Rust 侧完成。
 - 文件选择器至少允许无扩展名、`.yaml`、`.yml` 和 `.config`，不能只按扩展名判断有效性。
-- 导入后记录源文件名、内容指纹和导入时间；同内容重复导入时提示复用，不默默创建副本。
-- 导入型 kubeconfig 可能包含 Token、证书和私钥，必须进入后端安全存储；安全存储未就绪时不得明文落入
-  SQLite，也不得伪装成已安全保存。
+- 导入后 SQLite 仅保存随机 secret reference、文件显示名和用于同内容复用的 SHA-256 指纹；正文直接进入 macOS
+  Keychain、Windows Credential Manager 或 Linux Secret Service。安全存储不可用时导入失败，绝不回退到 SQLite
+  明文。
+- 导入型 kubeconfig 仅接受内嵌的 CA、客户端证书 / 私钥或 Token。`certificate-authority`、
+  `client-certificate`、`client-key`、`tokenFile` 等外部敏感文件引用会被拒绝；用户可改用路径引用模式。
+- 编辑取消、来源替换和删除 profile 都要清理未引用的 secure-store entry；导入内容、Token、client key 和
+  exec 输出均不得离开 Rust。已导入来源不能用“打开 CLI”将配置写入终端环境。
 - 多文件不通过前端拼接 YAML。自动发现遵循 Kubernetes 的合并语义；显式添加的多个文件在 UI 中保留
   独立 source id，context 主键使用 `sourceId + contextName`，避免同名覆盖。
 
@@ -82,6 +87,9 @@
 
 远端路径由远端 shell / kubectl 解释，不能先按本机路径规则规范化。应用保存 SSH profile 引用和路径文本，
 不保存远端文件内容。
+
+远端路径选择器复用该 SSH profile 的共享 SFTP channel，只列出目录 / 文件名称、路径与基础元数据。选择文件仅将其
+路径带回编辑器；禁止通过该选择器读取、预览、下载或缓存 kubeconfig 正文。
 
 自动发现只检查远端非交互环境中的 `PATH`、`KUBECONFIG`、`$HOME/.kube/config`、
 `/etc/kubernetes/admin.conf`、K3s 与 RKE2 的常见配置位置；不得递归扫描磁盘、自动使用 `sudo` 或读取
@@ -141,7 +149,8 @@ src-tauri/src/kubernetes/
 - 使用 API Discovery 和 `DynamicObject` 支持标准资源、聚合 API 与 CRD。
 - list 后使用 `resourceVersion` 建立 Watch；断线、`410 Gone`、认证刷新和 context 配置变化后重新 list/watch。
 - kubeconfig 的 exec credential plugin 只在 Rust 侧执行。首次遇到新可执行文件时显示命令、路径与来源并要求
-  信任；环境变量和输出必须脱敏。
+  信任；信任按配置来源、context、用户、命令和参数的指纹持久化并可撤销。内嵌环境变量仅允许少量非秘密的
+  位置 / 配置选择器，认证加载错误和插件输出必须脱敏。
 
 ### 3.3 远端 kubectl 后端
 
@@ -209,6 +218,8 @@ interface KubernetesProfile {
   删除 Kubernetes profile。
 - 引用路径每次连接重新读取，并以安全元数据通知用户 context 增删；已消失 context 的工作区停止重连并给出
   可修复错误。
+- 已打开工作区在打开时和每 60 秒重扫来源的 context 摘要。新增、删除与改名只产生提示，绝不自动替换当前
+  context；来源暂时不可读时保留最近一次有效提示，并由具体资源请求展示网络或认证错误。
 - namespace 以 context 为单位保存；空值表示遵循该 context 的默认 namespace，仍为空时使用 `default`。
 
 ## 5. 界面与工作流
@@ -246,9 +257,10 @@ interface KubernetesProfile {
 - 首版标准资源包含 Namespace、Node、Pod、Deployment、StatefulSet、DaemonSet、ReplicaSet、Job、CronJob、
   Service、Ingress、ConfigMap、PVC 和 Event。
 - 资源列表支持标签选择器、字段选择器、状态筛选、排序、分页和手动刷新；支持时以 Watch 实时更新。
-- 详情提供 Overview、YAML、Events；Pod 额外提供 Logs，后续提供 Exec。
+- 详情提供 Overview、YAML、Events；Pod 额外提供 Logs、Exec 和端口转发入口（均受当前 RBAC 权限门禁）。
 - YAML 编辑复用 Monaco，但 model URI 使用独立的 `dssh-k8s://<profile>/<context>/<gvk>/<namespace>/<name>`。
-- 工作区、日志和 CLI 标签进入统一标签条；是否支持独立原生窗口在基础工作区稳定后单独验收。
+- 工作区、日志和 CLI 标签进入统一标签条；Kubernetes 工作区可移入独立原生窗口，关闭或合并时保留
+  `profile + context` 标签关系，独立窗口关闭 / 合并也会检查未保存 YAML。
 
 ## 6. 修改、权限与安全边界
 
@@ -290,18 +302,22 @@ interface KubernetesProfile {
   tail、since、时间戳、上一实例、搜索和保存日志。
 - 已提供本地 / 远端来源一致的 CLI 启动：命令在 Rust 侧完成路径、context 与 namespace 引用，前端只创建既有
   本地或 SSH 终端并写入该命令；不会调用 `kubectl config use-context` 改写用户文件。
-- CLI 会预检本机或远端 kubectl，并将来源与 context 标入终端标签。待完成：真实多 context 集群验收，以及网络/
-  认证变化后的日志 follow 自动恢复策略。
+- CLI 会预检本机或远端 kubectl，并将来源与 context 标入终端标签。日志 follow 在本机 API / 远端 kubectl
+  channel 上使用独立取消与重建边界；真实多 context 集群和网络 / 认证变化仍需验收。
 
 ### Phase 4：安全写操作
 
-- Monaco YAML、创建、dry-run、diff、Server-Side Apply、删除与批量结果。
-- Deployment 扩缩容、重启和 rollout 状态等受控快捷动作。
+- 已完成：独立 `dssh-k8s://` Monaco YAML model、编辑器设置继承、创建模板、多文档预解析、服务端 dry-run、
+  差异预览、Server-Side Apply、冲突二次确认、删除传播策略 / resourceVersion 前置条件、逐项结果，以及
+  Deployment / StatefulSet / DaemonSet 扩缩容和滚动重启。
+- 已完成：写操作统一通过后端执行并记录脱敏审计摘要；审计不会保存 kubeconfig、Token、Secret value 或完整 YAML。
 
 ### Phase 5：交互式运维
 
-- Pod Exec、终端大小同步、端口转发、资源指标与关系导航。
-- 在真实集群和低权限账号上完成安全、取消、断线与跨平台验收。
+- 已完成：Pod Exec（容器 / shell / TTY）、Pod / Service 端口转发任务（端口占用预检、取消、状态事件）、
+  Metrics API 安全降级、owner references / selector 关系展示、Watch / 日志 follow / kubectl channel 的独立
+  取消边界，以及统一标签条、命令面板和独立 Kubernetes 原生窗口。
+- 待验收：真实集群和低权限账号上的安全、取消、断线与跨平台矩阵；这些验收项保留在 `tasks.md` 的 KV 条目。
 
 ### Phase 6：可选增强
 
@@ -315,6 +331,10 @@ interface KubernetesProfile {
 - 远端 SSH 中断时工作区进入“来源断开”，停止新的修改请求；transport 恢复后先重测 context 再恢复 list/watch。
 - Watch 失效应自动重新 list，不影响当前选择；远端 kubectl 不支持可靠 Watch 时显式降级为可配置轮询。
 - context 被删除、SSH profile 失效或 kubectl 版本不兼容时保留 profile，并提供重新绑定入口。
+- 端口转发、日志跟随、Watch 和远端 CLI 都使用独立 operation / channel；取消某一项不会关闭共享 SSH
+  transport 或其他工作区。端口本地监听存在启动前检查，但仍需真实平台验收以覆盖竞争占用。
+- 安全导入的 kubeconfig 不会写入本地或远端 CLI 的进程环境，因此该来源明确禁用 CLI、Exec 和端口转发；
+  需要这些能力时请使用路径引用 / 远端路径来源。这样可避免把导入的 Token 或私钥落入命令环境。
 
 ## 9. 验收矩阵
 
@@ -326,7 +346,8 @@ interface KubernetesProfile {
 - 故障：API 不可达、SSH 断开、kubectl 缺失、插件缺失 / 超时、Watch 过期、apply 冲突和删除部分失败。
 - 安全：前端载荷、日志、SQLite、错误和 AI 上下文中均不得出现 Token、私钥或 Secret value。
 - 常规验证：`pnpm exec tsc --noEmit`、`pnpm build`、`cargo fmt`、
-  `cargo clippy --all-targets -- -D warnings`、`cargo test`。
+  `cargo clippy --all-targets -- -D warnings`、`cargo test`。当前代码已通过这些工程级检查；真实集群、平台、
+  权限、网络抖动和凭据插件验收仍不能由本地构建替代。
 
 ## 10. 参考
 

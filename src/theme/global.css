@@ -4518,6 +4518,79 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   flex: 1;
 }
 
+.kubernetes-profile-editor__remote-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 250px;
+  margin-top: 8px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-muted);
+}
+
+.kubernetes-profile-editor__remote-picker-head,
+.kubernetes-profile-editor__remote-picker-path {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kubernetes-profile-editor__remote-picker-head strong {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-profile-editor__remote-picker-path > input {
+  min-width: 0;
+  flex: 1;
+}
+
+.kubernetes-profile-editor__remote-picker-entries {
+  display: grid;
+  max-height: 150px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.kubernetes-profile-editor__remote-picker-entries > button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  cursor: pointer;
+  text-align: left;
+}
+
+.kubernetes-profile-editor__remote-picker-entries > button:hover {
+  background: var(--bg-hover);
+}
+
+.kubernetes-profile-editor__remote-picker-entries > button > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.kubernetes-profile-editor__remote-picker-entries > button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kubernetes-profile-editor__remote-picker-entries > button > small {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
 .kubernetes-profile-editor__contexts-header {
   display: flex;
   align-items: end;
@@ -4546,6 +4619,13 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
+}
+
+.kubernetes-profile-editor__scan-notice {
+  margin: -2px 0 0;
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .kubernetes-profile-editor__context {
@@ -4654,12 +4734,31 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .kubernetes-workspace__identity { overflow: hidden; max-width: 148px; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
+.kubernetes-workspace__force-apply {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--warning);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .kubernetes-workspace__error {
   border-bottom: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
   padding: 7px 12px;
   background: color-mix(in srgb, var(--danger) 9%, transparent);
   color: var(--danger);
   font-size: 12px;
+}
+
+.kubernetes-workspace__source-notice {
+  border-bottom: 1px solid var(--accent-border);
+  padding: 7px 12px;
+  background: var(--bg-selected);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .kubernetes-workspace__content {
@@ -4744,6 +4843,140 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .kubernetes-workspace__detail-head span { color: var(--warning); font-size: 11px; }
 .kubernetes-workspace__detail-head > div { display: inline-flex; align-items: center; gap: 8px; }
 
+.kubernetes-workspace__exec-panel {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) minmax(180px, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px 12px;
+  background: var(--bg-panel);
+}
+
+.kubernetes-workspace__exec-field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__exec-field input {
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0 8px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.kubernetes-workspace__exec-field input:focus { border-color: var(--accent); }
+.kubernetes-workspace__exec-field .select-menu { width: 100%; }
+.kubernetes-workspace__exec-muted { color: var(--text-faint); line-height: 28px; }
+
+.kubernetes-workspace__exec-check {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.kubernetes-workspace__exec-actions { display: inline-flex; align-items: center; gap: 6px; }
+
+.kubernetes-workspace__relations {
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 9px 12px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__relations > strong { color: var(--text-base); font-size: 12px; }
+.kubernetes-workspace__relations > div { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.kubernetes-workspace__relation-label { min-width: 42px; color: var(--text-faint); }
+.kubernetes-workspace__relation-chip { border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 2px 6px; background: var(--bg-sunken); color: var(--text-base); font-size: 11px; }
+.kubernetes-workspace__relations small { color: var(--text-faint); line-height: 1.4; }
+
+.kubernetes-workspace__port-forward {
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 9px 12px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__port-forward-form,
+.kubernetes-workspace__port-forward-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.kubernetes-workspace__port-forward-form strong { margin-right: auto; color: var(--text-base); font-size: 12px; }
+.kubernetes-workspace__port-forward-form label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.kubernetes-workspace__port-forward-form input { width: 68px; height: 26px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 0 5px; background: var(--bg-sunken); color: var(--text-base); font: inherit; }
+.kubernetes-workspace__port-forward-form input:focus { border-color: var(--accent); outline: none; }
+.kubernetes-workspace__port-forward-list { display: grid; gap: 4px; }
+.kubernetes-workspace__port-forward-item { justify-content: space-between; border-top: 1px solid var(--border-subtle); padding-top: 5px; color: var(--text-base); }
+.kubernetes-workspace__port-forward-empty { color: var(--text-faint); }
+
+.kubernetes-workspace__apply-preview,
+.kubernetes-workspace__metrics,
+.kubernetes-workspace__audit {
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.kubernetes-workspace__apply-preview p,
+.kubernetes-workspace__metrics p {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.kubernetes-workspace__apply-preview pre {
+  max-height: 180px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+  padding: 8px 12px;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.kubernetes-workspace__metric {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px 120px;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding: 7px 12px;
+  color: var(--text-base);
+  font-size: 11px;
+}
+
+.kubernetes-workspace__audit > .kubernetes-workspace__detail-head { margin: 0; }
+.kubernetes-workspace__audit > p { margin: 0; padding: 10px 12px; color: var(--text-faint); font-size: 11px; }
+.kubernetes-workspace__audit-row { display: grid; gap: 3px; border-top: 1px solid var(--border-subtle); padding: 7px 12px; color: var(--text-muted); font-size: 11px; }
+.kubernetes-workspace__audit-row > div { display: flex; align-items: center; gap: 7px; }
+.kubernetes-workspace__audit-row strong { color: var(--text-base); }
+.kubernetes-workspace__audit-row span { color: var(--accent-strong); }
+.kubernetes-workspace__audit-row small { color: var(--text-faint); }
+
 .kubernetes-workspace__detail pre {
   margin: 0;
   padding: 14px;
@@ -4760,6 +4993,9 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--terminal-background, var(--bg-sunken));
   color: var(--terminal-foreground, var(--text-base));
 }
+
+.kubernetes-yaml-editor { min-height: 0; height: 100%; }
+.kubernetes-yaml-editor__host { height: 100%; min-height: 360px; }
 
 .kubernetes-workspace__log-controls {
   display: flex;
@@ -4824,6 +5060,9 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   .kubernetes-workspace__filter input { width: min(132px, 30vw); }
   .kubernetes-workspace__content { grid-template-columns: minmax(300px, 1fr); grid-template-rows: minmax(220px, 0.45fr) minmax(220px, 0.55fr); }
   .kubernetes-workspace__list { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  .kubernetes-workspace__exec-panel { grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr); }
+  .kubernetes-workspace__exec-check,
+  .kubernetes-workspace__exec-actions { grid-column: span 1; }
 }
 
 .kubernetes-profile-editor__context strong {
@@ -4834,6 +5073,111 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .kubernetes-profile-editor__context small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.kubernetes-profile-editor__exec-plugins {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 10px;
+  background: var(--bg-sunken);
+}
+
+.kubernetes-profile-editor__exec-plugins > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.kubernetes-profile-editor__exec-plugins strong {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-profile-editor__exec-plugins small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kubernetes-profile-editor__exec-plugin {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}
+
+.kubernetes-profile-editor__exec-plugin > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.kubernetes-profile-editor__exec-plugin > span > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kubernetes-profile-editor__connection-test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.kubernetes-profile-editor__connection-test > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.kubernetes-profile-editor__connection-test strong {
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.kubernetes-profile-editor__connection-test small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-profile-editor__connection-test-results {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+  width: 100%;
+}
+
+.kubernetes-profile-editor__connection-test-results p {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kubernetes-profile-editor__connection-test-results p[data-status="success"] strong {
+  color: var(--success);
+}
+
+.kubernetes-profile-editor__connection-test-results p[data-status="error"] strong {
+  color: var(--danger);
+}
+
+.kubernetes-profile-editor__connection-test-results span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .select-menu {

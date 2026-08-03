@@ -6,7 +6,20 @@ import type {
   KubernetesCapabilities,
   KubernetesPodLogs,
   KubernetesCliLaunch,
+  KubernetesConnectionTestResult,
   KubernetesPodLogEvent,
+  KubernetesResourceWatchEvent,
+  KubernetesDryRunResult,
+  KubernetesApplyPreview,
+  KubernetesApplyResult,
+  KubernetesDeleteResult,
+  KubernetesActionResult,
+  KubernetesExecLaunch,
+  KubernetesMetricsResult,
+  KubernetesAuditEntry,
+  KubernetesPortForwardEvent,
+  KubernetesPortForwardInfo,
+  ImportLocalKubeconfigResult,
   LocalKubeconfigScanResult,
   RemoteKubernetesDiscoveryResult,
 } from "../models";
@@ -39,6 +52,33 @@ export function scanLocalKubeconfig(request: LocalKubeconfigScanRequest) {
   return invokeCommand<LocalKubeconfigScanResult>("scan_local_kubeconfig", { request });
 }
 
+export function importLocalKubeconfig(paths: string[]) {
+  return invokeCommand<ImportLocalKubeconfigResult>("import_local_kubeconfig", { request: { paths } });
+}
+
+export function scanImportedLocalKubeconfig(source: Extract<KubernetesProfile["source"], { kind: "localImported" }>) {
+  return invokeCommand<LocalKubeconfigScanResult>("scan_imported_local_kubeconfig", { source });
+}
+
+export function discardImportedLocalKubeconfig(secretRef: string) {
+  return invokeCommand<void>("discard_imported_local_kubeconfig", { secretRef });
+}
+
+export function setKubernetesExecPluginTrust(fingerprint: string, trusted: boolean) {
+  return invokeCommand<void>("set_kubernetes_exec_plugin_trust", {
+    request: { fingerprint, trusted },
+  });
+}
+
+export function testKubernetesConnection(
+  source: KubernetesProfile["source"],
+  contexts: KubernetesProfile["selectedContexts"],
+) {
+  return invokeCommand<KubernetesConnectionTestResult[]>("test_kubernetes_connection", {
+    request: { source, contexts },
+  });
+}
+
 export function discoverRemoteKubernetes(
   profileId: string,
   request: RemoteKubernetesDiscoveryRequest,
@@ -51,6 +91,10 @@ export function discoverRemoteKubernetes(
 
 export function listKubernetesProfiles() {
   return invokeCommand<KubernetesProfile[]>("list_kubernetes_profiles");
+}
+
+export function listKubernetesAudit(profileId?: string, limit = 200) {
+  return invokeCommand<KubernetesAuditEntry[]>("list_kubernetes_audit", { profileId, limit });
 }
 
 export function createKubernetesProfile(request: CreateKubernetesProfileRequest) {
@@ -110,6 +154,62 @@ export function listKubernetesResources(query: KubernetesResourceQuery) {
   return invokeCommand<KubernetesResourceList>("list_kubernetes_resources", { query });
 }
 
+export function previewKubernetesDryRun(profileId: string, context: KubernetesProfile["selectedContexts"][number], yaml: string) {
+  return invokeCommand<KubernetesDryRunResult>("preview_kubernetes_dry_run", { request: { profileId, context, yaml } });
+}
+
+export function serverDryRunKubernetesApply(request: import("../models").KubernetesApplyRequest) {
+  return invokeCommand<KubernetesApplyPreview>("server_dry_run_kubernetes_apply", { request });
+}
+
+export function applyKubernetesResources(request: import("../models").KubernetesApplyRequest) {
+  return invokeCommand<KubernetesApplyResult>("apply_kubernetes_resources", { request });
+}
+
+export function deleteKubernetesResources(request: import("../models").KubernetesDeleteRequest) {
+  return invokeCommand<KubernetesDeleteResult>("delete_kubernetes_resources", { request });
+}
+
+export function scaleKubernetesResource(request: import("../models").KubernetesScaleRequest) {
+  return invokeCommand<KubernetesActionResult>("scale_kubernetes_resource", { request });
+}
+
+export function restartKubernetesRollout(request: import("../models").KubernetesRolloutRequest) {
+  return invokeCommand<KubernetesActionResult>("restart_kubernetes_rollout", { request });
+}
+
+export function getKubernetesMetrics(request: import("../models").KubernetesMetricsRequest) {
+  return invokeCommand<KubernetesMetricsResult>("get_kubernetes_metrics", { request });
+}
+
+export function startKubernetesResourceWatch(query: KubernetesResourceQuery, operationId: string) {
+  return invokeCommand<string>("start_kubernetes_resource_watch", { request: { ...query, operationId } });
+}
+
+export function cancelKubernetesResourceWatch(operationId: string) {
+  return invokeCommand<void>("cancel_kubernetes_resource_watch", { operationId });
+}
+
+export function onKubernetesResourceWatchEvent(handler: (event: KubernetesResourceWatchEvent) => void) {
+  return listen<KubernetesResourceWatchEvent>("kubernetes://resource-watch", (event) => handler(event.payload));
+}
+
+export function startKubernetesPortForward(request: import("../models").KubernetesPortForwardRequest) {
+  return invokeCommand<KubernetesPortForwardInfo>("start_kubernetes_port_forward", { request });
+}
+
+export function cancelKubernetesPortForward(operationId: string) {
+  return invokeCommand<void>("cancel_kubernetes_port_forward", { operationId });
+}
+
+export function listKubernetesPortForwards() {
+  return invokeCommand<KubernetesPortForwardInfo[]>("list_kubernetes_port_forwards");
+}
+
+export function onKubernetesPortForwardEvent(handler: (event: KubernetesPortForwardEvent) => void) {
+  return listen<KubernetesPortForwardEvent>("kubernetes://port-forward", (event) => handler(event.payload));
+}
+
 export function getKubernetesResourceDocument(request: KubernetesResourceDocumentRequest) {
   return invokeCommand<KubernetesResourceDocument>("get_kubernetes_resource_document", { request });
 }
@@ -133,6 +233,10 @@ export function onKubernetesPodLogEvent(handler: (event: KubernetesPodLogEvent) 
 
 export function prepareKubernetesCli(profileId: string, context: KubernetesProfile["selectedContexts"][number]) {
   return invokeCommand<KubernetesCliLaunch>("prepare_kubernetes_cli", { request: { profileId, context } });
+}
+
+export function prepareKubernetesPodExec(request: import("../models").KubernetesPodExecRequest) {
+  return invokeCommand<KubernetesExecLaunch>("prepare_kubernetes_pod_exec", { request });
 }
 
 export function getKubernetesCapabilities(profileId: string, context: KubernetesProfile["selectedContexts"][number]) {
