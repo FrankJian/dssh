@@ -5250,7 +5250,9 @@ mod tests {
         remote_cli_command, remote_kubectl_command, remote_resource_is_discovered, shell_quote,
         truncate_log, validate_importable_kubeconfig,
     };
-    use crate::models::kubernetes::{KubernetesContextSelection, KubernetesResourceQuery};
+    use crate::models::kubernetes::{
+        KubernetesContextSelection, KubernetesResourceQuery, KubernetesSource,
+    };
     use kube::config::Kubeconfig;
 
     #[test]
@@ -5285,6 +5287,28 @@ current-context: prod
         let serialized = serde_json::to_string(&contexts).expect("serializes");
         assert!(!serialized.contains("should-never-cross-tauri"));
         assert!(!serialized.contains("api.example.invalid"));
+    }
+
+    #[test]
+    fn source_payload_uses_camel_case_fields() {
+        let source: KubernetesSource = serde_json::from_str(
+            r#"{"kind":"remoteSsh","sshProfileId":"ssh-1","kubeconfigPath":"/srv/kubeconfig","kubectlPath":"/usr/local/bin/kubectl"}"#,
+        )
+        .expect("camelCase source parses");
+        let KubernetesSource::RemoteSsh {
+            ssh_profile_id,
+            kubeconfig_path,
+            kubectl_path,
+        } = &source
+        else {
+            panic!("expected remote SSH source");
+        };
+        assert_eq!(ssh_profile_id, "ssh-1");
+        assert_eq!(kubeconfig_path.as_deref(), Some("/srv/kubeconfig"));
+        assert_eq!(kubectl_path.as_deref(), Some("/usr/local/bin/kubectl"));
+        let serialized = serde_json::to_string(&source).expect("source serializes");
+        assert!(serialized.contains("\"sshProfileId\""));
+        assert!(!serialized.contains("ssh_profile_id"));
     }
 
     #[test]

@@ -69,3 +69,10 @@
 - 新增本地 / 远端 SSH 双来源的 Kubernetes 连接、多个 kubeconfig context、资源 GUI、kubectl CLI、日志与安全
   写操作。完整安全边界和来源语义见 [`features/kubernetes-workspace.md`](features/kubernetes-workspace.md)，
   分阶段实施清单见 [`tasks.md`](tasks.md#kubernetes-集群工作区)。
+
+### 9. VNC 远程桌面工作区
+
+- 新增独立 VNC profile、嵌入式远程桌面工作区，以及通过既有 SSH connection pool 建立的 VNC 隧道。该功能必须
+  让保存的 VNC 凭据停留在 Rust / 系统密钥链中，不能让 WebView 直接代理 TCP 或读取密码。完整协议、安全和界面
+  规格见 [`features/vnc-workspace.md`](features/vnc-workspace.md)，分阶段实施清单见
+  [`tasks.md`](tasks.md#vnc-远程桌面工作区)。

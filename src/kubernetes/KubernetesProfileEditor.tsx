@@ -106,6 +106,14 @@ export function KubernetesProfileEditor({
     setRemotePathPicker(null);
   }, [mode, profile]);
 
+  const currentRemoteSshProfileId = draft.source.kind === "remoteSsh" ? draft.source.sshProfileId : "";
+  useEffect(() => {
+    if (draft.source.kind !== "remoteSsh" || currentRemoteSshProfileId || sshProfiles.length === 0) return;
+    setDraft((current) => current.source.kind === "remoteSsh" && !current.source.sshProfileId
+      ? { ...current, source: { ...current.source, sshProfileId: sshProfiles[0].id } }
+      : current);
+  }, [currentRemoteSshProfileId, draft.source.kind, sshProfiles]);
+
   useEffect(() => () => {
     const secretRef = pendingImportRef.current;
     if (secretRef) void discardImportedLocalKubeconfig(secretRef).catch(() => undefined);
@@ -216,8 +224,19 @@ export function KubernetesProfileEditor({
           kubeconfigPath: draft.source.kubeconfigPath,
           kubectlPath: draft.source.kubectlPath,
         });
-        applyDiscoveredContexts(result.candidates.flatMap((candidate) => sourceContexts(candidate.path, candidate.contexts)));
-        if (result.warnings.length > 0) setErrors(result.warnings);
+        const discoveredContexts = result.candidates.flatMap((candidate) => sourceContexts(candidate.path, candidate.contexts));
+        const candidateErrors = result.candidates
+          .filter((candidate) => candidate.error)
+          .map((candidate) => `${candidate.path}：${candidate.error}`);
+        applyDiscoveredContexts(discoveredContexts);
+        const notices = [...result.warnings, ...candidateErrors];
+        if (notices.length > 0) {
+          setErrors(notices);
+        } else {
+          setScanNotice(discoveredContexts.length > 0
+            ? `已发现 ${discoveredContexts.length} 个 context，请选择要保存的项。`
+            : "未发现可用的远端 Kubernetes context，请检查 kubeconfig 路径和 kubectl 权限。");
+        }
       }
     } catch (error) {
       setErrors([error instanceof Error ? error.message : "未能发现 Kubernetes context。"]);
@@ -355,7 +374,9 @@ export function KubernetesProfileEditor({
               <SelectMenu
                 ariaLabel="Kubernetes 连接来源"
                 onChange={(value) => updateSource(value === "remote" ? {
-                  kind: "remoteSsh", sshProfileId: "", kubeconfigPath: undefined, kubectlPath: undefined,
+                  // Pick the first available SSH profile so choosing the
+                  // source alone produces a valid, immediately usable draft.
+                  kind: "remoteSsh", sshProfileId: sshProfiles[0]?.id ?? "", kubeconfigPath: undefined, kubectlPath: undefined,
                 } : value === "imported" ? { kind: "localImported", secretRef: "", displayNames: [] } : { kind: "local", kubeconfigPaths: [] })}
                 options={[
                   { label: "本机路径引用", value: "local" },
@@ -493,7 +514,7 @@ export function KubernetesProfileEditor({
                 <strong>测试连接</strong>
                 <small>逐个检查选中的 context；单个失败不会影响保存其他 context。</small>
               </div>
-              <Button disabled={isTesting || draft.selectedContexts.length === 0} onClick={() => void testContexts()} type="button" variant="ghost">
+              <Button disabled={isTesting} onClick={() => void testContexts()} type="button" variant="ghost">
                 <Icon name="refresh" height="14" width="14" />
                 {isTesting ? "测试中…" : "测试连接"}
               </Button>
