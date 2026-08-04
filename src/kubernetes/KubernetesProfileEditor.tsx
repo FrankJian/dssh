@@ -71,6 +71,14 @@ function sourceContexts(sourceId: string, contexts: KubernetesContextSummary[]) 
   return contexts.map((context) => ({ ...context, sourceId }));
 }
 
+function savedContextSummaries(contexts: KubernetesContextSelection[]): KubernetesContextSummary[] {
+  return contexts.map((context) => ({
+    ...context,
+    cluster: "",
+    isCurrent: false,
+  }));
+}
+
 export function KubernetesProfileEditor({
   allTags,
   mode,
@@ -94,16 +102,18 @@ export function KubernetesProfileEditor({
     isLoading: boolean;
     path: string;
   } | null>(null);
+  const autoDiscoveryProfileRef = useRef<string | null>(null);
 
   useEffect(() => {
     setDraft(profile ? profileToDraft(profile) : emptyDraft());
-    setContexts([]);
+    setContexts(profile ? savedContextSummaries(profile.selectedContexts) : []);
     setExecPlugins([]);
     setConnectionTests([]);
     setScanNotice(null);
     setErrors([]);
     pendingImportRef.current = null;
     setRemotePathPicker(null);
+    autoDiscoveryProfileRef.current = null;
   }, [mode, profile]);
 
   const currentRemoteSshProfileId = draft.source.kind === "remoteSsh" ? draft.source.sshProfileId : "";
@@ -206,23 +216,23 @@ export function KubernetesProfileEditor({
     setRemotePathPicker(null);
   }
 
-  async function discoverContexts() {
+  async function discoverContexts(source: KubernetesSource = draft.source) {
     setIsDiscovering(true);
     setErrors([]);
     try {
-      if (draft.source.kind === "local") {
-        const result = await scanLocalKubeconfig({ paths: draft.source.kubeconfigPaths });
+      if (source.kind === "local") {
+        const result = await scanLocalKubeconfig({ paths: source.kubeconfigPaths });
         applyDiscoveredContexts(result.contexts);
         setExecPlugins(result.execPlugins);
-      } else if (draft.source.kind === "localImported") {
-        if (!draft.source.secretRef) throw new Error("请先选择并安全导入 kubeconfig 文件。");
-        const result = await scanImportedLocalKubeconfig(draft.source);
+      } else if (source.kind === "localImported") {
+        if (!source.secretRef) throw new Error("请先选择并安全导入 kubeconfig 文件。");
+        const result = await scanImportedLocalKubeconfig(source);
         applyDiscoveredContexts(result.contexts);
         setExecPlugins(result.execPlugins);
       } else {
-        const result = await discoverRemoteKubernetes(draft.source.sshProfileId, {
-          kubeconfigPath: draft.source.kubeconfigPath,
-          kubectlPath: draft.source.kubectlPath,
+        const result = await discoverRemoteKubernetes(source.sshProfileId, {
+          kubeconfigPath: source.kubeconfigPath,
+          kubectlPath: source.kubectlPath,
         });
         const discoveredContexts = result.candidates.flatMap((candidate) => sourceContexts(candidate.path, candidate.contexts));
         const candidateErrors = result.candidates
@@ -244,6 +254,16 @@ export function KubernetesProfileEditor({
       setIsDiscovering(false);
     }
   }
+
+  useEffect(() => {
+    if (mode !== "edit" || !profile || profile.selectedContexts.length > 0) return;
+    if (autoDiscoveryProfileRef.current === profile.id) return;
+    autoDiscoveryProfileRef.current = profile.id;
+    void discoverContexts(profile.source);
+    // The editor intentionally performs one discovery when an empty saved
+    // profile is opened, so users do not have to press Discover manually.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, profile]);
 
   function applyDiscoveredContexts(nextContexts: KubernetesContextSummary[]) {
     const nextKeys = new Set(nextContexts.map((context) => `${context.sourceId}\u0000${context.name}`));
@@ -299,6 +319,38 @@ export function KubernetesProfileEditor({
             user: context.user,
           }],
     }));
+  }
+
+  const allContextsSelected = contexts.length > 0 && contexts.every((context) => (
+    selectedContextKeys.has(`${context.sourceId}\u0000${context.name}`)
+  ));
+
+  function toggleAllContexts() {
+    const contextKeys = new Set(contexts.map((context) => `${context.sourceId}\u0000${context.name}`));
+    setDraft((current) => {
+      if (allContextsSelected) {
+        return {
+          ...current,
+          selectedContexts: current.selectedContexts.filter((context) => (
+            !contextKeys.has(`${context.sourceId}\u0000${context.name}`)
+          )),
+        };
+      }
+      const selected = new Map(current.selectedContexts.map((context) => [
+        `${context.sourceId}\u0000${context.name}`,
+        context,
+      ]));
+      contexts.forEach((context) => {
+        selected.set(`${context.sourceId}\u0000${context.name}`, {
+          sourceId: context.sourceId,
+          name: context.name,
+          namespace: context.namespace,
+          user: context.user,
+        });
+      });
+      return { ...current, selectedContexts: [...selected.values()] };
+    });
+    setConnectionTests([]);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -464,10 +516,31 @@ export function KubernetesProfileEditor({
 
             <div className="kubernetes-profile-editor__contexts-header">
               <div><strong>Contexts</strong><small>支持从同一个 kubeconfig 选择多个 context。</small></div>
-              <Button disabled={isDiscovering || (draft.source.kind === "remoteSsh" && !draft.source.sshProfileId) || (draft.source.kind === "localImported" && !draft.source.secretRef)} onClick={() => void discoverContexts()} type="button" variant="ghost">
-                <Icon name="refresh" height="14" width="14" />
-                {isDiscovering ? "读取中…" : "发现 context"}
-              </Button>
+              <div className="kubernetes-profile-editor__contexts-actions">
+                <Button
+                  className="kubernetes-profile-editor__select-all-button"
+                  disabled={isDiscovering || contexts.length === 0}
+                  onClick={toggleAllContexts}
+                  type="button"
+                  variant="ghost"
+                >
+                  {allContextsSelected ? "取消全选" : "全选"}
+                </Button>
+                <Button
+                  aria-busy={isDiscovering}
+                  className="kubernetes-profile-editor__discover-button"
+                  data-loading={isDiscovering ? "true" : undefined}
+                  disabled={isDiscovering || (draft.source.kind === "remoteSsh" && !draft.source.sshProfileId) || (draft.source.kind === "localImported" && !draft.source.secretRef)}
+                  onClick={() => void discoverContexts()}
+                  type="button"
+                  variant="ghost"
+                >
+                  <span className={isDiscovering ? "kubernetes-profile-editor__discover-spinner" : "kubernetes-profile-editor__discover-icon"} aria-hidden="true">
+                    <Icon name="refresh" height="14" width="14" />
+                  </span>
+                  <span>{isDiscovering ? "读取中…" : "发现 context"}</span>
+                </Button>
+              </div>
             </div>
             {contexts.length > 0 ? (
               <div className="kubernetes-profile-editor__contexts">
@@ -475,7 +548,7 @@ export function KubernetesProfileEditor({
                   const key = `${context.sourceId}\u0000${context.name}`;
                   return <label className="kubernetes-profile-editor__context" key={key}>
                     <input checked={selectedContextKeys.has(key)} onChange={() => toggleContext(context)} type="checkbox" />
-                    <span><strong>{context.name}</strong><small>{context.cluster}{context.namespace ? ` · ${context.namespace}` : ""}{context.isCurrent ? " · 当前" : ""}</small></span>
+                    <span><strong>{context.name}</strong><small>{context.cluster || "已保存的 context"}{context.namespace ? ` · ${context.namespace}` : ""}{context.isCurrent ? " · 当前" : ""}</small></span>
                   </label>;
                 })}
               </div>
@@ -514,7 +587,15 @@ export function KubernetesProfileEditor({
                 <strong>测试连接</strong>
                 <small>逐个检查选中的 context；单个失败不会影响保存其他 context。</small>
               </div>
-              <Button disabled={isTesting} onClick={() => void testContexts()} type="button" variant="ghost">
+              <Button
+                aria-busy={isTesting}
+                className="kubernetes-profile-editor__test-button"
+                data-loading={isTesting ? "true" : undefined}
+                disabled={isTesting}
+                onClick={() => void testContexts()}
+                type="button"
+                variant="ghost"
+              >
                 <Icon name="refresh" height="14" width="14" />
                 {isTesting ? "测试中…" : "测试连接"}
               </Button>

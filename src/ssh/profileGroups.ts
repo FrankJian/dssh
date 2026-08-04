@@ -1,20 +1,25 @@
 import type { SshProfile } from "../models";
 
-export interface ProfileGroup {
+interface TaggableProfile {
+  favorite: boolean;
+  tags: string[];
+}
+
+export interface ProfileGroup<T extends TaggableProfile = SshProfile> {
   key: string;
   label: string;
-  profiles: SshProfile[];
+  profiles: T[];
 }
 
 export const FAVORITES_KEY = "__favorites__";
 export const UNTAGGED_KEY = "__untagged__";
 
 /**
- * Groups saved SSH profiles into Favorites → per-tag → Untagged sections.
- * Shared by the saved-connections list in the SessionTree and the legacy
- * ProfileSidebar so both stay in sync.
+ * Groups saved connection profiles into Favorites → per-tag → Untagged
+ * sections. Shared by the saved-connections list, the connection manager,
+ * and the legacy ProfileSidebar so all views stay in sync.
  */
-export function groupProfiles(profiles: SshProfile[]): ProfileGroup[] {
+export function groupProfiles<T extends TaggableProfile>(profiles: T[]): ProfileGroup<T>[] {
   const favorites = profiles.filter((profile) => profile.favorite);
 
   const tags = new Set<string>();
@@ -25,7 +30,7 @@ export function groupProfiles(profiles: SshProfile[]): ProfileGroup[] {
   }
   const sortedTags = Array.from(tags).sort((a, b) => a.localeCompare(b));
 
-  const groups: ProfileGroup[] = [];
+  const groups: ProfileGroup<T>[] = [];
 
   if (favorites.length > 0) {
     groups.push({ key: FAVORITES_KEY, label: "收藏", profiles: favorites });

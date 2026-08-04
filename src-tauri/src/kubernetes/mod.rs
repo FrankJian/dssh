@@ -2216,12 +2216,26 @@ fn local_port_forward_command(
     Ok(command)
 }
 
+/// Remote discovery stores the kubeconfig path in each context's source id.
+/// When the profile leaves the path blank (automatic discovery), reuse that
+/// source id for subsequent kubectl operations instead of falling back to the
+/// remote user's default kubeconfig.
+fn remote_source_kubeconfig_path<'a>(
+    configured: Option<&'a str>,
+    context: &'a KubernetesContextSelection,
+) -> Option<&'a str> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| (!context.source_id.trim().is_empty()).then_some(context.source_id.as_str()))
+}
+
 fn remote_port_forward_command(
     kubeconfig_path: Option<&str>,
     kubectl_path: Option<&str>,
     request: &KubernetesPortForwardRequest,
     namespace: Option<&str>,
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let mut args = vec![shell_quote(kubectl_path.unwrap_or("kubectl"))?];
     args.push(format!("--context {}", shell_quote(&request.context.name)?));
     if let Some(path) = kubeconfig_path.filter(|value| !value.trim().is_empty()) {
@@ -2773,6 +2787,7 @@ async fn remote_capabilities(
     context: &KubernetesContextSelection,
     pool: &SshConnectionPool,
 ) -> AppResult<KubernetesCapabilities> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut base = format!("{executable} --context {}", shell_quote(&context.name)?);
     if let Some(path) = kubeconfig_path.filter(|path| !path.trim().is_empty()) {
@@ -3194,6 +3209,7 @@ fn remote_apply_command(
     request: &KubernetesApplyRequest,
     dry_run: bool,
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut arguments = vec![
         executable,
@@ -3233,6 +3249,7 @@ async fn remote_delete_resources(
     pool: &SshConnectionPool,
     dry_run: bool,
 ) -> AppResult<Vec<KubernetesDeleteItemResult>> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let descriptor = resource_descriptor(&KubernetesResourceQuery {
         profile_id: request.profile_id.clone(),
         context: request.context.clone(),
@@ -3581,6 +3598,7 @@ fn remote_pod_exec_command(
     request: &KubernetesPodExecRequest,
     command: &[String],
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut args = vec![
         executable,
@@ -3721,6 +3739,7 @@ async fn remote_metrics(
     request: &KubernetesMetricsRequest,
     pool: &SshConnectionPool,
 ) -> AppResult<KubernetesMetricsResult> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut path = String::from("/apis/metrics.k8s.io/v1beta1/pods");
     if let Some(namespace) = request
@@ -3972,6 +3991,7 @@ fn remote_kubectl_command(
     query: &KubernetesResourceQuery,
     name: Option<&str>,
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &query.context);
     let descriptor = resource_descriptor(query)?;
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let context = shell_quote(&query.context.name)?;
@@ -4021,6 +4041,7 @@ fn remote_logs_command(
     kubectl_path: Option<&str>,
     request: &KubernetesPodLogsRequest,
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, &request.context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut arguments = vec![
         executable,
@@ -4062,6 +4083,7 @@ fn remote_cli_command(
     kubectl_path: Option<&str>,
     context: &KubernetesContextSelection,
 ) -> AppResult<String> {
+    let kubeconfig_path = remote_source_kubeconfig_path(kubeconfig_path, context);
     let executable = shell_quote(kubectl_path.unwrap_or("kubectl"))?;
     let mut arguments = vec![
         executable,
@@ -5309,6 +5331,12 @@ current-context: prod
         let serialized = serde_json::to_string(&source).expect("source serializes");
         assert!(serialized.contains("\"sshProfileId\""));
         assert!(!serialized.contains("ssh_profile_id"));
+        let legacy: KubernetesSource =
+            serde_json::from_str(r#"{"kind":"remoteSsh","ssh_profile_id":"ssh-legacy"}"#)
+                .expect("legacy snake_case source remains readable");
+        assert!(
+            matches!(legacy, KubernetesSource::RemoteSsh { ssh_profile_id, .. } if ssh_profile_id == "ssh-legacy")
+        );
     }
 
     #[test]
@@ -5382,6 +5410,34 @@ current-context: prod
 
         assert!(command.contains("--continue 'next; unsafe'"));
         assert!(command.contains("--chunk-size=100"));
+    }
+
+    #[test]
+    fn remote_list_command_uses_discovered_context_source_when_profile_path_is_empty() {
+        let command = remote_kubectl_command(
+            None,
+            Some("kubectl"),
+            &KubernetesResourceQuery {
+                profile_id: "profile".to_string(),
+                context: KubernetesContextSelection {
+                    source_id: "/home/operator/.kube/config".to_string(),
+                    name: "prod".to_string(),
+                    namespace: None,
+                    user: None,
+                },
+                resource: "pods".to_string(),
+                api_version: None,
+                kind: None,
+                namespaced: Some(true),
+                namespace: None,
+                label_selector: None,
+                limit: 100,
+                continue_token: None,
+            },
+            None,
+        )
+        .expect("command builds");
+        assert!(command.contains("--kubeconfig '/home/operator/.kube/config'"));
     }
 
     #[test]

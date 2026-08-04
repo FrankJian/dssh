@@ -9,23 +9,23 @@ use serde::{Deserialize, Serialize};
 pub enum KubernetesSource {
     Local {
         /// Empty paths means `KUBECONFIG` / the platform default at use time.
-        #[serde(default, rename = "kubeconfigPaths")]
+        #[serde(default, rename = "kubeconfigPaths", alias = "kubeconfig_paths")]
         kubeconfig_paths: Vec<String>,
     },
     /// An app-managed kubeconfig stored in the platform credential store.
     /// `secret_ref` is a random opaque identifier, never the kubeconfig body.
     LocalImported {
-        #[serde(rename = "secretRef")]
+        #[serde(rename = "secretRef", alias = "secret_ref")]
         secret_ref: String,
-        #[serde(default, rename = "displayNames")]
+        #[serde(default, rename = "displayNames", alias = "display_names")]
         display_names: Vec<String>,
     },
     RemoteSsh {
-        #[serde(rename = "sshProfileId")]
+        #[serde(rename = "sshProfileId", alias = "ssh_profile_id")]
         ssh_profile_id: String,
-        #[serde(default, rename = "kubeconfigPath")]
+        #[serde(default, rename = "kubeconfigPath", alias = "kubeconfig_path")]
         kubeconfig_path: Option<String>,
-        #[serde(default, rename = "kubectlPath")]
+        #[serde(default, rename = "kubectlPath", alias = "kubectl_path")]
         kubectl_path: Option<String>,
     },
 }

@@ -13,6 +13,7 @@ import { groupProfiles } from "./profileGroups";
 
 type ViewMode = "grid" | "list" | "tree";
 type SortKey = "recent" | "name" | "host";
+type ManagedProfile = SshProfile | KubernetesProfile;
 
 const VIEW_KEY = "dssh.sessionManager.view";
 const SORT_KEY = "dssh.sessionManager.sort";
@@ -171,7 +172,10 @@ export function SessionManager({
       .slice(0, RECENT_SECTION_MAX);
   }, [recentIds, profiles, isSearching, typeFilter]);
 
-  const tagGroups = useMemo(() => groupProfiles(sorted), [sorted]);
+  const tagGroups = useMemo(
+    () => groupProfiles<ManagedProfile>([...sorted, ...filteredKubernetesProfiles]),
+    [filteredKubernetesProfiles, sorted],
+  );
 
   const cardVariant = view === "list" ? "list" : "grid";
 
@@ -201,6 +205,38 @@ export function SessionManager({
           ? profiles.some((sshProfile) => sshProfile.id === remoteSource.sshProfileId)
           : true;
         return <KubernetesConnectionCard key={profile.id} profile={profile} sourceAvailable={sourceAvailable} variant={cardVariant} onDelete={() => onDeleteKubernetes(profile)} onEdit={() => onEditKubernetes(profile)} onOpen={() => onOpenKubernetes(profile)} onToggleFavorite={() => onToggleKubernetesFavorite(profile.id)} />;
+      })}
+    </div>;
+  }
+
+  function renderManagedCards(list: ManagedProfile[]) {
+    return <div className={`session-manager__cards ${view === "list" ? "is-list" : "is-grid"}`}>
+      {list.map((profile) => {
+        if ("source" in profile) {
+          const remoteSource = profile.source.kind === "remoteSsh" ? profile.source : null;
+          const sourceAvailable = remoteSource
+            ? profiles.some((sshProfile) => sshProfile.id === remoteSource.sshProfileId)
+            : true;
+          return <KubernetesConnectionCard
+            key={profile.id}
+            profile={profile}
+            sourceAvailable={sourceAvailable}
+            variant={cardVariant}
+            onDelete={() => onDeleteKubernetes(profile)}
+            onEdit={() => onEditKubernetes(profile)}
+            onOpen={() => onOpenKubernetes(profile)}
+            onToggleFavorite={() => onToggleKubernetesFavorite(profile.id)}
+          />;
+        }
+        return <ConnectionCard
+          key={profile.id}
+          profile={profile}
+          variant={cardVariant}
+          onConnect={() => onConnect(profile)}
+          onEdit={() => onEdit(profile)}
+          onDelete={() => onDelete(profile.id)}
+          onToggleFavorite={() => onToggleFavorite(profile.id)}
+        />;
       })}
     </div>;
   }
@@ -295,7 +331,7 @@ export function SessionManager({
                       {group.label}
                       <span className="session-manager__section-count">{group.profiles.length}</span>
                     </div>
-                    {renderCards(group.profiles)}
+                    {renderManagedCards(group.profiles)}
                   </section>
                 ))
               ) : (
