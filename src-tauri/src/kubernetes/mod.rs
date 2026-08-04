@@ -1089,7 +1089,7 @@ pub async fn test_connection(
                 can_get_pods: capabilities.can_get_pods,
                 message: None,
             }),
-            Err(_error) => results.push(KubernetesConnectionTestResult {
+            Err(error) => results.push(KubernetesConnectionTestResult {
                 context,
                 success: false,
                 source: match &request.source {
@@ -1102,9 +1102,7 @@ pub async fn test_connection(
                 username: None,
                 can_list_pods: None,
                 can_get_pods: None,
-                message: Some(
-                    "无法连接此 context。请检查认证插件、kubectl、网络和 RBAC 权限。".to_string(),
-                ),
+                message: Some(error.message),
             }),
         }
     }
@@ -5235,10 +5233,54 @@ fn command_failure_message(output: &CommandOutput, action: &str) -> String {
     if output.output_truncated {
         return format!("{action}：输出超过安全上限。");
     }
-    match output.exit_code {
-        Some(code) => format!("{action}（退出码 {code}）。"),
-        None => format!("{action}。"),
+    let status = match output.exit_code {
+        Some(code) => format!("（退出码 {code}）"),
+        None => String::new(),
+    };
+    let detail = sanitize_command_diagnostic(&output.stderr);
+    if detail.is_empty() {
+        format!("{action}{status}。")
+    } else {
+        format!("{action}{status}：{detail}")
     }
+}
+
+/// Keep remote command diagnostics useful without echoing an entire command
+/// response (which may contain a large amount of unrelated output). Kubectl
+/// writes actionable context/authentication/permission errors to stderr; this
+/// is the only stream surfaced to the UI on a failed command.
+fn sanitize_command_diagnostic(stderr: &str) -> String {
+    const MAX_DIAGNOSTIC_CHARS: usize = 1_200;
+
+    let mut detail = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !diagnostic_line_may_contain_secret(line))
+        .collect::<Vec<_>>()
+        .join(" ");
+    detail.retain(|character| character != '\0' && !character.is_control());
+    if detail.chars().count() > MAX_DIAGNOSTIC_CHARS {
+        detail = detail.chars().take(MAX_DIAGNOSTIC_CHARS).collect();
+        detail.push('…');
+    }
+    detail
+}
+
+fn diagnostic_line_may_contain_secret(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "token=",
+        "password=",
+        "passwd=",
+        "secret=",
+        "authorization:",
+        "client-key-data",
+        "client-certificate-data",
+        "private key",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
 }
 
 fn validate_remote_value(value: &str, field_name: &str) -> AppResult<()> {
@@ -5267,7 +5309,7 @@ fn shell_quote(value: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KubernetesManager, WORKSPACE_PERMISSION_PROBES, context_summaries,
+        KubernetesManager, WORKSPACE_PERMISSION_PROBES, command_failure_message, context_summaries,
         ensure_exec_plugin_trusted, exec_plugin_summaries, parse_remote_context_rows,
         remote_cli_command, remote_kubectl_command, remote_resource_is_discovered, shell_quote,
         truncate_log, validate_importable_kubeconfig,
@@ -5275,7 +5317,27 @@ mod tests {
     use crate::models::kubernetes::{
         KubernetesContextSelection, KubernetesResourceQuery, KubernetesSource,
     };
+    use crate::ssh::command::CommandOutput;
     use kube::config::Kubeconfig;
+
+    #[test]
+    fn command_failure_message_includes_remote_stderr() {
+        let message = command_failure_message(
+            &CommandOutput {
+                stdout: String::new(),
+                stderr: "error: context \"staging\" does not exist\n\nadditional detail"
+                    .to_string(),
+                exit_code: Some(1),
+                timed_out: false,
+                output_truncated: false,
+            },
+            "远端 Kubernetes 查询失败",
+        );
+        assert_eq!(
+            message,
+            "远端 Kubernetes 查询失败（退出码 1）：error: context \"staging\" does not exist additional detail"
+        );
+    }
 
     #[test]
     fn config_scan_only_returns_non_secret_context_metadata() {

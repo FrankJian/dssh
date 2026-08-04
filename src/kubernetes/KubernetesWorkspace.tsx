@@ -181,6 +181,7 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   const resourceWatchOperationId = useRef<string | null>(null);
   const hasInitializedContext = useRef(false);
   const previousRefreshContextKey = useRef(contextKey(initialWorkspaceContext));
+  const pendingContextNamespace = useRef<string | undefined>(undefined);
   const detailViewRef = useRef<HTMLElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
@@ -237,10 +238,22 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   }
 
   useEffect(() => {
-    if (hasInitializedContext.current) {
-      setNamespace(context.namespace ?? "");
-    } else {
-      hasInitializedContext.current = true;
+    const isInitialContext = !hasInitializedContext.current;
+    hasInitializedContext.current = true;
+    if (!isInitialContext) {
+      // Keep filters and the namespace scoped to the selected context. The
+      // previous implementation only copied `context.namespace`; a queued
+      // refresh could still carry the old namespace/filters into the new
+      // context. That commonly produces kubectl exit code 1 when the
+      // namespace does not exist or is forbidden there.
+      const preferences = loadWorkspacePreferences(profile.id, context);
+      const nextNamespace = preferences.namespace ?? context.namespace ?? "";
+      setResource(preferences.resource ?? "pods");
+      setNamespace(nextNamespace);
+      setLabelSelector(preferences.labelSelector ?? "");
+      if (preferences.autoRefresh !== undefined) setAutoRefresh(preferences.autoRefresh);
+      setDynamicResource(null);
+      pendingContextNamespace.current = nextNamespace;
     }
     setSelectedItem(null);
     setDocument(null);
@@ -314,7 +327,11 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
     const nextContextKey = contextKey(context);
     const contextChanged = previousRefreshContextKey.current !== nextContextKey;
     previousRefreshContextKey.current = nextContextKey;
-    void refresh(false, false, contextChanged ? context.namespace ?? "" : undefined);
+    const namespaceOverride = contextChanged
+      ? pendingContextNamespace.current ?? context.namespace ?? ""
+      : undefined;
+    pendingContextNamespace.current = undefined;
+    void refresh(false, false, namespaceOverride);
     // Resource selection is intentionally the automatic-refresh boundary;
     // filters are applied explicitly with the refresh button to avoid issuing
     // a request on every keystroke.
