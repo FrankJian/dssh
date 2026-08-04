@@ -38,6 +38,7 @@ import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
 import { HostKeyPrompt } from "../ssh/HostKeyPrompt";
+import { KUBERNETES_CONNECTION_CREATION_AVAILABLE } from "../ssh/connectionTypes";
 import { useProfiles } from "../ssh/useProfiles";
 import { useRecentConnections } from "../ssh/useRecentConnections";
 import { PaneGrid } from "../terminal/PaneGrid";
@@ -866,6 +867,10 @@ function MainApp() {
   }
 
   function openCreateKubernetesProfile() {
+    if (!KUBERNETES_CONNECTION_CREATION_AVAILABLE) {
+      toast("Kubernetes 新建配置正在完善，暂未开放。", "info");
+      return;
+    }
     setKubernetesEditorState({ mode: "create", profile: null });
   }
 
@@ -1760,7 +1765,7 @@ function MainApp() {
     const items: PaletteItem[] = [
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
-      { id: "act:new-kubernetes", label: "新建 Kubernetes 连接", hint: "连接", icon: "database", keywords: "kubernetes kubeconfig context cluster", run: openCreateKubernetesProfile },
+      ...(KUBERNETES_CONNECTION_CREATION_AVAILABLE ? [{ id: "act:new-kubernetes", label: "新建 Kubernetes 连接", hint: "连接", icon: "database" as const, keywords: "kubernetes kubeconfig context cluster", run: openCreateKubernetesProfile }] : []),
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },

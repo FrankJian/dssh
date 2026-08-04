@@ -17,10 +17,14 @@ export interface ConnectionTypeOption {
   available: boolean;
 }
 
+/** Existing Kubernetes profiles remain usable; new profile creation is paused
+ * until the remote-context workflow is complete. */
+export const KUBERNETES_CONNECTION_CREATION_AVAILABLE = false;
+
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
   {
-    available: true,
-    description: "集群资源浏览与 kubectl 工作区",
+    available: KUBERNETES_CONNECTION_CREATION_AVAILABLE,
+    description: "集群资源浏览与 kubectl 工作区（完善中）",
     icon: "database",
     id: "kubernetes",
     label: "Kubernetes",

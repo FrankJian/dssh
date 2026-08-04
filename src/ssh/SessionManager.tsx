@@ -6,6 +6,7 @@ import { SelectMenu } from "../ui/SelectMenu";
 import { ConnectionCard } from "./ConnectionCard";
 import {
   CONNECTION_TYPE_OPTIONS,
+  KUBERNETES_CONNECTION_CREATION_AVAILABLE,
   connectionTypeForProfile,
   type ConnectionType,
 } from "./connectionTypes";
@@ -264,7 +265,7 @@ export function SessionManager({
           </button>
           {newMenuOpen ? <div className="session-manager__new-menu" role="menu">
             <button onClick={() => { setNewMenuOpen(false); onCreate(); }} role="menuitem" type="button"><Icon name="ssh" height="15" width="15" />SSH</button>
-            <button onClick={() => { setNewMenuOpen(false); onCreateKubernetes(); }} role="menuitem" type="button"><Icon name="database" height="15" width="15" />Kubernetes</button>
+            <button disabled={!KUBERNETES_CONNECTION_CREATION_AVAILABLE} onClick={() => { setNewMenuOpen(false); onCreateKubernetes(); }} role="menuitem" title="Kubernetes 新建配置完善中" type="button"><Icon name="database" height="15" width="15" />Kubernetes（完善中）</button>
           </div> : null}
         </div>
         <div className="session-manager__sort">

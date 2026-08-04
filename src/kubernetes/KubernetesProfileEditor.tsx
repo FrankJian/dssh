@@ -511,7 +511,7 @@ export function KubernetesProfileEditor({
                       kubeconfigPath: event.currentTarget.value || undefined,
                       kubectlPath: draft.source.kind === "remoteSsh" ? draft.source.kubectlPath : undefined,
                     })}
-                    placeholder="留空则自动发现常见路径"
+                    placeholder="留空则使用远端 KUBECONFIG 或默认配置"
                     value={draft.source.kubeconfigPath ?? ""}
                   />
                   <Button disabled={!remoteSshProfileId} onClick={() => void browseRemoteKubeconfig(remoteSshProfileId)} type="button" variant="ghost">选择远端文件</Button>

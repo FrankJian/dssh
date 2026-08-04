@@ -1525,6 +1525,14 @@ button {
 
 .session-manager__new-menu button:hover { background: var(--bg-hover); color: var(--accent-strong); }
 
+.session-manager__new-menu button:disabled,
+.session-manager__new-menu button:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .session-manager__new:hover {
   background: var(--btn-primary-bg-hover);
 }
