@@ -4751,21 +4751,23 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   display: grid;
   min-height: 0;
   height: 100%;
-  grid-template-rows: 48px auto minmax(0, 1fr);
+  grid-template-rows: minmax(48px, auto) auto minmax(0, 1fr);
   background: var(--bg-base);
 }
 
 .kubernetes-workspace__toolbar {
+  position: relative;
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--border-subtle);
-  padding: 0 12px;
+  padding: 7px 12px;
   background: var(--bg-panel);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  align-content: center;
+  flex-wrap: wrap;
+  row-gap: 5px;
+  z-index: 20;
 }
 
 .kubernetes-workspace__title {
@@ -4798,7 +4800,14 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .kubernetes-workspace__toolbar .select-menu {
+  position: relative;
   flex: 0 0 auto;
+  z-index: 1;
+}
+
+.kubernetes-workspace__toolbar .select-menu:focus-within,
+.kubernetes-workspace__toolbar .select-menu:has(.select-menu__popover) {
+  z-index: 50;
 }
 
 .kubernetes-workspace__context-select {
