@@ -180,6 +180,7 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   const refreshGeneration = useRef(0);
   const resourceWatchOperationId = useRef<string | null>(null);
   const hasInitializedContext = useRef(false);
+  const previousRefreshContextKey = useRef(contextKey(initialWorkspaceContext));
   const detailViewRef = useRef<HTMLElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
@@ -189,14 +190,6 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   const [capabilities, setCapabilities] = useState<KubernetesCapabilities | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(() => initialPreferences.autoRefresh
     ?? localStorage.getItem(`dssh.kubernetes.autoRefresh.${profile.id}`) === "true");
-  const [openContextKeys, setOpenContextKeys] = useState<string[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(`dssh.kubernetes.tabs.${profile.id}`) ?? "[]") as unknown;
-      const valid = Array.isArray(stored) ? stored.filter((key): key is string => typeof key === "string") : [];
-      const initial = contextKey(initialContext ?? profile.selectedContexts[0] ?? { sourceId: "", name: "" });
-      return [...new Set([...valid, initial])].filter((key) => profile.selectedContexts.some((item) => contextKey(item) === key));
-    } catch { return [contextKey(initialContext ?? profile.selectedContexts[0] ?? { sourceId: "", name: "" })]; }
-  });
   const [watchRetryGeneration, setWatchRetryGeneration] = useState(0);
 
   const isNamespaced = dynamicResource?.namespaced ?? !["namespaces", "nodes"].includes(resource);
@@ -267,20 +260,17 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   }, [context]);
 
   useEffect(() => {
-    localStorage.setItem(`dssh.kubernetes.tabs.${profile.id}`, JSON.stringify(openContextKeys));
-  }, [openContextKeys, profile.id]);
-
-  useEffect(() => {
     if (!isNamespaced) setNamespace("");
   }, [isNamespaced]);
 
-  async function refresh(append = false, preserveDetail = false) {
+  async function refresh(append = false, preserveDetail = false, namespaceOverride?: string) {
     if (!context.name || !context.sourceId) {
       setError("该 Kubernetes 配置尚未选择 context。请先编辑配置并发现 context。");
       return;
     }
     const generation = ++refreshGeneration.current;
     const currentSelectionKey = selectedItem ? `${selectedItem.namespace ?? "_"}\u0000${selectedItem.name}` : null;
+    const requestNamespace = namespaceOverride ?? namespace;
     setIsLoading(true);
     setError(null);
     if (!preserveDetail) {
@@ -299,7 +289,7 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
         apiVersion: dynamicResource?.apiVersion || undefined,
         kind: dynamicResource?.kind || undefined,
         namespaced: dynamicResource?.namespaced,
-        namespace: isNamespaced ? namespace.trim() || undefined : undefined,
+        namespace: isNamespaced ? requestNamespace.trim() || undefined : undefined,
         labelSelector: labelSelector.trim() || undefined,
         limit: 100,
         continueToken: append ? continueToken ?? undefined : undefined,
@@ -321,7 +311,10 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
   }
 
   useEffect(() => {
-    void refresh();
+    const nextContextKey = contextKey(context);
+    const contextChanged = previousRefreshContextKey.current !== nextContextKey;
+    previousRefreshContextKey.current = nextContextKey;
+    void refresh(false, false, contextChanged ? context.namespace ?? "" : undefined);
     // Resource selection is intentionally the automatic-refresh boundary;
     // filters are applied explicitly with the refresh button to avoid issuing
     // a request on every keystroke.
@@ -805,22 +798,18 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
     <section className="kubernetes-workspace" aria-label="Kubernetes 工作区">
       <header className="kubernetes-workspace__toolbar">
         <div className="kubernetes-workspace__title"><Icon name="database" height="17" width="17" /><strong>{profile.name}</strong></div>
-        <div className="kubernetes-workspace__context-tabs">{openContextKeys.map((key) => {
-          const tab = profile.selectedContexts.find((item) => contextKey(item) === key);
-          if (!tab) return null;
-          return <button className={contextKey(context) === key ? "is-active" : ""} key={key} onClick={() => setContext(tab)} type="button">{tab.name}<span aria-hidden="true" onClick={(event) => { event.stopPropagation(); setOpenContextKeys((current) => current.filter((item) => item !== key)); if (contextKey(context) === key) { const next = profile.selectedContexts.find((item) => contextKey(item) !== key); if (next) setContext(next); } }}>×</span></button>;
-        })}</div>
         <SelectMenu
           ariaLabel="Kubernetes context"
+          className="kubernetes-workspace__context-select"
           disabled={contextOptions.length === 0}
           onChange={(value) => {
             const next = profile.selectedContexts.find((item) => contextKey(item) === value);
-            if (next) { setContext(next); setOpenContextKeys((current) => current.includes(value) ? current : [...current, value]); }
+            if (next) setContext(next);
           }}
           options={contextOptions.length > 0 ? contextOptions : [{ disabled: true, label: "未选择 context", value: "" }]}
           value={contextKey(context)}
         />
-        <SelectMenu ariaLabel="Kubernetes 资源类型" onChange={(value) => {
+        <SelectMenu className="kubernetes-workspace__resource-select" ariaLabel="Kubernetes 资源类型" onChange={(value) => {
           if (value.startsWith("dynamic:")) {
             const [, apiVersion, name] = value.split(":");
             const found = capabilities?.resources.find((item) => item.apiVersion === apiVersion && item.name === name);
@@ -829,15 +818,15 @@ export function KubernetesWorkspace({ initialContext, onClose, onDirtyChange, on
           }
           setDynamicResource(null); setResource(value);
         }} options={resourceOptions} value={dynamicResource ? `dynamic:${dynamicResource.apiVersion}:${dynamicResource.name}` : resource} />
-        {isNamespaced ? <label className="kubernetes-workspace__filter"><span>命名空间</span><input onChange={(event) => setNamespace(event.currentTarget.value)} placeholder="全部命名空间" value={namespace} /></label> : null}
-        <label className="kubernetes-workspace__filter"><span>标签</span><input onChange={(event) => setLabelSelector(event.currentTarget.value)} placeholder="app=api" value={labelSelector} /></label>
-        <Button onClick={() => void refresh()} title="刷新资源" type="button" variant="ghost"><Icon name="refresh" height="15" width="15" />刷新</Button>
-        <SelectMenu ariaLabel="创建资源模板" onChange={(value) => { setCreateTemplate(value); startCreateResource(value); }} options={RESOURCE_TEMPLATES.map((item) => ({ label: `创建 ${item.label}`, value: item.value }))} value={createTemplate} />
-        <Button disabled={isLoadingMetrics} onClick={() => void loadMetrics()} title="读取 Metrics API" type="button" variant="ghost"><Icon name="gauge" height="15" width="15" />{isLoadingMetrics ? "指标中…" : "指标"}</Button>
-        <Button onClick={() => setIsAuditPanelOpen((current) => !current)} title="查看 Kubernetes 操作审计" type="button" variant="ghost">审计</Button>
-        {profile.source.kind !== "localImported" ? <Button onClick={() => onOpenCli(profile, context)} title="在来源一致的终端中打开 kubectl" type="button" variant="ghost"><Icon name="terminalTool" height="15" width="15" />CLI</Button> : <span className="kubernetes-workspace__identity" title="安全导入的 kubeconfig 不会写入终端环境；如需 CLI，请改用路径引用来源。">CLI 已禁用</span>}
-        {editableYaml !== null ? <label className="kubernetes-workspace__force-apply"><input checked={forceApplyConflicts} onChange={(event) => setForceApplyConflicts(event.currentTarget.checked)} type="checkbox" />强制冲突</label> : null}
-        <label className="kubernetes-workspace__auto-refresh"><input checked={autoRefresh} onChange={(event) => setAutoRefresh(event.currentTarget.checked)} type="checkbox" />自动刷新</label>
+        {isNamespaced ? <label className="kubernetes-workspace__filter kubernetes-workspace__filter--namespace"><span>命名空间</span><input onChange={(event) => setNamespace(event.currentTarget.value)} placeholder="全部命名空间" value={namespace} /></label> : null}
+        <label className="kubernetes-workspace__filter kubernetes-workspace__filter--label"><span>标签</span><input onChange={(event) => setLabelSelector(event.currentTarget.value)} placeholder="app=api" value={labelSelector} /></label>
+        <Button className="kubernetes-workspace__toolbar-button" onClick={() => void refresh()} title="刷新资源" type="button" variant="ghost"><Icon name="refresh" height="15" width="15" /><span className="kubernetes-workspace__button-label">刷新</span></Button>
+        <SelectMenu className="kubernetes-workspace__create-select" ariaLabel="创建资源模板" onChange={(value) => { setCreateTemplate(value); startCreateResource(value); }} options={RESOURCE_TEMPLATES.map((item) => ({ label: `创建 ${item.label}`, value: item.value }))} value={createTemplate} />
+        <Button className="kubernetes-workspace__toolbar-button" disabled={isLoadingMetrics} onClick={() => void loadMetrics()} title="读取 Metrics API" type="button" variant="ghost"><Icon name="gauge" height="15" width="15" /><span className="kubernetes-workspace__button-label">{isLoadingMetrics ? "指标中…" : "指标"}</span></Button>
+        <Button className="kubernetes-workspace__toolbar-button" onClick={() => setIsAuditPanelOpen((current) => !current)} title="查看 Kubernetes 操作审计" type="button" variant="ghost"><Icon name="shield" height="15" width="15" /><span className="kubernetes-workspace__button-label">审计</span></Button>
+        {profile.source.kind !== "localImported" ? <Button className="kubernetes-workspace__toolbar-button" onClick={() => onOpenCli(profile, context)} title="在来源一致的终端中打开 kubectl" type="button" variant="ghost"><Icon name="terminalTool" height="15" width="15" /><span className="kubernetes-workspace__button-label">CLI</span></Button> : <span className="kubernetes-workspace__identity" title="安全导入的 kubeconfig 不会写入终端环境；如需 CLI，请改用路径引用来源。">CLI 已禁用</span>}
+        {editableYaml !== null ? <label className="kubernetes-workspace__force-apply"><input checked={forceApplyConflicts} onChange={(event) => setForceApplyConflicts(event.currentTarget.checked)} type="checkbox" /><span className="kubernetes-workspace__check-label">强制冲突</span></label> : null}
+        <label className="kubernetes-workspace__auto-refresh"><input checked={autoRefresh} onChange={(event) => setAutoRefresh(event.currentTarget.checked)} type="checkbox" /><span className="kubernetes-workspace__check-label">自动刷新</span></label>
         {capabilities ? <span className="kubernetes-workspace__identity" title={`来源：${capabilities.source}\n${permissionSummary(capabilities.permissions).text}`}>{capabilities.username ?? "身份未知"}{capabilities.canListPods === false ? " · 只读受限" : ""}{capabilities.permissions.some((item) => item.status !== "allowed") ? ` · ${permissionSummary(capabilities.permissions).headline}` : ""}</span> : null}
         <button aria-label="关闭 Kubernetes 工作区" className="icon-button" onClick={() => { if (confirmDiscardYaml()) onClose(); }} title="关闭工作区" type="button"><Icon name="close" height="16" width="16" /></button>
       </header>

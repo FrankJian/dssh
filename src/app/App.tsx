@@ -15,6 +15,7 @@ import {
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
 import type { KubernetesPodExecRequest, KubernetesProfile, S3Profile, SshProfile, TerminalSession } from "../models";
+import { DeleteKubernetesProfileDialog } from "../kubernetes/DeleteKubernetesProfileDialog";
 import { KubernetesProfileEditor, type KubernetesProfileEditorMode } from "../kubernetes/KubernetesProfileEditor";
 import { KubernetesWorkspace } from "../kubernetes/KubernetesWorkspace";
 import { useKubernetesProfiles } from "../kubernetes/useKubernetesProfiles";
@@ -33,6 +34,7 @@ import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
 import { RemoteFileTree } from "../sftp/RemoteFileTree";
 import { LocalFileTree } from "../sftp/LocalFileTree";
 import { ProfileEditor } from "../ssh/ProfileEditor";
+import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
 import { HostKeyPrompt } from "../ssh/HostKeyPrompt";
@@ -217,6 +219,8 @@ function MainApp() {
   const [kubernetesDirtyWorkspaceIds, setKubernetesDirtyWorkspaceIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [kubernetesProfileDeleteTarget, setKubernetesProfileDeleteTarget] = useState<KubernetesProfile | null>(null);
+  const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<{ dependencyCount: number; profile: SshProfile } | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
   const [s3TabProfileIds, setS3TabProfileIds] = useState<string[]>([]);
   const [activeS3ProfileId, setActiveS3ProfileId] = useState<string | null>(null);
@@ -424,8 +428,9 @@ function MainApp() {
           contextKey: workspace.kubernetes.contextKey,
         };
         setKubernetesWorkspaceTabs((current) => current.some((item) => kubernetesWorkspaceId(item) === kubernetesWorkspaceId(restored)) ? current : [...current, restored]);
+        focusTerminal();
         setKubernetesWorkspaceState(restored);
-        setActiveActivity("connections");
+        setActiveActivity("sessions");
       }
     });
     return () => { void closedPromise.then((unlisten) => unlisten()); };
@@ -566,7 +571,7 @@ function MainApp() {
     }
   }, [activeKubernetesWorkspaceId, markKubernetesWorkspaceDirty]);
   const isKubernetesWorkspace = activeKubernetesProfile != null;
-  const isConnections = activeActivity === "connections" && !isKubernetesWorkspace;
+  const isConnections = activeActivity === "connections";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
 
@@ -574,6 +579,11 @@ function MainApp() {
   // switch to the Sessions activity (S3 / Connections otherwise fill the column).
   const showTerminalSurface = useCallback(() => {
     focusTerminal();
+    // A Kubernetes workspace remains persisted in the tab strip, but selecting
+    // a terminal makes it the active surface until the Kubernetes tab is chosen
+    // again. Keeping this separate from the persisted tab list avoids one
+    // workspace masking SSH/local terminals after navigation.
+    setKubernetesWorkspaceState(null);
     setActiveActivity("sessions");
   }, [focusTerminal]);
 
@@ -871,7 +881,7 @@ function MainApp() {
     setEditorState(null);
   }
 
-  async function handleDeleteProfile(profileId: string) {
+  function handleDeleteProfile(profileId: string) {
     const profile = profiles.find((item) => item.id === profileId);
     if (!profile) {
       return;
@@ -880,15 +890,14 @@ function MainApp() {
     const dependentKubernetesProfiles = kubernetesProfiles.profiles.filter(
       (item) => item.source.kind === "remoteSsh" && item.source.sshProfileId === profileId,
     );
-    const dependencyWarning = dependentKubernetesProfiles.length > 0
-      ? `\n\n有 ${dependentKubernetesProfiles.length} 个 Kubernetes 连接将保留，但会变为“来源 SSH 已删除”，需要重新选择 SSH 来源后才能打开。`
-      : "";
-    if (window.confirm(`确定删除 SSH 配置“${profile.name}”吗？${dependencyWarning}`)) {
-      try {
-        await deleteProfile(profileId);
-      } catch (error) {
-        window.alert(error instanceof Error ? error.message : "删除 SSH 配置失败。");
-      }
+    setSshProfileDeleteTarget({ dependencyCount: dependentKubernetesProfiles.length, profile });
+  }
+
+  async function confirmDeleteSshProfile(profileId: string) {
+    try {
+      await deleteProfile(profileId);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : "删除 SSH 配置失败。");
     }
   }
 
@@ -933,12 +942,15 @@ function MainApp() {
     setKubernetesEditorState(null);
   }
 
-  async function handleDeleteKubernetesProfile(profile: KubernetesProfile) {
-    if (!window.confirm(`确定删除 Kubernetes 配置“${profile.name}”吗？`)) return;
+  function handleDeleteKubernetesProfile(profile: KubernetesProfile) {
+    setKubernetesProfileDeleteTarget(profile);
+  }
+
+  async function confirmDeleteKubernetesProfile(profile: KubernetesProfile) {
     try {
       await kubernetesProfiles.deleteProfile(profile.id);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "删除 Kubernetes 配置失败。");
+      throw new Error(error instanceof Error ? error.message : "删除 Kubernetes 配置失败。");
     }
   }
 
@@ -1123,6 +1135,7 @@ function MainApp() {
   }
 
   function handleOpenSftpForProfile(profile: SshProfile) {
+    setKubernetesWorkspaceState(null);
     openSftpTab(profile.id, profile.name);
   }
 
@@ -1347,15 +1360,20 @@ function MainApp() {
   function handleSelectTab(tab: WorkspaceTabItem) {
     if (tab.kind === "kubernetes") {
       const workspace = kubernetesWorkspaceTabs.find((item) => kubernetesWorkspaceId(item) === tab.id);
-      if (workspace) setKubernetesWorkspaceState(workspace);
-      setActiveActivity("connections");
+      if (workspace) {
+        focusTerminal();
+        setKubernetesWorkspaceState(workspace);
+      }
+      setActiveActivity("sessions");
       return;
     }
     if (tab.kind === "sftp") {
+      setKubernetesWorkspaceState(null);
       setFileTreeSessionId(null);
       focusSftpTab(tab.id);
       return;
     }
+    setKubernetesWorkspaceState(null);
     if (tab.id !== fileTreeSessionId) {
       setFileTreeSessionId(null);
     }
@@ -1506,6 +1524,10 @@ function MainApp() {
           activeSessionId={activeSessionId}
           isSftpActive={isSftpActive}
           profiles={profiles}
+          kubernetesConnection={activeKubernetesProfile && activeKubernetesContext ? {
+            profile: activeKubernetesProfile,
+            context: activeKubernetesContext,
+          } : null}
           onFocusTerminal={handleFocusTerminal}
           onNewTerminal={handleNewTerminalForNode}
           onOpenSftp={handleOpenSftpForProfile}
@@ -1518,6 +1540,7 @@ function MainApp() {
           onDisconnectNode={handleDisconnectNode}
           onConnectProfile={handleConnectProfile}
           onOpenConnections={() => setActiveActivity("connections")}
+          onOpenKubernetes={() => setActiveActivity("sessions")}
         />
       );
 
@@ -1581,7 +1604,7 @@ function MainApp() {
   );
 
   let mainSurface: ReactNode;
-  if (isKubernetesWorkspace) {
+  if (isKubernetesWorkspace && !isConnections && !isS3) {
     mainSurface = (
       <KubernetesWorkspace
         editorOptions={editorSettings.options}
@@ -1621,7 +1644,9 @@ function MainApp() {
             openEditKubernetesProfile(profile);
             return;
           }
+          focusTerminal();
           setKubernetesWorkspaceState({ profileId: profile.id, contextKey: contextKeyForKubernetes(context) });
+          setActiveActivity("sessions");
         }}
         onEditKubernetes={openEditKubernetesProfile}
         onDeleteKubernetes={(profile) => void handleDeleteKubernetesProfile(profile)}
@@ -1997,7 +2022,8 @@ function MainApp() {
               profileId: profile.id,
               contextKey: contextKeyForKubernetes(context),
             });
-            setActiveActivity("connections");
+            focusTerminal();
+            setActiveActivity("sessions");
           },
         });
         if (profile.source.kind !== "localImported") {
@@ -2158,9 +2184,25 @@ function MainApp() {
           allTags={[...allTags, ...kubernetesProfiles.allTags]}
           mode={kubernetesEditorState.mode}
           onClose={() => setKubernetesEditorState(null)}
+          onSwitchToSsh={openCreateProfile}
           onSubmit={handleSubmitKubernetesProfile}
           profile={kubernetesEditorState.profile}
           sshProfiles={profiles}
+        />
+      ) : null}
+      {kubernetesProfileDeleteTarget ? (
+        <DeleteKubernetesProfileDialog
+          onClose={() => setKubernetesProfileDeleteTarget(null)}
+          onConfirm={() => confirmDeleteKubernetesProfile(kubernetesProfileDeleteTarget)}
+          profile={kubernetesProfileDeleteTarget}
+        />
+      ) : null}
+      {sshProfileDeleteTarget ? (
+        <DeleteSshProfileDialog
+          dependencyCount={sshProfileDeleteTarget.dependencyCount}
+          onClose={() => setSshProfileDeleteTarget(null)}
+          onConfirm={() => confirmDeleteSshProfile(sshProfileDeleteTarget.profile.id)}
+          profile={sshProfileDeleteTarget.profile}
         />
       ) : null}
       {s3ProfileDeleteTarget ? (

@@ -23,6 +23,7 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { SelectMenu } from "../ui/SelectMenu";
 import { TagInput } from "../ssh/TagInput";
+import { CONNECTION_TYPE_OPTIONS } from "../ssh/connectionTypes";
 import { sftpHome, sftpList, type SftpEntry } from "../services/sftpService";
 
 export type KubernetesProfileEditorMode = "create" | "edit";
@@ -33,6 +34,7 @@ interface KubernetesProfileEditorProps {
   profile: KubernetesProfile | null;
   sshProfiles: SshProfile[];
   onClose: () => void;
+  onSwitchToSsh: () => void;
   onSubmit: (request: CreateKubernetesProfileRequest) => Promise<void>;
 }
 
@@ -83,6 +85,7 @@ export function KubernetesProfileEditor({
   allTags,
   mode,
   onClose,
+  onSwitchToSsh,
   onSubmit,
   profile,
   sshProfiles,
@@ -402,6 +405,27 @@ export function KubernetesProfileEditor({
         <form className="profile-form profile-form--connection" onSubmit={handleSubmit}>
           {errors.length > 0 ? <div className="form-errors" role="alert">{errors.map((error) => <p key={error}>{error}</p>)}</div> : null}
           <aside className="profile-form__sidebar">
+            {mode === "create" ? (
+              <label className="field">
+                <span>连接类型</span>
+                <SelectMenu
+                  ariaLabel="连接类型"
+                  onChange={(value) => {
+                    if (value === "ssh") {
+                      closeEditor();
+                      onSwitchToSsh();
+                    }
+                  }}
+                  options={CONNECTION_TYPE_OPTIONS.map((option) => ({
+                    disabled: !option.available,
+                    label: option.available ? option.label : `${option.label}（即将支持）`,
+                    value: option.id,
+                  }))}
+                  value="kubernetes"
+                />
+                <small className="profile-form__hint">可切换到其他已支持的连接类型。</small>
+              </label>
+            ) : null}
             <label className="field">
               <span>名称</span>
               <input autoFocus onChange={(event) => updateDraft({ name: event.currentTarget.value })} value={draft.name} />
