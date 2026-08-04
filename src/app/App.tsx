@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { AiChat } from "../ai/AiChat";
 import { AiConfigModal } from "../ai/AiConfigModal";
 import { useAiChat } from "../ai/useAiChat";
@@ -29,6 +30,7 @@ import { useS3Profiles } from "../s3/useS3Profiles";
 import { SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
+import { checkForStartupUpdate } from "../services/appUpdateService";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
 import { RemoteFileTree } from "../sftp/RemoteFileTree";
@@ -68,6 +70,7 @@ import {
   isTerminalFullscreenShortcut,
 } from "./shortcuts";
 import { useWorkspace } from "./useWorkspace";
+import { UpdateNotification } from "./UpdateNotification";
 import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
 import { DetachedWorkspaceWindow } from "./DetachedWorkspace";
 import { WorkspaceTabStrip, type WorkspaceTabItem } from "./WorkspaceTabStrip";
@@ -231,6 +234,7 @@ function MainApp() {
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
+  const [startupUpdate, setStartupUpdate] = useState<Update | null>(null);
   const reconnectingProfiles = useRef(new Set<string>());
   const [zenMode, setZenMode] = useState<boolean>(
     () => localStorage.getItem("dssh.zenMode") === "true",
@@ -240,6 +244,24 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem("dssh.zenMode", String(zenMode));
   }, [zenMode]);
+
+  // Update failures stay silent here: a startup network error should not block
+  // SSH work. The About page remains available for a manual check with details.
+  useEffect(() => {
+    let cancelled = false;
+    void checkForStartupUpdate()
+      .then((update) => {
+        if (!cancelled && update) {
+          setStartupUpdate(update);
+        }
+      })
+      .catch(() => {
+        // An unavailable update endpoint is non-fatal during application start.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const aiConfig = useAiConfig();
   const aiChat = useAiChat();
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() =>
@@ -1256,6 +1278,15 @@ function MainApp() {
     setIsSettingsOpen(true);
   }
 
+  const dismissStartupUpdate = useCallback(() => {
+    if (startupUpdate) {
+      void startupUpdate.close().catch(() => {
+        // The resource is released automatically when the window closes.
+      });
+    }
+    setStartupUpdate(null);
+  }, [startupUpdate]);
+
   function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
     if (event.defaultPrevented) {
       return;
@@ -2263,6 +2294,9 @@ function MainApp() {
       ) : null}
       {isAiConfigOpen ? (
         <AiConfigModal aiConfig={aiConfig} onClose={() => setIsAiConfigOpen(false)} />
+      ) : null}
+      {startupUpdate ? (
+        <UpdateNotification update={startupUpdate} onDismiss={dismissStartupUpdate} />
       ) : null}
       {isPaletteOpen ? (
         <CommandPalette items={buildPaletteItems()} onClose={() => setIsPaletteOpen(false)} />

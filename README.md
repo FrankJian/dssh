@@ -138,7 +138,7 @@ pnpm tauri build
 
 ## 自动更新（Auto Update）
 
-应用内置基于 **Tauri Updater 插件** 的自动更新：在「设置 → 关于 → 检查更新」中点击按钮，应用会读取 GitHub Release 上的 `latest.json`，若发现更高版本即可直接下载、校验签名、安装并自动重启。
+应用启动时会自动读取 GitHub Release 上的 `latest.json`；若发现更高版本，会弹出提示，可直接下载、校验签名、安装并自动重启。也可以在「设置 → 关于 → 检查更新」手动检查更新。
 
 - **更新源**：仅检查 GitHub Release
   （`https://github.com/FrankJian/dssh/releases/latest/download/latest.json`），配置在

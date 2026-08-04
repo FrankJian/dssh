@@ -1,9 +1,10 @@
 import { getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useState } from "react";
 import { isMacOS } from "../platform";
+import { checkForUpdate, UPDATE_PROXY_KEY } from "../services/appUpdateService";
 import { invokeCommand } from "../services/tauri";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -28,8 +29,6 @@ interface UpdateEndpointDiagnostic {
   error: string | null;
 }
 
-/** Optional proxy for update checks, e.g. http://127.0.0.1:7890 or socks5://…. */
-const UPDATE_PROXY_KEY = "dssh.update.proxy";
 const ISSUE_TRACKER_URL = "https://github.com/FrankJian/dssh/issues";
 
 function detectPlatform(): string {
@@ -122,7 +121,7 @@ export function AboutSection() {
     try {
       // The same proxy is reused for the download, so an update found through
       // it can also be installed through it.
-      const found = await check(trimmedProxy ? { proxy: trimmedProxy } : undefined);
+      const found = await checkForUpdate(trimmedProxy);
       if (!found) {
         setUpdate({ phase: "uptodate" });
         return;
