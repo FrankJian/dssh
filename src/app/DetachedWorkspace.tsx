@@ -1,11 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DetachedWorkspace, KubernetesPodExecRequest, KubernetesProfile } from "../models";
-import { KubernetesWorkspace } from "../kubernetes/KubernetesWorkspace";
-import { useKubernetesProfiles } from "../kubernetes/useKubernetesProfiles";
+import type { DetachedWorkspace } from "../models";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
-import { useEditorSettings } from "../settings/useEditorSettings";
+import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
@@ -17,7 +15,7 @@ import { toast, ToastHost } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
 import { isMacOS } from "../platform";
 import { discardDetachedWorkspace, updateDetachedTerminalWorkspace } from "../services/workspaceService";
-import { prepareKubernetesCli, prepareKubernetesPodExec } from "../services/kubernetesService";
+import { DetachedCloseDialog } from "./DetachedCloseDialog";
 import {
   formatShortcut,
   getShortcutBinding,
@@ -95,84 +93,6 @@ function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
   );
 }
 
-function DetachedKubernetesWindow({ workspace }: DetachedWorkspaceProps) {
-  const descriptor = workspace.kubernetes;
-  const currentWindow = getCurrentWindow();
-  const kubernetesProfiles = useKubernetesProfiles();
-  const profilesState = useProfiles();
-  const terminal = useTerminalSessions();
-  const settings = useTerminalSettings();
-  const editorSettings = useEditorSettings(settings.fontFamily, settings.fontSize);
-  const [isKubernetesDirty, setIsKubernetesDirty] = useState(false);
-  const profile = descriptor
-    ? kubernetesProfiles.profiles.find((item) => item.id === descriptor.profileId) ?? null
-    : null;
-  const context = profile?.selectedContexts.find((item) => `${item.sourceId}\u0000${item.name}` === descriptor?.contextKey) ?? null;
-
-  const closeWorkspace = useCallback((skipDirtyConfirmation = false) => {
-    if (!skipDirtyConfirmation && isKubernetesDirty && !window.confirm("Kubernetes YAML 已修改但尚未保存。确定关闭独立窗口并放弃修改吗？")) {
-      return;
-    }
-    void discardDetachedWorkspace(workspace.label)
-      .then(() => currentWindow.close())
-      .catch((error: unknown) => toast(error instanceof Error ? error.message : "关闭独立 Kubernetes 窗口失败。", "error"));
-  }, [currentWindow, isKubernetesDirty, workspace.label]);
-
-  const returnToMainWindow = useCallback(() => {
-    if (isKubernetesDirty && !window.confirm("Kubernetes YAML 已修改但尚未保存。确定合并回主窗口并放弃修改吗？")) {
-      return;
-    }
-    void currentWindow.close();
-  }, [currentWindow, isKubernetesDirty]);
-
-  const openCli = useCallback(async (targetProfile: KubernetesProfile, targetContext: KubernetesProfile["selectedContexts"][number]) => {
-    try {
-      const launch = await prepareKubernetesCli(targetProfile.id, targetContext);
-      const sourceProfile = launch.sshProfileId ? profilesState.profiles.find((item) => item.id === launch.sshProfileId) : undefined;
-      if (launch.sshProfileId && !sourceProfile) throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
-      const session = sourceProfile ? await terminal.startSession(sourceProfile) : await terminal.startLocalSession();
-      await terminal.writeToSession(session.id, `${launch.command}\n`);
-      toast(`已打开${launch.sourceLabel}。`, "success");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "打开 Kubernetes CLI 失败。", "error");
-    }
-  }, [profilesState.profiles, terminal]);
-
-  const openExec = useCallback(async (request: KubernetesPodExecRequest) => {
-    try {
-      const launch = await prepareKubernetesPodExec(request);
-      const sourceProfile = launch.sshProfileId ? profilesState.profiles.find((item) => item.id === launch.sshProfileId) : undefined;
-      if (launch.sshProfileId && !sourceProfile) throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
-      const session = sourceProfile ? await terminal.startSession(sourceProfile) : await terminal.startLocalSession();
-      await terminal.writeToSession(session.id, `${launch.command}\n`);
-      toast(`已打开${launch.sourceLabel}。`, "success");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "打开 Kubernetes Pod Exec 失败。", "error");
-    }
-  }, [profilesState.profiles, terminal]);
-
-  if (!descriptor || !profile || !context) {
-    return <DetachedUnavailable message="Kubernetes 独立窗口配置已失效，请返回主窗口重新打开。" />;
-  }
-  return (
-    <div className="detached-workspace">
-      <DetachedTitlebar title={workspace.title} onClose={() => closeWorkspace()} onReturn={returnToMainWindow} />
-      <main className="detached-workspace__content">
-        {kubernetesProfiles.isLoading ? <div className="terminal-loading">正在读取 Kubernetes 配置…</div> : <KubernetesWorkspace
-          editorOptions={editorSettings.options}
-          initialContext={context}
-          onClose={() => closeWorkspace(true)}
-          onDirtyChange={setIsKubernetesDirty}
-          onOpenCli={(targetProfile, targetContext) => void openCli(targetProfile, targetContext)}
-          onOpenExec={(request) => void openExec(request)}
-          profile={profile}
-        />}
-      </main>
-      <ToastHost />
-    </div>
-  );
-}
-
 function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const descriptor = workspace.terminal;
   const currentWindow = getCurrentWindow();
@@ -182,11 +102,19 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const settings = useTerminalSettings();
   const appliedInitialLayout = useRef(false);
   const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
+  const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
+  const sessionCountRef = useRef(0);
+
+  useEffect(() => {
+    localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
+  }, [sessionBarHidden]);
 
   const visibleSessions = useMemo(() => {
     const ids = new Set(descriptor?.sessionIds ?? []);
     return terminal.sessions.filter((session) => ids.has(session.id));
   }, [descriptor?.sessionIds, terminal.sessions]);
+  sessionCountRef.current = visibleSessions.length;
   const layout = descriptor ? panes.findLayoutByTab(descriptor.tabSessionId) : null;
   const activeSession = visibleSessions.find((session) => session.id === terminal.activeSessionId)
     ?? visibleSessions.find((session) => session.id === layout?.focusedPaneId)
@@ -195,6 +123,18 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const activeProfile = activeSession?.kind === "ssh"
     ? profilesState.profiles.find((profile) => profile.id === activeSession.profileId) ?? null
     : null;
+
+  // The session hook seeds `activeSessionId` from the backend's full list,
+  // which includes terminals owned by the main window. Left alone it points at
+  // a session this window does not show, so anything keyed off "active" acts on
+  // another window's terminal. Pin it to what is actually rendered here.
+  const activeSessionId = activeSession?.id ?? null;
+  const { setActiveSessionId } = terminal;
+  useEffect(() => {
+    if (activeSessionId && terminal.activeSessionId !== activeSessionId) {
+      setActiveSessionId(activeSessionId);
+    }
+  }, [activeSessionId, setActiveSessionId, terminal.activeSessionId]);
 
   const toggleTerminalFullscreen = useCallback(() => {
     const paneId = layout?.focusedPaneId ?? activeSession?.id;
@@ -246,17 +186,59 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     });
   }, [descriptor, panes.layouts, terminal.isSessionsLoaded, visibleSessions, workspace.label]);
 
-  const handleReturn = useCallback(() => {
-    void currentWindow.close();
+  // Destroy rather than close: every path below has already decided what
+  // happens to the sessions, and `close()` would bounce back through the
+  // close-requested handler and ask again.
+  const closeWindow = useCallback(async () => {
+    await currentWindow.destroy();
   }, [currentWindow]);
+
+  const handleReturn = useCallback(() => {
+    void closeWindow();
+  }, [closeWindow]);
 
   const closeTab = useCallback(async () => {
     const ids = layout ? paneSessionIds(layout) : visibleSessions.map((session) => session.id);
     await Promise.all(ids.map((id) => terminal.closeSession(id)));
     setTerminalFullscreenPaneId(null);
     await discardDetachedWorkspace(workspace.label).catch(() => {});
-    await currentWindow.close();
-  }, [currentWindow, layout, terminal.closeSession, visibleSessions, workspace.label]);
+    await closeWindow();
+  }, [closeWindow, layout, terminal.closeSession, visibleSessions, workspace.label]);
+
+  // Closing the window used to hand the sessions straight back to the main
+  // window. That is a reasonable default but it reads as "closed", so the two
+  // outcomes are now spelled out instead of one being assumed.
+  //
+  // Registered once: Tauri routes the close through this listener only while it
+  // exists, so re-subscribing on every session change would leave a window in
+  // which the native close slips past unasked. The count is read from a ref for
+  // the same reason.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void currentWindow
+      .onCloseRequested((event) => {
+        if (sessionCountRef.current === 0) {
+          return;
+        }
+        event.preventDefault();
+        setIsCloseConfirmOpen(true);
+      })
+      .then((dispose) => {
+        if (cancelled) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [currentWindow]);
 
   const split = useCallback(async (dir: SplitDir) => {
     if (!activeSession) return;
@@ -279,12 +261,12 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       setTerminalFullscreenPaneId(null);
     }
     if (remaining.length === 0) {
-      void discardDetachedWorkspace(workspace.label).finally(() => void currentWindow.close());
+      void discardDetachedWorkspace(workspace.label).finally(() => void closeWindow());
       return;
     }
     panes.removePane(sessionId);
     terminal.setActiveSessionId(remaining[0] ?? null);
-  }, [currentWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
+  }, [closeWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
 
   const sessionLabel = activeSession
     ? activeProfile ? `${activeProfile.username}@${activeProfile.host}:${activeProfile.port}` : activeSession.title
@@ -298,6 +280,8 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       copyOnSelect={settings.copyOnSelect}
       fontFamily={settings.fontFamily}
       fontSize={settings.fontSize}
+      letterSpacing={settings.letterSpacing}
+      lineHeight={settings.lineHeight}
       getBacklog={terminal.getBacklog}
       gpuAcceleration={settings.gpuAcceleration}
       backgroundAlpha={settings.terminalBgOpacity / 100}
@@ -310,12 +294,17 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       onOpenHostTools={() => {}}
       onOpenPortForward={() => {}}
       onReconnect={() => { if (activeSession) void terminal.reconnectSession(activeSession.id); }}
-      onResize={terminal.resizeActiveSession}
+      onResize={terminal.resizeSession}
       onStartLocalSession={() => void terminal.startLocalSession()}
-      onWrite={terminal.writeToActiveSession}
+      onWrite={terminal.writeToSession}
+      showSessionBar={!sessionBarHidden}
       subscribeOutput={terminal.subscribeOutput}
     />
   );
+
+  // The session bar belongs to the single-terminal surface; a split replaces
+  // that surface with the pane grid, leaving nothing to toggle.
+  const hasSessionBar = Boolean(activeSession) && !layout;
 
   if (!descriptor) {
     return <DetachedUnavailable message="终端独立窗口数据不完整。" />;
@@ -343,6 +332,18 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         <span className="detached-workspace__tab-spacer" />
         <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title="左右分屏（同一主机）" type="button"><Icon name="splitH" height="15" width="15" /></button>
         <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title="上下分屏（同一主机）" type="button"><Icon name="splitV" height="15" width="15" /></button>
+        {hasSessionBar ? (
+          <button
+            aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+            aria-pressed={sessionBarHidden}
+            className={`tab-action${sessionBarHidden ? " is-active" : ""}`}
+            onClick={() => setSessionBarHidden((hidden) => !hidden)}
+            title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+            type="button"
+          >
+            <Icon name="panelTop" height="15" width="15" />
+          </button>
+        ) : null}
         <button aria-label="终端全屏" className="tab-action" onClick={toggleTerminalFullscreen} title={`终端全屏（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`} type="button"><Icon name="maximize" height="15" width="15" /></button>
       </div>}
       <main className="detached-workspace__content">
@@ -364,6 +365,8 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
             onRatios={panes.setRatios}
             fontSize={settings.fontSize}
             fontFamily={settings.fontFamily}
+            letterSpacing={settings.letterSpacing}
+            lineHeight={settings.lineHeight}
             copyOnSelect={settings.copyOnSelect}
             rightClick={settings.rightClick}
             gpuAcceleration={settings.gpuAcceleration}
@@ -384,6 +387,20 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           <span>恢复终端视图</span>
         </button>
       ) : null}
+      {isCloseConfirmOpen ? (
+        <DetachedCloseDialog
+          onCancel={() => setIsCloseConfirmOpen(false)}
+          onCloseSessions={() => {
+            setIsCloseConfirmOpen(false);
+            void closeTab();
+          }}
+          onReturn={() => {
+            setIsCloseConfirmOpen(false);
+            handleReturn();
+          }}
+          sessionCount={visibleSessions.length}
+        />
+      ) : null}
       <ToastHost />
     </div>
   );
@@ -396,6 +413,5 @@ function DetachedUnavailable({ message }: { message: string }) {
 export function DetachedWorkspaceWindow({ workspace }: DetachedWorkspaceProps) {
   useTheme();
   if (workspace.kind === "sftp") return <DetachedSftpWindow workspace={workspace} />;
-  if (workspace.kind === "kubernetes") return <DetachedKubernetesWindow workspace={workspace} />;
   return <DetachedTerminalWindow workspace={workspace} />;
 }

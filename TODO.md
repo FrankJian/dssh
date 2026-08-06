@@ -49,7 +49,13 @@
 
 ## P2：可靠性与工作区体验
 
+### 4. 终端吞吐、生命周期与显示保真
 
+- 终端输出目前每个 SSH 数据包 emit 一次事件且广播到所有窗口，前端缓冲用字符串拼接，切标签会销毁并重建
+  xterm 实例并重放被截断的 backlog（后者同时是性能问题和 alt screen 画面错乱的正确性问题）。需要按
+  基线 → 输出合并 → 缓冲与反压 → 实例常驻 → 定向投递的顺序推进，并补上 Windows ConPTY 提示与字符宽度
+  修正。完整审计与指标门槛见 [`features/terminal-performance.md`](features/terminal-performance.md)，
+  分阶段实施清单见 [`tasks.md`](tasks.md#终端吞吐生命周期与显示保真)。
 
 ### 5. 通知中心与统一确认框
 
@@ -64,11 +70,13 @@
 
 - 将 S3 从独立 activity 的子标签迁入 `WorkspaceTabStrip`，与终端、SFTP 使用一致的标签生命周期与重排交互。
 
-### 8. Kubernetes 集群工作区
+### 8. 液态玻璃（窗口材质与半透明外观）
 
-- 新增本地 / 远端 SSH 双来源的 Kubernetes 连接、多个 kubeconfig context、资源 GUI、kubectl CLI、日志与安全
-  写操作。完整安全边界和来源语义见 [`features/kubernetes-workspace.md`](features/kubernetes-workspace.md)，
-  分阶段实施清单见 [`tasks.md`](tasks.md#kubernetes-集群工作区)。
+- 在设置 → 外观提供“关闭 / 仅浮层 / 整窗”三档窗口材质与三档强度，默认关闭。仅浮层档是纯 CSS
+  `backdrop-filter`，跨平台无风险；整窗档需要窗口透明 + 系统材质（Windows 11 Mica / Acrylic、macOS
+  vibrancy），会影响窗口缩放性能、resize 边框与启动首帧，必须先完成可行性验证。终端默认保持完全不透明，
+  玻璃不得降低正文可读性。完整规格见 [`features/liquid-glass.md`](features/liquid-glass.md)，分阶段实施清单见
+  [`tasks.md`](tasks.md#液态玻璃窗口材质与半透明外观)。
 
 ### 9. VNC 远程桌面工作区
 

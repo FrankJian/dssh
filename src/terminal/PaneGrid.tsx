@@ -3,6 +3,7 @@ import type { TerminalSession, TerminalSize } from "../models";
 import type { RightClickAction } from "../settings/settings";
 import { Icon } from "../ui/Icon";
 import { LazyTerminalView } from "./LazyTerminalView";
+import { beginPaneDrag, endPaneDrag } from "./paneDrag";
 import type { PaneLayout, PaneNode, PaneSplit } from "./usePaneLayout";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 
@@ -24,6 +25,8 @@ interface PaneGridProps {
   onRatios: (splitId: string, ratios: [number, number]) => void;
   fontSize: number;
   fontFamily: string;
+  lineHeight: number;
+  letterSpacing: number;
   copyOnSelect: boolean;
   rightClick: RightClickAction;
   gpuAcceleration: boolean;
@@ -47,6 +50,8 @@ export function PaneGrid({
   onRatios,
   fontSize,
   fontFamily,
+  lineHeight,
+  letterSpacing,
   copyOnSelect,
   rightClick,
   gpuAcceleration,
@@ -65,9 +70,19 @@ export function PaneGrid({
     const startPos = split.dir === "h" ? event.clientX : event.clientY;
     const startRatios = [...split.ratios] as [number, number];
 
-    const handleMove = (moveEvent: MouseEvent) => {
-      const pos = split.dir === "h" ? moveEvent.clientX : moveEvent.clientY;
-      const deltaFraction = (pos - startPos) / total;
+    // A mouse can report moves far more often than the screen refreshes.
+    // Collapse them to one layout update per frame so a drag cannot queue up
+    // more work than it can draw.
+    let pendingPos: number | null = null;
+    let frame: number | null = null;
+
+    const applyPending = () => {
+      frame = null;
+      if (pendingPos === null) {
+        return;
+      }
+      const deltaFraction = (pendingPos - startPos) / total;
+      pendingPos = null;
       const first = startRatios[0] + deltaFraction;
       const second = startRatios[1] - deltaFraction;
       if (first < MIN_RATIO || second < MIN_RATIO) {
@@ -75,25 +90,44 @@ export function PaneGrid({
       }
       onRatios(split.id, [first, second]);
     };
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      pendingPos = split.dir === "h" ? moveEvent.clientX : moveEvent.clientY;
+      if (frame === null) {
+        frame = requestAnimationFrame(applyPending);
+      }
+    };
     const handleUp = () => {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        frame = null;
+      }
+      applyPending();
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      // Releases the terminals to fit against their final size.
+      endPaneDrag();
     };
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
     document.body.style.cursor = split.dir === "h" ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
+    beginPaneDrag();
   }
 
   function renderNode(node: PaneNode): React.ReactNode {
     if (node.type === "leaf") {
       const session = sessions.find((item) => item.id === node.sessionId);
       return (
+        // Keyed by session: without it React reconciles panes by position, so
+        // closing or splitting one would hand an existing view a different
+        // session and cross-wire the terminals that outlive the change.
         <div
           className="pane"
           data-focused={node.sessionId === focusedPaneId}
+          key={node.sessionId}
           onMouseDownCapture={() => onFocusPane(node.sessionId)}
         >
           <div className="pane__bar">
@@ -112,13 +146,17 @@ export function PaneGrid({
           <div className="pane__body">
             <Suspense fallback={<div className="terminal-loading">正在加载终端...</div>}>
               <LazyTerminalView
+                autoFocus={node.sessionId === focusedPaneId}
                 backgroundAlpha={backgroundAlpha}
                 copyOnSelect={copyOnSelect}
                 fontFamily={fontFamily}
                 fontSize={fontSize}
+                letterSpacing={letterSpacing}
+                lineHeight={lineHeight}
                 getBacklog={getBacklog}
                 gpuAcceleration={gpuAcceleration}
                 hasWallpaper={hasWallpaper}
+                isLocalShell={session?.kind === "local"}
                 onData={(data) => onPaneData(node.sessionId, data)}
                 onFontSizeChange={onFontSizeChange}
                 onResize={(size) => onPaneResize(node.sessionId, size)}
@@ -133,7 +171,7 @@ export function PaneGrid({
     }
 
     return (
-      <div className="pane-grid" data-dir={node.dir}>
+      <div className="pane-grid" data-dir={node.dir} key={node.id}>
         <div className="pane-grid__child" style={{ flexGrow: node.ratios[0], flexBasis: 0 }}>
           {renderNode(node.children[0])}
         </div>

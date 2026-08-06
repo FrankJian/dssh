@@ -19,6 +19,13 @@ import {
   terminalBgImageKey,
   terminalBgOpacityKey,
   terminalWorkspaceInsetKey,
+  terminalLineHeightKey,
+  terminalLetterSpacingKey,
+  clampTerminalLineHeight,
+  clampTerminalLetterSpacing,
+  TERMINAL_LINE_HEIGHT_DEFAULT,
+  TERMINAL_LINE_HEIGHT_STEP,
+  TERMINAL_LETTER_SPACING_DEFAULT,
   clampBgOpacity,
   clampTerminalWorkspaceInset,
   TERMINAL_BG_OPACITY_DEFAULT,
@@ -49,6 +56,16 @@ function getStoredS3TransferConcurrency(key: string): number {
 export function useTerminalSettings() {
   const [fontSize, setFontSizeState] = useState<number>(() => getStoredFontSize());
   const [fontFamily, setFontFamilyState] = useState<string>(() => getStoredFontFamily());
+  const [lineHeight, setLineHeightState] = useState<number>(() => {
+    const raw = localStorage.getItem(terminalLineHeightKey);
+    return raw ? clampTerminalLineHeight(Number.parseFloat(raw)) : TERMINAL_LINE_HEIGHT_DEFAULT;
+  });
+  const [letterSpacing, setLetterSpacingState] = useState<number>(() => {
+    const raw = localStorage.getItem(terminalLetterSpacingKey);
+    return raw
+      ? clampTerminalLetterSpacing(Number.parseFloat(raw))
+      : TERMINAL_LETTER_SPACING_DEFAULT;
+  });
   const [copyOnSelect, setCopyOnSelectState] = useState<boolean>(() =>
     parseBoolean(localStorage.getItem(terminalCopyOnSelectKey), COPY_ON_SELECT_DEFAULT),
   );
@@ -85,6 +102,14 @@ export function useTerminalSettings() {
   useEffect(() => {
     localStorage.setItem(terminalFontFamilyKey, fontFamily);
   }, [fontFamily]);
+
+  useEffect(() => {
+    localStorage.setItem(terminalLineHeightKey, String(lineHeight));
+  }, [lineHeight]);
+
+  useEffect(() => {
+    localStorage.setItem(terminalLetterSpacingKey, String(letterSpacing));
+  }, [letterSpacing]);
 
   useEffect(() => {
     localStorage.setItem(terminalCopyOnSelectKey, String(copyOnSelect));
@@ -174,6 +199,26 @@ export function useTerminalSettings() {
     setFontSizeState(FONT_SIZE_DEFAULT);
   }, []);
 
+  const setLineHeight = useCallback((value: number) => {
+    setLineHeightState(clampTerminalLineHeight(value));
+  }, []);
+
+  const stepLineHeight = useCallback((direction: 1 | -1) => {
+    setLineHeightState((current) => clampTerminalLineHeight(current + direction * TERMINAL_LINE_HEIGHT_STEP));
+  }, []);
+
+  const resetLineHeight = useCallback(() => {
+    setLineHeightState(TERMINAL_LINE_HEIGHT_DEFAULT);
+  }, []);
+
+  const setLetterSpacing = useCallback((value: number) => {
+    setLetterSpacingState(clampTerminalLetterSpacing(value));
+  }, []);
+
+  const resetLetterSpacing = useCallback(() => {
+    setLetterSpacingState(TERMINAL_LETTER_SPACING_DEFAULT);
+  }, []);
+
   return {
     fontSize,
     setFontSize,
@@ -183,6 +228,13 @@ export function useTerminalSettings() {
     fontFamily,
     setFontFamily,
     resetFontFamily,
+    lineHeight,
+    setLineHeight,
+    stepLineHeight,
+    resetLineHeight,
+    letterSpacing,
+    setLetterSpacing,
+    resetLetterSpacing,
     copyOnSelect,
     setCopyOnSelect,
     rightClick,

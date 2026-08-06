@@ -42,6 +42,7 @@ export type IconName =
   | "moon"
   | "panelLeft"
   | "panelRight"
+  | "panelTop"
   | "pin"
   | "play"
   | "plus"
@@ -386,6 +387,12 @@ export function Icon({ name, ...props }: IconProps) {
         <>
           <rect height="18" rx="2" width="18" x="3" y="3" />
           <path d="M15 3v18" />
+        </>
+      ) : null}
+      {name === "panelTop" ? (
+        <>
+          <rect height="18" rx="2" width="18" x="3" y="3" />
+          <path d="M3 9h18" />
         </>
       ) : null}
       {name === "zap" ? <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z" /> : null}

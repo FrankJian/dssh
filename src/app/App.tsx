@@ -15,18 +15,14 @@ import {
   type HostKeyPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
-import type { KubernetesPodExecRequest, KubernetesProfile, S3Profile, SshProfile, TerminalSession } from "../models";
-import { DeleteKubernetesProfileDialog } from "../kubernetes/DeleteKubernetesProfileDialog";
-import { KubernetesProfileEditor, type KubernetesProfileEditorMode } from "../kubernetes/KubernetesProfileEditor";
-import { KubernetesWorkspace } from "../kubernetes/KubernetesWorkspace";
-import { useKubernetesProfiles } from "../kubernetes/useKubernetesProfiles";
-import { prepareKubernetesCli, prepareKubernetesPodExec } from "../services/kubernetesService";
+import type { S3Profile, SshProfile, TerminalSession } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
 import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
 import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
+import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
 import { SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
@@ -40,13 +36,13 @@ import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
 import { HostKeyPrompt } from "../ssh/HostKeyPrompt";
-import { KUBERNETES_CONNECTION_CREATION_AVAILABLE } from "../ssh/connectionTypes";
 import { useProfiles } from "../ssh/useProfiles";
 import { useRecentConnections } from "../ssh/useRecentConnections";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { releaseTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTheme } from "../theme/useTheme";
@@ -79,7 +75,6 @@ import type { DetachedWorkspace } from "../models";
 import {
   getDetachedWorkspace,
   onDetachedWorkspaceClosed,
-  openDetachedKubernetesWorkspace,
   openDetachedSftpWorkspace,
   openDetachedTerminalWorkspace,
 } from "../services/workspaceService";
@@ -94,16 +89,6 @@ interface S3EditorState {
   profile: S3Profile | null;
 }
 
-interface KubernetesEditorState {
-  mode: KubernetesProfileEditorMode;
-  profile: KubernetesProfile | null;
-}
-
-interface KubernetesWorkspaceState {
-  profileId: string;
-  contextKey: string;
-}
-
 interface ForwardTarget {
   sessionId: string;
   profile: SshProfile;
@@ -115,7 +100,6 @@ const NAVIGATION_ICONS_KEY = "dssh.navigation.icons";
 const RIGHT_PANEL_WIDTH_KEY = "dssh.ai.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
-const KUBERNETES_WORKSPACE_TABS_KEY = "dssh.kubernetes.workspaceTabs";
 const RIGHT_PANEL_WIDTH_DEFAULT = 360;
 const SIDE_PANEL_WIDTH_DEFAULT = 288;
 const DEFAULT_NAVIGATION_ICONS: NavigationIconId[] = ["sessions", "connections", "assistant"];
@@ -129,34 +113,6 @@ const AI_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "config",
   "about",
 ];
-
-function contextKeyForKubernetes(context: { sourceId: string; name: string }) {
-  return `${context.sourceId}\u0000${context.name}`;
-}
-
-function kubernetesWorkspaceId(workspace: KubernetesWorkspaceState) {
-  return `kubernetes:${workspace.profileId}:${workspace.contextKey}`;
-}
-
-function loadKubernetesWorkspaceTabs(): KubernetesWorkspaceState[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(KUBERNETES_WORKSPACE_TABS_KEY) ?? "[]");
-    if (!Array.isArray(value)) return [];
-    const seen = new Set<string>();
-    return value.flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      const { profileId, contextKey } = item as Record<string, unknown>;
-      if (typeof profileId !== "string" || typeof contextKey !== "string") return [];
-      const workspace = { profileId, contextKey };
-      const id = kubernetesWorkspaceId(workspace);
-      if (seen.has(id)) return [];
-      seen.add(id);
-      return [workspace];
-    });
-  } catch {
-    return [];
-  }
-}
 
 function isAiSettingsCategory(value: unknown): value is SettingsCategory {
   return typeof value === "string" && AI_SETTINGS_CATEGORIES.includes(value as SettingsCategory);
@@ -211,20 +167,12 @@ function MainApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
   );
+  const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
-  const [kubernetesEditorState, setKubernetesEditorState] = useState<KubernetesEditorState | null>(null);
-  const [kubernetesWorkspaceState, setKubernetesWorkspaceState] = useState<KubernetesWorkspaceState | null>(
-    () => loadKubernetesWorkspaceTabs()[0] ?? null,
-  );
-  const [kubernetesWorkspaceTabs, setKubernetesWorkspaceTabs] = useState<KubernetesWorkspaceState[]>(loadKubernetesWorkspaceTabs);
-  const [kubernetesDirtyWorkspaceIds, setKubernetesDirtyWorkspaceIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [kubernetesProfileDeleteTarget, setKubernetesProfileDeleteTarget] = useState<KubernetesProfile | null>(null);
-  const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<{ dependencyCount: number; profile: SshProfile } | null>(null);
+  const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<SshProfile | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
   const [s3TabProfileIds, setS3TabProfileIds] = useState<string[]>([]);
   const [activeS3ProfileId, setActiveS3ProfileId] = useState<string | null>(null);
@@ -287,6 +235,9 @@ function MainApp() {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
   }, [sidebarCollapsed]);
   useEffect(() => {
+    localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
+  }, [sessionBarHidden]);
+  useEffect(() => {
     if (rightPanel) {
       localStorage.setItem(RIGHT_PANEL_KEY, rightPanel);
     } else {
@@ -296,26 +247,6 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem(NAVIGATION_ICONS_KEY, JSON.stringify(navigationIcons));
   }, [navigationIcons]);
-  useEffect(() => {
-    localStorage.setItem(KUBERNETES_WORKSPACE_TABS_KEY, JSON.stringify(kubernetesWorkspaceTabs));
-  }, [kubernetesWorkspaceTabs]);
-  useEffect(() => {
-    if (!kubernetesWorkspaceState) return;
-    setKubernetesWorkspaceTabs((current) => current.some(
-      (item) => kubernetesWorkspaceId(item) === kubernetesWorkspaceId(kubernetesWorkspaceState),
-    ) ? current : [...current, kubernetesWorkspaceState]);
-  }, [kubernetesWorkspaceState]);
-
-  const markKubernetesWorkspaceDirty = useCallback((id: string, dirty: boolean) => {
-    setKubernetesDirtyWorkspaceIds((current) => {
-      const has = current.has(id);
-      if (has === dirty) return current;
-      const next = new Set(current);
-      if (dirty) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
   useEffect(() => {
     if (!navigationIcons.includes(activeActivity)) {
       const fallback = navigationIcons.find(
@@ -333,6 +264,13 @@ function MainApp() {
     copyOnSelect,
     fontFamily,
     fontSize,
+    lineHeight,
+    letterSpacing,
+    setLineHeight,
+    stepLineHeight,
+    resetLineHeight,
+    setLetterSpacing,
+    resetLetterSpacing,
     gpuAcceleration,
     resetFontSize,
     rightClick,
@@ -366,16 +304,6 @@ function MainApp() {
     updateProfile,
   } = useProfiles();
   const s3Profiles = useS3Profiles();
-  const kubernetesProfiles = useKubernetesProfiles();
-  useEffect(() => {
-    if (kubernetesProfiles.isLoading) return;
-    const isAvailable = (workspace: KubernetesWorkspaceState) => kubernetesProfiles.profiles.some(
-      (profile) => profile.id === workspace.profileId
-        && profile.selectedContexts.some((context) => contextKeyForKubernetes(context) === workspace.contextKey),
-    );
-    setKubernetesWorkspaceTabs((current) => current.filter(isAvailable));
-    setKubernetesWorkspaceState((current) => current && !isAvailable(current) ? null : current);
-  }, [kubernetesProfiles.isLoading, kubernetesProfiles.profiles]);
   const {
     activeSession,
     activeSessionId,
@@ -383,7 +311,6 @@ function MainApp() {
     closeSession,
     getBacklog,
     reconnectSession,
-    resizeActiveSession,
     resizeSession,
     sessions,
     setActiveSessionId,
@@ -443,16 +370,6 @@ function MainApp() {
       }
       if (workspace.sftp) {
         openSftpTab(workspace.sftp.profileId, workspace.title.replace(/^SFTP · /, ""));
-        setActiveActivity("sessions");
-      }
-      if (workspace.kubernetes) {
-        const restored = {
-          profileId: workspace.kubernetes.profileId,
-          contextKey: workspace.kubernetes.contextKey,
-        };
-        setKubernetesWorkspaceTabs((current) => current.some((item) => kubernetesWorkspaceId(item) === kubernetesWorkspaceId(restored)) ? current : [...current, restored]);
-        focusTerminal();
-        setKubernetesWorkspaceState(restored);
         setActiveActivity("sessions");
       }
     });
@@ -577,23 +494,6 @@ function MainApp() {
   }, [terminalWorkspaceInset]);
 
   const isS3 = activeActivity === "s3";
-  const activeKubernetesProfile = kubernetesWorkspaceState
-    ? kubernetesProfiles.profiles.find((profile) => profile.id === kubernetesWorkspaceState.profileId) ?? null
-    : null;
-  const activeKubernetesContext = activeKubernetesProfile && kubernetesWorkspaceState
-    ? activeKubernetesProfile.selectedContexts.find(
-      (context) => `${context.sourceId}\u0000${context.name}` === kubernetesWorkspaceState.contextKey,
-    )
-    : undefined;
-  const activeKubernetesWorkspaceId = kubernetesWorkspaceState
-    ? kubernetesWorkspaceId(kubernetesWorkspaceState)
-    : null;
-  const handleKubernetesDirtyChange = useCallback((dirty: boolean) => {
-    if (activeKubernetesWorkspaceId) {
-      markKubernetesWorkspaceDirty(activeKubernetesWorkspaceId, dirty);
-    }
-  }, [activeKubernetesWorkspaceId, markKubernetesWorkspaceDirty]);
-  const isKubernetesWorkspace = activeKubernetesProfile != null;
   const isConnections = activeActivity === "connections";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
@@ -602,11 +502,6 @@ function MainApp() {
   // switch to the Sessions activity (S3 / Connections otherwise fill the column).
   const showTerminalSurface = useCallback(() => {
     focusTerminal();
-    // A Kubernetes workspace remains persisted in the tab strip, but selecting
-    // a terminal makes it the active surface until the Kubernetes tab is chosen
-    // again. Keeping this separate from the persisted tab list avoids one
-    // workspace masking SSH/local terminals after navigation.
-    setKubernetesWorkspaceState(null);
     setActiveActivity("sessions");
   }, [focusTerminal]);
 
@@ -888,18 +783,6 @@ function MainApp() {
     setEditorState({ mode: "create", profile: null });
   }
 
-  function openCreateKubernetesProfile() {
-    if (!KUBERNETES_CONNECTION_CREATION_AVAILABLE) {
-      toast("Kubernetes 新建配置正在完善，暂未开放。", "info");
-      return;
-    }
-    setKubernetesEditorState({ mode: "create", profile: null });
-  }
-
-  function openEditKubernetesProfile(profile: KubernetesProfile) {
-    setKubernetesEditorState({ mode: "edit", profile });
-  }
-
   function openEditProfile(profile: SshProfile) {
     setEditorState({ mode: "edit", profile });
   }
@@ -914,10 +797,7 @@ function MainApp() {
       return;
     }
 
-    const dependentKubernetesProfiles = kubernetesProfiles.profiles.filter(
-      (item) => item.source.kind === "remoteSsh" && item.source.sshProfileId === profileId,
-    );
-    setSshProfileDeleteTarget({ dependencyCount: dependentKubernetesProfiles.length, profile });
+    setSshProfileDeleteTarget(profile);
   }
 
   async function confirmDeleteSshProfile(profileId: string) {
@@ -953,32 +833,6 @@ function MainApp() {
       await s3Profiles.createProfile(draft);
     }
     setS3EditorState(null);
-  }
-
-  async function handleSubmitKubernetesProfile(
-    request: Parameters<typeof kubernetesProfiles.createProfile>[0],
-  ) {
-    if (kubernetesEditorState?.mode === "edit" && kubernetesEditorState.profile) {
-      await kubernetesProfiles.updateProfile({
-        ...request,
-        id: kubernetesEditorState.profile.id,
-      });
-    } else {
-      await kubernetesProfiles.createProfile(request);
-    }
-    setKubernetesEditorState(null);
-  }
-
-  function handleDeleteKubernetesProfile(profile: KubernetesProfile) {
-    setKubernetesProfileDeleteTarget(profile);
-  }
-
-  async function confirmDeleteKubernetesProfile(profile: KubernetesProfile) {
-    try {
-      await kubernetesProfiles.deleteProfile(profile.id);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : "删除 Kubernetes 配置失败。");
-    }
   }
 
   async function confirmDeleteS3Profile(profile: S3Profile) {
@@ -1026,63 +880,6 @@ function MainApp() {
       showTerminalSurface();
     } catch (error) {
       toast(error instanceof Error ? error.message : "启动本地终端失败。", "error");
-    }
-  }
-
-  async function handleOpenKubernetesCli(
-    kubernetesProfile: KubernetesProfile,
-    context: KubernetesProfile["selectedContexts"][number],
-  ) {
-    try {
-      const launch = await prepareKubernetesCli(kubernetesProfile.id, context);
-      const sourceProfile = launch.sshProfileId
-        ? profiles.find((profile) => profile.id === launch.sshProfileId)
-        : undefined;
-      if (launch.sshProfileId && !sourceProfile) {
-        throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
-      }
-      const session = sourceProfile
-        ? await startSession(sourceProfile)
-        : await startLocalSession();
-      setTerminalNames((current) => ({
-        ...current,
-        [session.id]: `kubectl · ${context.name}`,
-      }));
-      await writeToSession(session.id, `${launch.command}\n`);
-      showTerminalSurface();
-      toast(
-        launch.kubectlVersion
-          ? `已打开${launch.sourceLabel}（${launch.kubectlVersion}）。`
-          : `已打开${launch.sourceLabel}。`,
-        "success",
-      );
-      if (launch.warning) toast(launch.warning, "warning");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "打开 Kubernetes CLI 失败。", "error");
-    }
-  }
-
-  async function handleOpenKubernetesExec(request: KubernetesPodExecRequest) {
-    try {
-      const launch = await prepareKubernetesPodExec(request);
-      const sourceProfile = launch.sshProfileId
-        ? profiles.find((profile) => profile.id === launch.sshProfileId)
-        : undefined;
-      if (launch.sshProfileId && !sourceProfile) {
-        throw new Error("Kubernetes 来源所选的 SSH 连接已不存在。");
-      }
-      const session = sourceProfile
-        ? await startSession(sourceProfile)
-        : await startLocalSession();
-      setTerminalNames((current) => ({
-        ...current,
-        [session.id]: `exec · ${request.pod}`,
-      }));
-      await writeToSession(session.id, `${launch.command}\n`);
-      showTerminalSurface();
-      toast(`已打开${launch.sourceLabel}。`, "success");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "打开 Kubernetes Pod Exec 失败。", "error");
     }
   }
 
@@ -1162,7 +959,6 @@ function MainApp() {
   }
 
   function handleOpenSftpForProfile(profile: SshProfile) {
-    setKubernetesWorkspaceState(null);
     openSftpTab(profile.id, profile.name);
   }
 
@@ -1249,6 +1045,10 @@ function MainApp() {
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
+
+  const toggleSessionBar = useCallback(() => {
+    setSessionBarHidden((hidden) => !hidden);
   }, []);
 
   const toggleRightPanel = useCallback((panel: RightPanelId) => {
@@ -1366,20 +1166,6 @@ function MainApp() {
       title: `SFTP · ${tab.title}`,
       active: isSftpActive && tab.id === activeSftpId,
     })),
-    ...kubernetesWorkspaceTabs.flatMap((workspace) => {
-      const profile = kubernetesProfiles.profiles.find((item) => item.id === workspace.profileId);
-      const context = profile?.selectedContexts.find(
-        (item) => contextKeyForKubernetes(item) === workspace.contextKey,
-      );
-      if (!profile || !context) return [];
-      return [{
-        id: kubernetesWorkspaceId(workspace),
-        kind: "kubernetes" as const,
-        title: `Kubernetes · ${profile.name} · ${context.name}`,
-        active: kubernetesWorkspaceState != null
-          && kubernetesWorkspaceId(kubernetesWorkspaceState) === kubernetesWorkspaceId(workspace),
-      }];
-    }),
   ];
 
   // Apply the user's drag-reordering: explicitly ordered tabs first (in that
@@ -1394,22 +1180,11 @@ function MainApp() {
   }
 
   function handleSelectTab(tab: WorkspaceTabItem) {
-    if (tab.kind === "kubernetes") {
-      const workspace = kubernetesWorkspaceTabs.find((item) => kubernetesWorkspaceId(item) === tab.id);
-      if (workspace) {
-        focusTerminal();
-        setKubernetesWorkspaceState(workspace);
-      }
-      setActiveActivity("sessions");
-      return;
-    }
     if (tab.kind === "sftp") {
-      setKubernetesWorkspaceState(null);
       setFileTreeSessionId(null);
       focusSftpTab(tab.id);
       return;
     }
-    setKubernetesWorkspaceState(null);
     if (tab.id !== fileTreeSessionId) {
       setFileTreeSessionId(null);
     }
@@ -1428,32 +1203,9 @@ function MainApp() {
     }
   }
 
-  function closeKubernetesWorkspace(id: string, skipDirtyPrompt = false) {
-    if (!skipDirtyPrompt && kubernetesDirtyWorkspaceIds.has(id)
-      && !window.confirm("Kubernetes YAML 已修改但尚未保存。确定关闭并放弃修改吗？")) {
-      return;
-    }
-    setKubernetesWorkspaceTabs((current) => {
-      const next = current.filter((item) => kubernetesWorkspaceId(item) !== id);
-      if (kubernetesWorkspaceState && kubernetesWorkspaceId(kubernetesWorkspaceState) === id) {
-        setKubernetesWorkspaceState(next[0] ?? null);
-      }
-      return next;
-    });
-    setKubernetesDirtyWorkspaceIds((current) => {
-      if (!current.has(id)) return current;
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
-    setActiveActivity("connections");
-  }
-
   function handleCloseTab(tab: WorkspaceTabItem) {
     if (tab.kind === "sftp") {
       closeSftpTab(tab.id);
-    } else if (tab.kind === "kubernetes") {
-      closeKubernetesWorkspace(tab.id);
     } else if (panes.findLayoutByTab(tab.id)) {
       const layout = panes.findLayoutByTab(tab.id)!;
       const sessionIds = paneSessionIds(layout);
@@ -1487,23 +1239,6 @@ function MainApp() {
         closeSftpTab(tab.id);
         return;
       }
-      if (tab.kind === "kubernetes") {
-        const workspace = kubernetesWorkspaceTabs.find((item) => kubernetesWorkspaceId(item) === tab.id);
-        const kubernetesProfile = workspace
-          ? kubernetesProfiles.profiles.find((item) => item.id === workspace.profileId)
-          : undefined;
-        if (!workspace || !kubernetesProfile) return;
-        const detached = await openDetachedKubernetesWorkspace({
-          parentLabel,
-          profileId: workspace.profileId,
-          contextKey: workspace.contextKey,
-          title: tab.title,
-        });
-        addWorkspace(detached);
-        closeKubernetesWorkspace(tab.id, true);
-        return;
-      }
-
       const layout = panes.findLayoutByTab(tab.id);
       const sessionIds = layout ? paneSessionIds(layout) : [tab.id];
       const workspace = await openDetachedTerminalWorkspace({
@@ -1516,6 +1251,12 @@ function MainApp() {
         },
       });
       addWorkspace(workspace);
+      // The detached window builds its own terminals for these sessions. The
+      // sessions stay alive on the backend, so nothing else would tell this
+      // window to let go of the instances it is no longer showing.
+      for (const id of sessionIds) {
+        releaseTerminal(id);
+      }
       if (sessionIds.includes(terminalFullscreenPaneId ?? "")) {
         setTerminalFullscreenPaneId(null);
       }
@@ -1560,10 +1301,6 @@ function MainApp() {
           activeSessionId={activeSessionId}
           isSftpActive={isSftpActive}
           profiles={profiles}
-          kubernetesConnection={activeKubernetesProfile && activeKubernetesContext ? {
-            profile: activeKubernetesProfile,
-            context: activeKubernetesContext,
-          } : null}
           onFocusTerminal={handleFocusTerminal}
           onNewTerminal={handleNewTerminalForNode}
           onOpenSftp={handleOpenSftpForProfile}
@@ -1576,7 +1313,6 @@ function MainApp() {
           onDisconnectNode={handleDisconnectNode}
           onConnectProfile={handleConnectProfile}
           onOpenConnections={() => setActiveActivity("connections")}
-          onOpenKubernetes={() => setActiveActivity("sessions")}
         />
       );
 
@@ -1616,6 +1352,8 @@ function MainApp() {
       copyOnSelect={copyOnSelect}
       fontFamily={fontFamily}
       fontSize={fontSize}
+      letterSpacing={letterSpacing}
+      lineHeight={lineHeight}
       getBacklog={getBacklog}
       gpuAcceleration={gpuAcceleration}
       backgroundAlpha={terminalBgOpacity / 100}
@@ -1632,61 +1370,32 @@ function MainApp() {
           cancelReconnect(activeSession.id);
         }
       }}
-      onResize={resizeActiveSession}
+      onResize={resizeSession}
       onStartLocalSession={handleStartLocalSession}
-      onWrite={writeToActiveSession}
+      onWrite={writeToSession}
+      showSessionBar={!sessionBarHidden}
       subscribeOutput={subscribeOutput}
     />
   );
 
+  // The session bar lives inside `terminalSurface`, so the toggle is only
+  // offered on the surfaces that actually show one — a split replaces it with
+  // the pane grid, and an open file editor takes its place.
+  let hasSessionBar = false;
   let mainSurface: ReactNode;
-  if (isKubernetesWorkspace && !isConnections && !isS3) {
-    mainSurface = (
-      <KubernetesWorkspace
-        editorOptions={editorSettings.options}
-        initialContext={activeKubernetesContext}
-        key={kubernetesWorkspaceId(kubernetesWorkspaceState!)}
-        onClose={() => {
-          if (kubernetesWorkspaceState) {
-            // KubernetesWorkspace already asks about its dirty editor when
-            // its own close button is used; avoid asking twice here.
-            closeKubernetesWorkspace(kubernetesWorkspaceId(kubernetesWorkspaceState), true);
-          }
-        }}
-        onDirtyChange={handleKubernetesDirtyChange}
-        profile={activeKubernetesProfile}
-        onOpenCli={(profile, context) => void handleOpenKubernetesCli(profile, context)}
-        onOpenExec={(request) => void handleOpenKubernetesExec(request)}
-      />
-    );
-  } else if (isConnections) {
+  if (isConnections) {
     mainSurface = (
       <SessionManager
         profiles={profiles}
-        kubernetesProfiles={kubernetesProfiles.profiles}
         recentIds={recentIds}
         activeSessionCount={visibleSessions.length}
         isLoading={isLoading}
         errorMessage={errorMessage}
         onConnect={handleConnectProfile}
         onCreate={openCreateProfile}
-        onCreateKubernetes={openCreateKubernetesProfile}
         onEdit={openEditProfile}
         onDelete={handleDeleteProfile}
         onToggleFavorite={handleToggleFavorite}
-        onOpenKubernetes={(profile) => {
-          const context = profile.selectedContexts[0];
-          if (!context) {
-            openEditKubernetesProfile(profile);
-            return;
-          }
-          focusTerminal();
-          setKubernetesWorkspaceState({ profileId: profile.id, contextKey: contextKeyForKubernetes(context) });
-          setActiveActivity("sessions");
-        }}
-        onEditKubernetes={openEditKubernetesProfile}
-        onDeleteKubernetes={(profile) => void handleDeleteKubernetesProfile(profile)}
-        onToggleKubernetesFavorite={(profileId) => void kubernetesProfiles.toggleFavorite(profileId)}
       />
     );
   } else if (isS3) {
@@ -1719,6 +1428,7 @@ function MainApp() {
       </div>
     );
   } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
+    hasSessionBar = Boolean(activeSession) && !activeRemoteFilePath;
     mainSurface = (
       <TerminalFileLayout
         fileTree={
@@ -1780,6 +1490,8 @@ function MainApp() {
         onRatios={panes.setRatios}
         fontSize={fontSize}
         fontFamily={fontFamily}
+        letterSpacing={letterSpacing}
+        lineHeight={lineHeight}
         copyOnSelect={copyOnSelect}
         rightClick={rightClick}
         gpuAcceleration={gpuAcceleration}
@@ -1789,6 +1501,7 @@ function MainApp() {
       />
     );
   } else {
+    hasSessionBar = Boolean(activeSession);
     mainSurface = terminalSurface;
   }
 
@@ -1796,7 +1509,6 @@ function MainApp() {
     const items: PaletteItem[] = [
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
-      ...(KUBERNETES_CONNECTION_CREATION_AVAILABLE ? [{ id: "act:new-kubernetes", label: "新建 Kubernetes 连接", hint: "连接", icon: "database" as const, keywords: "kubernetes kubeconfig context cluster", run: openCreateKubernetesProfile }] : []),
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
@@ -1827,6 +1539,16 @@ function MainApp() {
         keywords: "focus terminal",
         run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); },
       });
+      if (hasSessionBar) {
+        items.push({
+          id: "act:session-bar",
+          label: sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏",
+          hint: "布局",
+          icon: "panelTop",
+          keywords: "session bar status 状态栏",
+          run: toggleSessionBar,
+        });
+      }
       items.push({
         id: "act:terminal-fullscreen",
         label: terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏",
@@ -2045,59 +1767,6 @@ function MainApp() {
         run: () => void s3Profiles.toggleFavorite(profile.id),
       });
     }
-    for (const profile of kubernetesProfiles.profiles) {
-      for (const context of profile.selectedContexts) {
-        items.push({
-          id: `kubernetes:open:${profile.id}:${contextKeyForKubernetes(context)}`,
-          label: `打开 Kubernetes：${profile.name} · ${context.name}`,
-          hint: profile.source.kind === "local" ? "本机来源" : profile.source.kind === "localImported" ? "系统凭据存储来源" : "远端 SSH 来源",
-          icon: "database",
-          keywords: `${profile.tags.join(" ")} kubernetes kubeconfig context cluster`,
-          run: () => {
-            setKubernetesWorkspaceState({
-              profileId: profile.id,
-              contextKey: contextKeyForKubernetes(context),
-            });
-            focusTerminal();
-            setActiveActivity("sessions");
-          },
-        });
-        if (profile.source.kind !== "localImported") {
-          items.push({
-            id: `kubernetes:cli:${profile.id}:${contextKeyForKubernetes(context)}`,
-            label: `打开 Kubernetes CLI：${profile.name} · ${context.name}`,
-            hint: profile.source.kind === "local" ? "本机终端" : "远端 SSH 终端",
-            icon: "terminalTool",
-            keywords: `${profile.tags.join(" ")} kubernetes kubectl cli terminal context`,
-            run: () => void handleOpenKubernetesCli(profile, context),
-          });
-        }
-      }
-      items.push({
-        id: `kubernetes:edit:${profile.id}`,
-        label: `编辑 Kubernetes 配置：${profile.name}`,
-        hint: profile.source.kind === "local" ? "本机 kubeconfig" : profile.source.kind === "localImported" ? "系统凭据存储" : "远端 SSH",
-        icon: "database",
-        keywords: `${profile.tags.join(" ")} kubernetes kubeconfig context edit`,
-        run: () => openEditKubernetesProfile(profile),
-      });
-      items.push({
-        id: `kubernetes:favorite:${profile.id}`,
-        label: `${profile.favorite ? "取消收藏" : "收藏"} Kubernetes：${profile.name}`,
-        hint: "Kubernetes 配置",
-        icon: "star",
-        keywords: `${profile.tags.join(" ")} kubernetes favorite 收藏`,
-        run: () => void kubernetesProfiles.toggleFavorite(profile.id),
-      });
-      items.push({
-        id: `kubernetes:delete:${profile.id}`,
-        label: `删除 Kubernetes 配置：${profile.name}`,
-        hint: "Kubernetes 配置",
-        icon: "trash",
-        keywords: `${profile.tags.join(" ")} kubernetes delete 删除`,
-        run: () => void handleDeleteKubernetesProfile(profile),
-      });
-    }
     return items;
   }
 
@@ -2181,6 +1850,18 @@ function MainApp() {
                   >
                     <Icon name="splitV" height="15" width="15" />
                   </button>
+                  {hasSessionBar ? (
+                    <button
+                      aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+                      aria-pressed={sessionBarHidden}
+                      className={`tab-action${sessionBarHidden ? " is-active" : ""}`}
+                      onClick={toggleSessionBar}
+                      title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+                      type="button"
+                    >
+                      <Icon name="panelTop" height="15" width="15" />
+                    </button>
+                  ) : null}
                   <button
                     aria-label={terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}
                     className="tab-action"
@@ -2202,7 +1883,6 @@ function MainApp() {
           allTags={allTags}
           mode={editorState.mode}
           onClose={closeEditor}
-          onCreateKubernetes={openCreateKubernetesProfile}
           onSubmit={handleSubmitProfile}
           profile={editorState.profile}
         />
@@ -2215,30 +1895,11 @@ function MainApp() {
           profile={s3EditorState.profile}
         />
       ) : null}
-      {kubernetesEditorState ? (
-        <KubernetesProfileEditor
-          allTags={[...allTags, ...kubernetesProfiles.allTags]}
-          mode={kubernetesEditorState.mode}
-          onClose={() => setKubernetesEditorState(null)}
-          onSwitchToSsh={openCreateProfile}
-          onSubmit={handleSubmitKubernetesProfile}
-          profile={kubernetesEditorState.profile}
-          sshProfiles={profiles}
-        />
-      ) : null}
-      {kubernetesProfileDeleteTarget ? (
-        <DeleteKubernetesProfileDialog
-          onClose={() => setKubernetesProfileDeleteTarget(null)}
-          onConfirm={() => confirmDeleteKubernetesProfile(kubernetesProfileDeleteTarget)}
-          profile={kubernetesProfileDeleteTarget}
-        />
-      ) : null}
       {sshProfileDeleteTarget ? (
         <DeleteSshProfileDialog
-          dependencyCount={sshProfileDeleteTarget.dependencyCount}
           onClose={() => setSshProfileDeleteTarget(null)}
-          onConfirm={() => confirmDeleteSshProfile(sshProfileDeleteTarget.profile.id)}
-          profile={sshProfileDeleteTarget.profile}
+          onConfirm={() => confirmDeleteSshProfile(sshProfileDeleteTarget.id)}
+          profile={sshProfileDeleteTarget}
         />
       ) : null}
       {s3ProfileDeleteTarget ? (
@@ -2264,11 +1925,18 @@ function MainApp() {
           copyOnSelect={copyOnSelect}
           fontFamily={fontFamily}
           fontSize={fontSize}
+          letterSpacing={letterSpacing}
+          lineHeight={lineHeight}
           gpuAcceleration={gpuAcceleration}
           onClose={() => setIsSettingsOpen(false)}
           onCopyOnSelectChange={setCopyOnSelect}
           onFontFamilyChange={setFontFamily}
           onFontSizeChange={setFontSize}
+          onLetterSpacingChange={setLetterSpacing}
+          onLineHeightChange={setLineHeight}
+          onLineHeightStep={stepLineHeight}
+          onResetLetterSpacing={resetLetterSpacing}
+          onResetLineHeight={resetLineHeight}
           onGpuAccelerationChange={setGpuAcceleration}
           navigationIcons={navigationIcons}
           onNavigationIconsChange={setNavigationIcons}

@@ -1,159 +1,166 @@
 # Duo SSH 实施任务
 
 > 本文件记录已经完成规格评审、可以按阶段实施的任务。高层优先级与其他未排期事项见
-> [`TODO.md`](TODO.md)，当前界面约定见 [`spec.md`](spec.md)，Kubernetes 完整规格见
-> [`features/kubernetes-workspace.md`](features/kubernetes-workspace.md)。完成的任务应及时删除或压缩为简短记录，
+> [`TODO.md`](TODO.md)，当前界面约定见 [`spec.md`](spec.md)。完成的任务应及时删除或压缩为简短记录，
 > 避免与仍需实施的步骤混杂。
 
-## Kubernetes 集群工作区
+## 终端吞吐、生命周期与显示保真
 
-> 状态：Phase 0–5 的代码基础已完成，仍需真实集群、平台和权限矩阵验收。实施顺序遵循 Phase 0 → 1 → 2 → 3 → 4 → 5；Phase 6 明确保持为可选增强，不计入首版发布门槛。
+> 状态：Phase 1、Phase 3、Phase 6 已落地，Phase 0 的工具与 Phase 2 的缓冲改造已落地，Phase 5 只做了 ConPTY 一项；
+> Phase 2 的反压经核查前提不成立，已暂缓（见下）。
+> 实施严格遵循 [终端性能规格](features/terminal-performance.md) 的 Phase 0 → 1 → 2 → 3 → 4 → 5 → 6；
+> Phase 7 为条件执行，只在前六阶段复测后 IPC 仍为瓶颈时才做。**Phase 0 的基线数据是所有后续阶段的验收依据，不得跳过。**
+>
+> 已勾选的是代码改动，凡是“复测/验证”类的条目仍未勾选：需要在真实主机上跑一遍才能确认门槛达标。
 
-### Phase 0：剩余技术预研与安全门禁
+### Phase 0：性能基线
 
-- [ ] **K0.1 依赖与版本矩阵**：验证当前稳定 Rust `kube` / `k8s-openapi` 与项目 Tokio、rustls、Tauri 依赖的
-  兼容性，确定最低 / 最高 Kubernetes 服务端版本，记录 crate feature 和二进制体积变化。
-- [ ] **K0.2 本地 kubeconfig spike**：覆盖默认配置、`KUBECONFIG` 多路径、手工路径、无扩展名文件、多个
-  context、client certificate、bearer token 和 exec credential plugin；确认解析、刷新与错误分类。
-- [ ] **K0.3 远端 kubectl spike**：在现有 SSH 连接池 channel 上验证版本探测、context 列表、API Discovery、
-  `get -o json`、Watch、日志、stdin dry-run/apply、取消、超时与 transport 恢复。
-- [ ] **K0.4 命令安全验收**：补充真实远端环境下的注入回归测试，覆盖路径、context、namespace 和资源名中的空格、
-  Unicode、引号及恶意输入；禁止前端传完整命令字符串。
-- [ ] **K0.7 后端抽象定稿**：用 spike 验证统一 `KubernetesBackend` 能覆盖本地 API 和远端 kubectl，定稿 DTO、
-  operation id、取消、Watch / 轮询降级和错误码。
+- [x] **T0.1 测量方法**：为规格第 3 节的八项指标各写一个可复现的手工步骤（吞吐、IPC 事件率、输出延迟、输入延迟、帧率与长任务、切标签耗时、常驻内存、拖拽 resize 次数），固定测试主机、文件大小、窗口尺寸与字号，避免不同次测量不可比。
+- [x] **T0.2 后端计数器**：在 debug 构建下为 `emit_output` 增加每秒事件数与字节数统计，作为合并前后的直接对照，不得进入 release 构建的常规日志。
+- [ ] **T0.3 基线数据**：在 macOS 与 Windows 各采集一遍全部指标，含单终端 / 四格分屏 / 两个独立窗口三档，结果写回规格第 3 节。
+- [ ] **T0.4 对照组**：在同一台机器上用 Windows Terminal 或 iTerm2 跑同样的吞吐用例，记录差距量级，避免把平台固有开销误判为本项目的问题。
 
-**已完成记录**：已引入并编译 `kube` / `k8s-openapi`；Rust 后端已提供本机 kubeconfig 扫描，以及经共享
-SSH transport 的远端 kubectl / kubeconfig 自动发现命令。扫描结果仅包含 context、cluster、user、namespace 和
-路径摘要；远端动态参数使用统一 POSIX 单引号转义，exec 输出增加上限。以下条目仅保留真实本地 / 远端集群、
-exec plugin、版本矩阵与取消 / 重连场景的验收或尚未实现的安全设计。
+**Phase 0 验收**：任何人按文档能复现同一组数字；后续每个阶段都有明确的对照基线。
 
-本机 kubeconfig 的 exec credential plugin 现会显示非敏感摘要（来源、context、命令、参数摘要与环境变量名），
-首次使用前必须由用户显式信任；信任按插件指纹持久化且可撤销。内嵌环境变量只允许少量非秘密位置 / 配置选择器，
-认证加载错误不会回显插件输出。
+### Phase 1：输出合并
 
-应用管理的 kubeconfig 导入现使用 macOS Keychain / Windows Credential Manager（Linux 使用系统 Secret Service）；
-SQLite 只保存随机引用、文件显示名和用于去重的 SHA-256 指纹。导入、重新扫描、编辑取消、来源替换和删除配置都会
-通过后端管理该引用；同内容导入会复用已有安全存储项，原始 YAML 不经过前端。为避免“导入后仍从外部读取私钥”，含 `certificate-authority`、`client-certificate`、
-`client-key` 或 `tokenFile` 引用的文件会被拒绝，并提示用户使用路径引用或嵌入凭据。已导入配置不会写入 CLI
-终端环境；如需 CLI，用户必须明确改用路径引用来源。
+- [x] **T1.1 合并器**：在 `decode_with_carry` 之后、`push_session_output` / `emit_output` 之前插入合并层，策略为“攒够 16 KB 或距上次 flush 超过 4 ms 即 flush”，空闲时立即 flush，保证交互式单行输出不被人为延迟。
+- [x] **T1.2 顺序保证**：会话关闭、状态变更（`emit_status`）与重连提示前强制 flush，确保输出与状态消息不乱序；`push_session_output` 的快照内容必须与实际 emit 的内容一致。
+- [x] **T1.3 本地 PTY 复用**：`run_local_session` 的读线程复用同一合并器，不要写第二套实现。
+- [ ] **T1.4 复测**：复测吞吐、IPC 事件率与输出延迟，确认事件率降到 < 250 次/秒且输出延迟未增加超过 1 帧。
 
-**Phase 0 验收**：本地与远端各完成一个多 context 集群的只读查询；没有凭据进入前端或日志；明确列出暂不兼容
-的认证插件、kubectl / 服务端版本和平台差异后，才能进入持久化开发。
+**Phase 1 验收**：事件率达标、吞吐提升、交互式输入的回显手感无变化；无输出丢失、无顺序错乱。
 
-### Phase 1：连接模型、来源与多 context
+### Phase 2：前端缓冲与反压
 
-**已完成记录**：已完成 `kubernetes_profiles` 迁移、Rust / TypeScript DTO 与 CRUD、连接类型入口、local / remote
-来源编辑器、系统文件选择、远端 kubectl 自动发现、context 扫描和多选，以及连接管理页的标签分组与类型筛选。
+- [x] **T2.1 chunk 缓冲**：`buffersRef` 由字符串拼接改为 chunk 数组或环形缓冲，追加 O(1)，仅在 `getBacklog` 时 join；截断按 chunk 粒度丢弃，不得在字符或 ANSI 转义序列中间切断。
+- [x] **T2.2 上限统一**：把前端缓冲上限与 Rust 侧 `MAX_SESSION_BUFFER_BYTES` 统一为一个“保留输出量”概念，消除两处各自为政的常量。
+- [~] **T2.3 写入反压**：**暂缓**。经核查 russh 0.62.1，暂停消费某个 channel 会经容量 100 的 bounded mpsc 把反压传导到 TCP 流，阻塞整个 session loop；且 SSH 窗口信用在收到数据时即补发，与消费无关。见规格 4.4。
+- [~] **T2.4 反压边界**：**暂缓**，原因同上——T2.4 要求的“只影响本会话 channel”在当前 russh 下做不到，实施它就等于让同一 transport 上的 SFTP 与端口转发一起停摆。
+- [ ] **T2.5 洪水回归**：跑 `yes`、`cat` 超大文件与 `find /` 三个用例，确认内存有界、界面可交互、Ctrl-C 及时生效。（反压暂缓后，护栏是 T1.1 的合并与 T2.2 的保留输出量上限，这条回归仍要跑。）
 
-- [x] **K1.3 配置仓库错误规范化**：Kubernetes 的全部 Tauri 调用经统一 `invokeCommand` 将结构化 `AppError`
-  归一化为用户可见错误；失效 SSH 引用在创建 / 更新时被拒绝，删除 SSH profile 时会保留 Kubernetes profile
-  并明确提示其需要重新选择来源。
-编辑器现可逐 context 测试：本机来源检查 API Server 版本、身份与 Pod 只读权限；远端来源经共享 SSH transport
-检查 kubectl、API Discovery、身份与同类权限。测试结果按 context 返回，任一失败均不会阻止保存其他 context。
-远端 kubeconfig 路径可通过复用 SSH 连接池的 SFTP 目录选择器定位；选择器只返回目录 / 文件的名称、路径和基础
-元数据，绝不读取或向前端传输远端 kubeconfig 正文。
-已打开工作区会在打开时及随后每 60 秒以只读方式重扫本机路径、系统凭据存储或远端 kubeconfig 的 context 摘要；
-新增、消失或改名会显示提示，当前选择绝不自动切换。普通资源请求仍会独立显示网络 / 认证错误，不会被监测提示覆盖。
+**Phase 2 验收**：稳态下无 20 万字符级拷贝；洪水输出期间内存不再无界增长且终端仍可中断。（反压部分见上方暂缓说明。）
 
-**Phase 1 验收**：macOS / Windows 可保存本地路径与导入文件；可通过一个 SSH profile 保存远端来源；一个含
-多个 context 的配置可选择并测试多个 context，应用重启后非秘密配置正确恢复。
+### Phase 3：终端实例常驻
 
-### Phase 2：统一只读 GUI MVP
+- [x] **T3.1 实例注册表**：新增 session → `Terminal` 的注册表持有 xterm 实例与其 addon，`TerminalView` 改为只负责把已有实例挂载到当前 DOM 容器。
+- [x] **T3.2 挂载点搬迁**：切标签、切 surface（SFTP / S3 / 连接管理）、分屏 zoom、进出 Zen 全部改为搬迁挂载点或切换可见性，不调用 `dispose()`；确认滚动位置与选区保留。
+- [x] **T3.3 销毁时机**：只在会话关闭、窗口关闭与工作区分离 / 回归时销毁实例；补齐 addon、监听器与 WebGL 上下文的释放，避免泄漏。
+- [ ] **T3.4 backlog 来源**：冷启动重放改用后端 `read_ssh_session_output` 的完整快照，不再使用按字符下标硬切的前端字符串，消除截断转义序列导致的画面错乱。
+- [ ] **T3.5 独立窗口协同**：与 `DetachedWorkspaceManager` 的分离 / 回归路径对齐，保持会话 ID 不变、pane 树整体迁移的既有语义；完整重启 Tauri 后验证。
+      *代码侧已处理：注册表按窗口独立（DOM 节点无法跨窗口搬迁），分离时父窗口显式 `releaseTerminal`，回归时按 backlog 重建；仍需真机验证。*
+- [ ] **T3.6 交互回归**：切标签往返后 vim / htop / less 画面完全保持；`performance.mark` 复测切标签耗时。
 
-**已完成记录**：已新增 Kubernetes Profile 的 SQLite 持久化、local / remote SSH 来源编辑器、系统文件选择、
-远端 kubectl 自动发现、context 多选及连接管理入口。Phase 2 已提供同一套本机 `kube` client 与共享 SSH
-transport 上受控 `kubectl -o json` 的只读列表 / 详情接口，以及 Pods、Deployments、Services、Events、
-ConfigMaps、Secrets（仅 metadata、type 和 key 名）、Namespaces、Nodes 的 GUI 浏览。详情 YAML 为只读，
-Secret 值在后端脱敏后才跨越 Tauri 边界；本机 API 列表支持 1–500 条的分页与 continue token，工作区支持
-namespace / label selector、刷新、加载更多和资源详情。本机 client 以 kubeconfig 修改时间、路径和 context 为键
-缓存，配置变更会自动创建新 client；工作区的已打开 context 子标签和自动刷新偏好会恢复，自动刷新当前以
-10 秒轮询作为 Watch 不可用时的安全降级。本机 API Discovery 已获取聚合 API / CRD 资源清单并执行
-SelfSubjectReview / SelfSubjectAccessReview；远端通过 `kubectl api-resources`、`auth whoami` 和 `auth can-i`
-获取同类信息。权限矩阵现覆盖标准资源的 list / get / watch / create / patch / delete，以及 Pod 日志和 exec，
-并明确区分允许、拒绝、API 不支持与检测失败；工作区显示当前身份和权限受限摘要。动态 CRD 已接入资源选择与详情查询；
-远端显式 continue token 与服务端 Watch 已完成代码实现。Kubernetes 当前 context 已进入统一顶部标签条，可关闭回到
-连接管理；多个 `profile + context` 顶部工作区可并存、独立关闭并恢复，资源、命名空间、标签筛选和自动刷新偏好
-按工作区隔离保存。本机 API 已支持可取消的 DynamicObject Watch、bookmark、`410 Gone` 重置和重新建立流；
-远端来源也通过共享 SSH transport 的独立 `kubectl --watch` channel 实时应用资源增删改，取消不会影响其他 channel；
-两种来源都以轮询作为建连失败的降级。多个 context 的内部子标签仍会恢复。Watch 恢复的真实集群 / 网络抖动
-验收完成前，本阶段仍不能视为验收完成。本机 client 继续以 kubeconfig 文件指纹隔离缓存；远端 channel 使用连接池
-既有的并发限制、空闲回收和 transport 恢复机制，Watch 重建不会泄漏旧 channel。
+**Phase 3 验收**：切换不再重建终端，滚动位置、选区与全屏程序画面均保持；切标签耗时接近 0。
 
-**以下为剩余任务**：
+### Phase 4：定向投递
 
-- [ ] **K2.10 CRD 验收**：验证已接入动态资源选择 / 详情查询的 namespaced / cluster-scoped、版本切换和 CRD
-  被动态添加 / 删除的行为。
+- [ ] **T4.1 订阅表**：后端维护 `session_id → 订阅窗口 label`，前端在终端挂载 / 卸载时经命令注册与注销；主窗口与 `detached-*` 共用同一路径。
+- [ ] **T4.2 定向 emit**：`emit_output` 改用 `emit_to` / `emit_filter`，只发给订阅方；窗口关闭时清理订阅，不得泄漏。
+- [ ] **T4.3 按需缓冲**：前端只缓冲本窗口订阅的会话，消除多窗口下的重复缓冲。
+- [ ] **T4.4 复测**：在两个独立窗口 + 多会话场景下复测 IPC 事件率与常驻内存，确认不再随窗口数线性放大。
 
-**Phase 2 验收**：本地与远端来源在同一 GUI 中完成多 context 并行只读浏览；标准资源和至少一种 CRD 能实时
-或降级刷新；低权限身份看不到可写入口；无 Token、客户端私钥或 Secret value 出现在前端载荷。
+**Phase 4 验收**：窗口只收到自己显示的会话数据；多窗口下的事件率与内存不再倍数增长。
 
-### Phase 3：Pod 日志与来源一致的 CLI
+### Phase 5：显示保真
 
-**已完成记录**：已提供受 2 MB 上限保护的 Pod 日志快照和真正的 follow operation：本机来源通过 Kubernetes API
-流读取、远端来源通过共享 SSH transport 上的受控 `kubectl logs --follow` 通道读取；取消只关闭该日志 operation，
-不影响共享 SSH transport、终端或其他功能。工作区支持多容器、tail、since、时间戳、上一实例、日志搜索与系统保存。
-已提供“CLI”入口：Rust 根据 profile 来源、kubeconfig、context 和 namespace 构造并引用命令，前端仅创建既有
-本地 / SSH 终端并写入该命令；不会改写 kubeconfig 的 `current-context`，CLI 关闭也不会关闭 Kubernetes 工作区。
-CLI 会预检本机或远端 kubectl 并在不能确认时给出提示；真实多 context 验收仍未完成。
+- [ ] **T5.1 Windows ConPTY**：为本地终端会话传 `windowsPty: { backend: "conpty", buildNumber }`，验证 resize 时的折行与重排恢复正常；SSH 会话不受影响。
+      *已传 `{ backend: "conpty" }`（仅本地会话、仅 Windows）。`buildNumber` 取不到，留空即关闭旧版 ConPTY 的兼容启发式，对 Win10 21376 之前的版本是否需要补值待验证；折行行为本身也仍需在真机上确认。*
+- [ ] **T5.2 字符宽度**：评估引入 `@xterm/addon-unicode11` 并切到 Unicode 11 宽度表；先确认是否需要放开 `allowProposedApi`（当前 `false`）及其 API 面风险，再决定是否采纳。用 `htop` / `tmux` / CJK 与 emoji 混排验证边框对齐。
+- [ ] **T5.3 保留输出量设置项**：把 `scrollback` 做成设置项，与前端缓冲、Rust 快照上限在设置里表述为一个概念，并说明其内存代价。
+- [ ] **T5.4 光标闪烁设置项**：`cursorBlink` 做成设置项，评估默认值；关闭后确认空闲终端不再周期重绘。
+- [ ] **T5.5 渲染后端可见性**：WebGL 上下文丢失或创建失败时给出可见提示并暴露当前渲染后端（GPU / DOM）；核对四格分屏 + 多独立窗口下是否逼近浏览器上下文上限。
 
-- [ ] **K3.5 多 context 验收**：同时打开两个 context 的日志和 CLI，确认输出、取消、标签标题和 namespace
-  不串线。
+**Phase 5 验收**：Windows 本地终端 resize 无折行错乱；CJK / emoji / 制表符宽度与远端一致；渲染降级用户可见。
 
-### Phase 4：安全创建与修改资源
+### Phase 6：Resize 路径
 
-**已完成记录**：工作区使用独立的 `dssh-k8s://` Monaco YAML model、YAML language、编辑器设置继承和 dirty / 关闭
-保护；模板、多文档对象摘要、大小与元数据预检查已接入。所有写入由后端重新执行 server dry-run，路径引用本机使用
-Kubernetes API、远端使用 `kubectl --dry-run=server`，随后才允许显式确认的 Server-Side Apply。冲突支持 field manager
-和二次确认的 force；失败保留 YAML。删除具备传播策略、resourceVersion precondition、逐项结果，Deployment / StatefulSet /
-DaemonSet 提供扩缩容和滚动重启。SQLite 审计只保存来源、context、非秘密身份、资源摘要、动作、结果和错误码，并在工作区
-提供审计查看入口；不会记录 kubeconfig、Token、Secret value 或完整 YAML。
+- [x] **T6.1 拖拽节流**：分屏拖拽的 `mousemove` 用 rAF 节流，避免每个事件都进 React 状态更新。
+- [x] **T6.2 局部更新**：`setRatios` 只重建被拖动的那棵 layout 树，不再 `map` 全部 layout。
+- [x] **T6.3 延迟 fit**：拖拽期间挂“暂停 fit”标记，`mouseup` 后统一 fit 一次；复测一次拖拽内 `terminal.resize()` 的调用次数降到个位数。
 
-- [x] **K4.1 Kubernetes Monaco 模型**：`dssh-k8s://` URI、YAML language、dirty / 关闭保护、主题和 context / resource 唯一性。
-- [x] **K4.2 创建入口与模板**：空白 YAML、Pod、Deployment、Service、ConfigMap 模板，多文档预解析和逐对象摘要确认。
-- [x] **K4.3 服务端 dry-run**：本机 API 与远端 kubectl 均在实际写入前执行 server dry-run，并展示校验 / admission 摘要。
-- [x] **K4.4 Diff 与 Server-Side Apply**：显示服务端差异，使用 field manager；force conflict 必须二次确认。
-- [x] **K4.5 删除语义**：传播策略、resourceVersion precondition、逐项成功 / 失败汇总。
-- [x] **K4.6 受控快捷动作**：RBAC 门禁下的 scale 与 rollout restart，并在操作后刷新资源详情。
-- [x] **K4.7 审计与脱敏**：后端记录非秘密审计字段，前端可按 context 查看记录。
+**Phase 6 验收**：四格分屏拖拽全程流畅，缓冲区回流次数达标，松手后行列与后端 PTY 尺寸正确同步。
 
-**Phase 4 验收**：只读账号不能发出写请求；写账号可在本地与远端来源安全创建、修改和删除测试资源；冲突、
-admission 拒绝、部分失败和断线不会丢失未保存 YAML，也不会误报成功。
+### Phase 7：原始字节通道（条件执行）
 
-### Phase 5：交互式运维与可靠性
+- [ ] **T7.1 判定**：依据 Phase 1–6 复测数据判断 IPC 是否仍是瓶颈；不是则明确记录“不执行”并关闭本阶段。
+- [ ] **T7.2 通道实现**：用 `tauri::ipc::Channel` 以 `InvokeResponseBody::Raw` 传字节，前端收 `ArrayBuffer` 并以增量 `TextDecoder` 解码；Rust 侧仍保留可读文本快照供 AI `read_terminal` 使用。
+- [ ] **T7.3 回退开关与测试**：提供可回退到事件通道的开关，补齐跨包多字节 UTF-8、超大块、快速连断的回归测试，确认与 `decode_with_carry` 语义等价。
 
-**已完成记录**：Pod 详情提供 RBAC 门禁的 container / shell / TTY Exec 入口，并在来源一致的本机或远端终端中启动受控命令。
-端口转发由独立 Kubernetes operation manager 管理，支持 Pod / Service、端口占用预检、任务列表、取消、完成 / 失败事件，
-不复用 SSH forwarding 状态。Metrics API 不可用时返回安全降级结果；资源详情显示 owner references 与 selector，并明确
-selector 只是推断关系。Watch、日志 follow、kubectl channel、端口转发都拥有独立取消令牌，SSH transport 恢复不会关闭其他
-channel。Kubernetes 工作区已接入统一顶部标签、命令面板 context/CLI 动作和独立原生窗口；返回主窗口会恢复原标签，关闭
-独立窗口不会丢失 profile/context。
+**Phase 7 验收**：吞吐相对 Phase 6 有可测量的提升，且 CJK 与 ANSI 密集场景无解码错误；否则回退并保留事件通道。
 
-- [x] **K5.1 Pod Exec**：container / shell / TTY 选择，来源一致的终端启动与独立会话。
-- [x] **K5.2 端口转发**：Pod / Service、端口占用检查、任务列表、取消和状态事件；与 SSH 转发隔离。
-- [x] **K5.3 指标**：Metrics API + RBAC 允许时显示 CPU / 内存，不可用时安全降级。
-- [x] **K5.4 资源关系导航**：展示 owner references 与 selector matchLabels，区分确定与推断关系。
-- [x] **K5.5 故障恢复**：Watch / 日志 / 端口转发独立 operation 取消和重建边界已实现；真实网络、凭据和 kubectl 替换仍需验收。
-- [x] **K5.6 独立窗口与命令面板**：Kubernetes 标签可移至独立窗口，context / CLI 动作进入 ⌘K，沿用可配置快捷键体系。
+## 液态玻璃（窗口材质与半透明外观）
 
-### Phase 6：可选增强，不进入首版发布门槛
+> 状态：尚未开始。实施严格遵循 [液态玻璃规格](features/liquid-glass.md) 的 Phase 0 → 1 → 2 → 3 → 4 → 5；Phase 6 为可选增强，不属于发布门槛。效果默认关闭；Phase 1 可独立发布，Phase 3 必须先通过 Phase 0 的窗口行为验证才能开工。
 
-- [ ] **K6.1 Helm**：Release 列表、values、diff、安装、升级和回滚；单独评估本地 / 远端 Helm 二进制依赖。
-- [ ] **K6.2 CRD Schema 表单**：使用 OpenAPI schema 生成辅助表单，YAML 始终作为最终真相。
-- [ ] **K6.3 RBAC 分析**：Role / Binding 关系、`can-i` 矩阵和风险提示，不自动修改权限。
-- [ ] **K6.4 多集群能力**：跨 context 只读搜索、资源差异和版本对比；禁止默认批量写入多个集群。
-- [ ] **K6.5 Pod 文件传输**：评估 tar/exec 限制、容器工具缺失和安全性后另立规格。
-- [ ] **K6.6 AI 辅助**：解释资源、日志与 Events，生成待审 YAML；写入、删除、exec 与端口转发继续使用显式审批。
+### Phase 0：可行性与基线
 
-### 发布前统一验证
+- [ ] **G0.1 透明窗口行为 spike**：在临时分支给主窗口加 `transparent: true`，在 Windows 11 与 macOS 上逐项实测边缘拖拽缩放、贴边分屏、双击标题栏最大化、最小化 / 恢复、任务栏与 Dock 预览、多显示器 DPI 切换。任一项破坏且无可接受缓解时，`window` 模式退回“切换需重启”或直接不发布。
+- [ ] **G0.2 启动闪烁与显示时机**：验证 `transparent: true` 在 Windows 打包产物上的首帧闪白程度；如需缓解，设计 `visible: false` 创建 + 前端首帧后调用命令显示的流程，并确认它不影响 updater、深链接与独立窗口。
+- [ ] **G0.3 材质可用性探测**：确定 Windows build 号 / DWM 合成状态、macOS 版本的探测方式与判定阈值（Win11 22000 起支持 Mica；Win10 判定为不支持），产出 `WindowMaterialSupport` 的字段定义与不支持原因文案。
+- [ ] **G0.4 性能基线**：在开启材质前记录基线：终端 `cat` 大文件的帧率与 CPU、窗口拖动 / 缩放平滑度、常驻内存。分别记录 Mica、Acrylic、macOS vibrancy 三种材质开启后的同一组数据，确认 Acrylic 的拖拽 / 缩放掉帧程度是否需要在 UI 上标注或直接不提供。
+- [ ] **G0.5 WebView 能力核对**：确认 WebView2 与 WKWebView 对 `backdrop-filter`、`@supports not (backdrop-filter: ...)`、`prefers-reduced-transparency` 的实际支持情况，以及嵌套磨砂层的渲染代价，据此锁定第 5.2 节的两层上限。
 
-- [ ] **KV.1 平台矩阵**：macOS / Windows 本地来源，以及至少一种远端 Linux SSH 来源。
-- [ ] **KV.2 集群矩阵**：本地开发集群、标准远端集群、exec credential 云集群、标准资源和 CRD。
-- [ ] **KV.3 权限矩阵**：只读、namespace 管理、cluster 管理和无权限账号。
-- [ ] **KV.4 故障矩阵**：API / SSH 断开、Watch 过期、kubectl / 插件缺失、超时、冲突、部分失败与取消。
-- [ ] **KV.5 安全检查**：前端事件、SQLite、日志、Toast、崩溃信息和 AI 上下文均不泄露凭据或 Secret value。
-**最近工程验证记录**：本轮已通过 `pnpm exec tsc --noEmit`、`pnpm build`、`cargo fmt`、
-`cargo clippy --all-targets -- -D warnings` 和 `cargo test`。发布构建前仍须按当时提交重新执行；Phase 0 / 2 / 3、
-以及 Phase 5 的真实集群、平台和故障矩阵验收仍由 KV 条目跟踪。
+**Phase 0 验收**：三种材质在两个平台各有一组可比的性能与窗口行为记录；“免重启切换”是否可行有明确结论。结论为否时更新规格再进入 Phase 3，但不阻塞 Phase 1、2。
+
+### Phase 1：CSS 材质层（跨平台，零窗口风险）
+
+- [ ] **G1.1 修复未定义 token**：`global.css:8752/8827/8912` 的 `--bg-base` / `--bg-raised` 从未在 `:root` 定义。先补定义或改用既有语义 token，使独立窗口外壳有确定的表面色可供材质覆盖。
+- [ ] **G1.2 玻璃 token**：在主题 token 之后新增 `--glass-blur`、`--glass-saturate`、`--glass-chrome-bg`、`--glass-overlay-bg`、`--glass-border`、`--glass-shadow`，深浅主题各一份；半透明值一律用 `color-mix(in srgb, <token> <alpha>%, transparent)`，不得出现字面色值。
+- [ ] **G1.3 `data-material` 覆盖块**：实现 `[data-material=“overlay“]` 与 `[data-material=”window”]` 两级表面 token 覆盖，以及 `[data-material-intensity]` 的 low / medium / high 数值映射。只覆盖表面色，不改任何组件的布局规则。
+- [ ] **G1.4 磨砂表面类**：新增单一共享类 `.is-glass-surface` 承载 `backdrop-filter`，挂到规格第 5.3 节列出的浮层与 chrome 容器上；确保从 `.app-shell` 起嵌套磨砂不超过两层，模态遮罩只调 alpha 不叠模糊。
+- [ ] **G1.5 降级查询**：实现 `@media (prefers-reduced-transparency: reduce)` 强制回落到不透明，以及 `@supports not (backdrop-filter: blur(1px))` 时退化为无模糊的半透明底色。
+- [ ] **G1.6 对比度校准**：在深浅主题 × 三档强度 × 亮 / 暗桌面壁纸下测量 `--text-primary`、次级文字与图标的对比度，把不达标的 alpha 调高，最终数值回写规格第 4 节表格。
+
+**Phase 1 验收**：手动把 `data-material` 写进 DOM 即可看到完整浮层磨砂效果，深浅主题都通过对比度检查；未开启时的渲染与改动前逐像素一致。
+
+### Phase 2：设置项与状态管理
+
+- [ ] **G2.1 设置常量**：在 `src/settings/settings.ts` 增加 `appearanceGlassModeKey` / `appearanceGlassIntensityKey`、`GlassMode` / `GlassIntensity` 类型、默认值与 `normalizeGlassMode` / `normalizeGlassIntensity` 解析函数，沿用现有 `parseBoolean` 一类的容错风格。
+- [ ] **G2.2 `useGlassSettings`**：新增 hook 管理模式与强度，写 localStorage，写 `document.documentElement.dataset.material` / `dataset.materialIntensity`，并**照抄 `useTheme` 的 `storage` 事件监听**实现跨窗口同步（现有 `useTerminalSettings` 没有这一层，不要以它为模板）。
+- [ ] **G2.3 外观设置 UI**：在 `SettingsDialog.tsx` 的 `“appearance“` 分类中，主题之后新增”窗口材质“区块：三档模式（沿用 `.settings-theme__option` 的分段按钮样式）+ 三档强度；不支持的选项禁用并给出原因，被系统”减少透明度”覆盖时显示提示。
+- [ ] **G2.4 接线主窗口与独立窗口**：在 `App.tsx` 与 `DetachedWorkspace.tsx` 各接入 hook；确认独立窗口在无设置面板的情况下也能通过 `storage` 同步实时更新。
+- [ ] **G2.5 文案更新**：删除 `SettingsDialog.tsx:598-603` 中“窗口对桌面的整体透明需要系统级窗口透明，暂未开启”的说明，改为描述终端不透明度与窗口材质的实际叠加行为。
+
+**Phase 2 验收**：设置里切换模式与强度立即生效并持久化；重开应用与打开独立窗口都保持一致；此时 `window` 档暂按 `overlay` 渲染。
+
+### Phase 3：窗口材质（`window` 模式）
+
+- [ ] **G3.1 Tauri 窗口配置**：`tauri.conf.json` 与 `tauri.macos.conf.json` 主窗口均加 `transparent: true`；macOS 追加 `app.macOSPrivateApi: true` 并给 `tauri` crate 开 `macos-private-api` feature。在 README / 规格中记录其对 Mac App Store 分发的影响。
+- [ ] **G3.2 Rust 命令与 DTO**：新增 `window_material_support` 与 `apply_window_material` 命令、`models/` 下的 camelCase DTO，注册进 `lib.rs`；实现 Windows（Mica / MicaDark / MicaLight，显式选择时 Acrylic）与 macOS（`UnderWindowBackground` + `FollowsWindowActiveState`）的材质施加与清除，错误按 `AppError` 约定返回。
+- [ ] **G3.3 前端服务层**：新增 `src/services/windowMaterialService.ts`，经 `invokeCommand` 规范化错误；应用启动时探测一次能力并缓存，供设置 UI 的禁用态使用。
+- [ ] **G3.4 独立窗口一致性**：`workspace/mod.rs` 的 `WebviewWindowBuilder` 同步加 `transparent`，窗口创建后按当前偏好施加材质；确认 `detached-*` 全部覆盖。若最终改走前端 `setEffects`，则 `capabilities/default.json` 与 `capabilities/detached-workspace.json` 都要加 `core:window:allow-set-effects`，并**完整重启 Tauri** 验证（HMR 不重载 capability）。
+- [ ] **G3.5 主题联动**：`data-theme` 变化时重新施加材质（Windows 的 Mica 变体、macOS 的 appearance），包含跟随系统主题的自动切换路径。
+- [ ] **G3.6 窗口几何**：最大化 / 全屏时把 `.app-shell` 的 6px 圆角改为直角，避免四角漏出桌面；同时核对 Zen 模式与独立窗口。
+- [ ] **G3.7 首帧显示流程**：若 G0.2 判定需要，实现 `visible: false` 创建 + 前端首帧后显示，并确认对启动耗时、updater 与独立窗口无副作用。
+
+**Phase 3 验收**：Windows 11 与 macOS 上 `window` 档真实透出桌面并可免重启切换；Windows 10 与不支持环境自动降级；主窗口与独立窗口一致；窗口缩放、分屏、最大化、多显示器行为与改动前无差异。
+
+### Phase 4：终端与内容协同
+
+- [ ] **G4.1 合成顺序核对**：逐档核对“系统材质 → `.app-shell` → `--terminal-surface` → xterm 画布”的实际叠加结果，确保不会叠成糊色；必要时限制终端不透明度与玻璃强度的组合。
+- [ ] **G4.2 保持终端透明路径不变**：确认 `TerminalView.tsx` 的 `allowTransparency` 判定仍只由壁纸与 `backgroundAlpha` 决定，玻璃开启不得强制终端走 WebGL 透明渲染。
+- [ ] **G4.3 内容区豁免**：确认终端画布、Monaco 编辑器正文、SFTP / S3 / 远端文件树列表均未被磨砂波及，滚动性能无回退。
+- [ ] **G4.4 终端选中态复核**：按 `terminalTheme.ts:13-22` 的既有理由，目视确认玻璃开启后选中文字仍清晰可辨，必要时只调整选中色而不改渲染路径。
+- [ ] **G4.5 工作区回归**：Zen 模式、分屏（最多四格）、标签拖拽重排、独立窗口分离与回归、命令面板、右键菜单、Toast 在三档模式下逐一目视回归。
+
+**Phase 4 验收**：终端默认不透明度下渲染与 `off` 状态一致；开启玻璃后所有工作区形态无视觉错位、无可读性下降、无滚动掉帧。
+
+### Phase 5：验收、性能与发布
+
+- [ ] **G5.1 性能矩阵**：按 G0.4 的方法复测 `off` / `overlay` / `window`×三档强度的终端吞吐帧率、CPU、内存与窗口拖拽缩放表现，记录进规格；回退超出可接受范围的组合需调低默认强度或移除该档。
+- [ ] **G5.2 可访问性审计**：完成对比度审计与键盘导航、焦点环、禁用 / 错误 / 破坏性状态在磨砂背景上的可辨性检查；验证 `prefers-reduced-transparency` 在两个平台真实生效。
+- [ ] **G5.3 跨平台人工验收**：在 Windows 11、Windows 10、macOS 的**打包产物**（不只是 `tauri dev`）上验证三档模式、深浅主题、跟随系统主题、独立窗口、中文输入法与多显示器。
+- [ ] **G5.4 文档更新**：更新 `README.md` 的功能说明、`spec.md` 的界面约定与已规划功能列表，并把本节完成项压缩为简短记录。
+- [ ] **G5.5 全套验证**：`pnpm exec tsc --noEmit`、`pnpm build`、`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 全部通过。
+
+**Phase 5 验收**：默认关闭时行为与今天完全一致；开启后在两个平台的打包产物上表现稳定、可读、可回退。
+
+### Phase 6：可选增强，不进入发布门槛
+
+- [ ] **G6.1 macOS 26 原生 Liquid Glass 评审**：评估经 `NSGlassEffectView` 私有 API（如 `tauri-plugin-liquid-glass`）获得原生 Liquid Glass 的收益与风险，包括系统小版本失效兜底、崩溃隔离、许可证与分发影响。未通过评审不进入实现。
+- [ ] **G6.2 分区材质**：评估侧栏使用 `Sidebar`、浮层使用 `Popover` / `Menu` 等分区材质，使 macOS 观感更贴近原生；仅在不增加窗口层级复杂度时采纳。
+- [ ] **G6.3 Windows Acrylic 体验开关**：若 G0.4 显示 Acrylic 代价可接受，则作为显式标注性能代价的高级选项开放；否则保持不提供。
 
 ## VNC 远程桌面工作区
 
@@ -172,7 +179,7 @@ channel。Kubernetes 工作区已接入统一顶部标签、命令面板 context
 
 ### Phase 1：安全的连接模型与 VNC MVP
 
-- [ ] **V1.1 独立 VNC profile 与迁移**：新增 vnc_profiles migration、Rust / TypeScript DTO、独立 repository 和 CRUD；字段覆盖名称、SSH tunnel 或 direct TCP、target host / port、None 或 VNC password、shared、默认只读、收藏、标签和描述。保留现有数据库和 SSH / Kubernetes profile 兼容性。
+- [ ] **V1.1 独立 VNC profile 与迁移**：新增 vnc_profiles migration、Rust / TypeScript DTO、独立 repository 和 CRUD；字段覆盖名称、SSH tunnel 或 direct TCP、target host / port、None 或 VNC password、shared、默认只读、收藏、标签和描述。保留现有数据库和 SSH profile 兼容性。
 - [ ] **V1.2 SecretStore、删除与配置文件**：实现 VNC password 的创建、更新保持、显式清除和删除清理；普通 YAML 预览遮罩、加密导出 / 导入含 VNC profile，并升级 document version 而不破坏旧格式。安全存储不可用时拒绝保存密码，不回退到明文表。
 - [ ] **V1.3 VncManager 与传输**：新增进程内 session registry、direct TCP 与 SSH direct-tcpip transport、RFB handshake、短时 bridge、状态事件、连接 / 读写超时、取消与确定性资源释放。direct TCP 仅作为显式确认后的受限模式：禁用自动重连和默认剪贴板同步。
 - [ ] **V1.4 命令与服务层**：注册 list / create / update / delete / favorite / test VNC profile，以及 start / close / reconnect / list VNC session 命令；所有载荷 camelCase，经 invokeCommand 规范化 AppError。start 只返回不可持久化 renderer descriptor，前端不拼接 token 或读取 secret。

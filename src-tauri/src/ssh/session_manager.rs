@@ -3,7 +3,10 @@ use std::{
     env,
     io::{Read, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -47,6 +50,12 @@ const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(15);
 /// so the AI agent can read what is currently on screen. Older output is
 /// dropped from the front once this is exceeded.
 const MAX_SESSION_BUFFER_BYTES: usize = 200_000;
+
+/// How long output may sit buffered before it must be emitted. Kept well under
+/// one frame so coalescing is not perceptible.
+const OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(4);
+/// Emit early once a burst reaches this size rather than growing the buffer.
+const OUTPUT_FLUSH_BYTES: usize = 16 * 1024;
 
 #[derive(Clone)]
 pub struct SessionManager {
@@ -535,20 +544,31 @@ async fn connect_and_run(
     // The read task signals completion via the oneshot: `true` = clean shell
     // exit (do not reconnect), `false`/dropped = transport lost.
     let (drop_tx, mut drop_rx) = oneshot::channel::<bool>();
-    let read_app_handle = app_handle.clone();
-    let read_session_id = session_id.to_string();
-    let read_output = output.clone();
+    let sink = OutputSink::new(app_handle.clone(), session_id.to_string(), output.clone());
+    let read_sink = sink.clone();
     let read_task = tauri::async_runtime::spawn(async move {
         let mut utf8_carry: Vec<u8> = Vec::new();
         let mut clean_exit = false;
         loop {
-            match reader.wait().await {
+            // While a burst is still buffered, bound the wait so its tail is
+            // emitted on schedule instead of riding along with the next packet.
+            // `wait()` is a plain mpsc receive, so cancelling it drops nothing.
+            let message = if read_sink.has_pending() {
+                match tokio::time::timeout(OUTPUT_FLUSH_INTERVAL, reader.wait()).await {
+                    Ok(message) => message,
+                    Err(_) => {
+                        read_sink.flush();
+                        continue;
+                    }
+                }
+            } else {
+                reader.wait().await
+            };
+
+            match message {
                 Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
                     let text = decode_with_carry(&mut utf8_carry, &data);
-                    if !text.is_empty() {
-                        push_session_output(&read_output, &text);
-                        emit_output(&read_app_handle, &read_session_id, text);
-                    }
+                    read_sink.push(&text);
                 }
                 Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::ExitSignal { .. }) => {
                     clean_exit = true;
@@ -557,6 +577,9 @@ async fn connect_and_run(
                 _ => {}
             }
         }
+        // A shell prints its parting output (e.g. `logout`) immediately before
+        // EOF, so nothing may stay buffered behind the closed channel.
+        read_sink.flush();
         let _ = drop_tx.send(clean_exit);
     });
 
@@ -593,7 +616,10 @@ async fn connect_and_run(
         }
     };
 
+    // Aborting can land mid-burst, and the status event emitted after this must
+    // not overtake output that already reached us.
     read_task.abort();
+    sink.flush();
     if matches!(outcome, ConnOutcome::Dropped) {
         transport.invalidate().await;
     }
@@ -625,9 +651,8 @@ fn run_local_session(
         .try_clone_reader()
         .map_err(local_terminal_error)?;
     let mut writer = pair.master.take_writer().map_err(local_terminal_error)?;
-    let read_app_handle = app_handle.clone();
-    let read_session_id = session_id.clone();
-    let read_output = output.clone();
+    let sink = OutputSink::new(app_handle.clone(), session_id.clone(), output.clone());
+    let read_sink = sink.clone();
     let reader_thread = thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         let mut utf8_carry: Vec<u8> = Vec::new();
@@ -636,13 +661,25 @@ fn run_local_session(
                 Ok(0) => break,
                 Ok(size) => {
                     let text = decode_with_carry(&mut utf8_carry, &buffer[..size]);
-                    if !text.is_empty() {
-                        push_session_output(&read_output, &text);
-                        emit_output(&read_app_handle, &read_session_id, text);
-                    }
+                    read_sink.push(&text);
                 }
                 Err(_) => break,
             }
+        }
+        read_sink.flush();
+    });
+
+    // The PTY read blocks, so the reader cannot close its own coalescing window:
+    // the tail of a burst is usually the shell prompt, which would otherwise sit
+    // buffered until the user types again. This ticker closes it instead, and
+    // stops as soon as the session tears down.
+    let flushing = Arc::new(AtomicBool::new(true));
+    let flusher_running = flushing.clone();
+    let flusher_sink = sink.clone();
+    let flusher_thread = thread::spawn(move || {
+        while flusher_running.load(Ordering::Relaxed) {
+            thread::sleep(OUTPUT_FLUSH_INTERVAL);
+            flusher_sink.flush();
         }
     });
 
@@ -673,6 +710,11 @@ fn run_local_session(
 
     let _ = child.kill();
     let _ = reader_thread.join();
+    flushing.store(false, Ordering::Relaxed);
+    let _ = flusher_thread.join();
+    // Drain anything the reader buffered after the last tick, so the status
+    // event below cannot overtake it.
+    sink.flush();
     emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
     Ok(())
 }
@@ -907,6 +949,98 @@ pub async fn authenticate<H: client::Handler>(
     }
 }
 
+#[derive(Default)]
+struct PendingOutput {
+    text: String,
+    last_flush: Option<Instant>,
+}
+
+impl PendingOutput {
+    /// Buffer a chunk and report whether it should go out now: either the burst
+    /// is already large enough to stop growing the buffer, or the coalescing
+    /// window has elapsed (which includes the first chunk after an idle gap, so
+    /// interactive echo is never held back).
+    fn push(&mut self, text: &str) -> bool {
+        self.text.push_str(text);
+        self.text.len() >= OUTPUT_FLUSH_BYTES
+            || self
+                .last_flush
+                .is_none_or(|last| last.elapsed() >= OUTPUT_FLUSH_INTERVAL)
+    }
+
+    fn take(&mut self) -> Option<String> {
+        if self.text.is_empty() {
+            return None;
+        }
+        self.last_flush = Some(Instant::now());
+        Some(std::mem::take(&mut self.text))
+    }
+}
+
+/// Coalesces terminal output so a burst of small SSH packets turns into a few
+/// larger events instead of one IPC round trip per packet.
+///
+/// The first chunk after an idle gap is emitted straight away, so interactive
+/// echo is never delayed; chunks that arrive while the window is still open are
+/// accumulated until the window closes or the buffer passes the size threshold.
+/// The retained snapshot is written from the same flush, so `read_terminal` and
+/// the frontend always observe the identical byte stream.
+///
+/// Cloning shares the buffer: the reader and its owner can both force a flush.
+#[derive(Clone)]
+struct OutputSink {
+    app_handle: AppHandle,
+    session_id: String,
+    output: Arc<Mutex<String>>,
+    pending: Arc<Mutex<PendingOutput>>,
+}
+
+impl OutputSink {
+    fn new(app_handle: AppHandle, session_id: String, output: Arc<Mutex<String>>) -> Self {
+        Self {
+            app_handle,
+            session_id,
+            output,
+            pending: Arc::new(Mutex::new(PendingOutput::default())),
+        }
+    }
+
+    /// Buffer a decoded chunk, emitting immediately when the burst is already
+    /// large or the coalescing window has elapsed.
+    fn push(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let ready = match self.pending.lock() {
+            Ok(mut pending) => pending.push(text),
+            Err(_) => return,
+        };
+        if ready {
+            self.flush();
+        }
+    }
+
+    fn has_pending(&self) -> bool {
+        self.pending
+            .lock()
+            .is_ok_and(|pending| !pending.text.is_empty())
+    }
+
+    /// Emit everything buffered so far as a single event.
+    fn flush(&self) {
+        let Some(text) = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take())
+        else {
+            return;
+        };
+        push_session_output(&self.output, &text);
+        emit_output(&self.app_handle, &self.session_id, text);
+    }
+}
+
 /// Append a chunk of terminal output to the retained scrollback, dropping the
 /// oldest bytes (on a UTF-8 boundary) once the cap is exceeded.
 fn push_session_output(output: &Arc<Mutex<String>>, text: &str) {
@@ -923,6 +1057,8 @@ fn push_session_output(output: &Arc<Mutex<String>>, text: &str) {
 }
 
 fn emit_output(app_handle: &AppHandle, session_id: &str, data: String) {
+    #[cfg(debug_assertions)]
+    output_metrics::record(data.len());
     let _ = app_handle.emit(
         TERMINAL_OUTPUT_EVENT,
         TerminalOutputEvent {
@@ -930,6 +1066,46 @@ fn emit_output(app_handle: &AppHandle, session_id: &str, data: String) {
             data,
         },
     );
+}
+
+/// Debug-only event-rate counter for the terminal output path. It exists so the
+/// coalescing above can be measured against a recorded baseline; release builds
+/// do not compile it in.
+#[cfg(debug_assertions)]
+mod output_metrics {
+    use std::sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    static EVENTS: AtomicU64 = AtomicU64::new(0);
+    static BYTES: AtomicU64 = AtomicU64::new(0);
+    static WINDOW_START: OnceLock<Mutex<Instant>> = OnceLock::new();
+
+    pub fn record(len: usize) {
+        EVENTS.fetch_add(1, Ordering::Relaxed);
+        BYTES.fetch_add(len as u64, Ordering::Relaxed);
+
+        let Ok(mut window_start) = WINDOW_START
+            .get_or_init(|| Mutex::new(Instant::now()))
+            .lock()
+        else {
+            return;
+        };
+        if window_start.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        *window_start = Instant::now();
+
+        let events = EVENTS.swap(0, Ordering::Relaxed);
+        let bytes = BYTES.swap(0, Ordering::Relaxed);
+        if let Some(average) = bytes.checked_div(events) {
+            eprintln!(
+                "[terminal-output] {events} events/s, {bytes} bytes/s, {average} bytes/event"
+            );
+        }
+    }
 }
 
 fn emit_status(
@@ -1127,9 +1303,59 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        RemoteForwardTarget, input_requests_clean_exit, normalize_input,
-        resolve_remote_forward_target,
+        OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
+        input_requests_clean_exit, normalize_input, resolve_remote_forward_target,
     };
+
+    #[test]
+    fn output_coalescing_emits_the_first_chunk_after_an_idle_gap_immediately() {
+        let mut pending = PendingOutput::default();
+
+        assert!(pending.push("$ "), "interactive echo must not be delayed");
+        assert_eq!(pending.take().as_deref(), Some("$ "));
+    }
+
+    #[test]
+    fn output_coalescing_merges_chunks_that_arrive_inside_the_window() {
+        let mut pending = PendingOutput::default();
+        pending.push("first");
+        pending.take();
+
+        assert!(!pending.push("second"));
+        assert!(!pending.push("third"));
+        assert_eq!(pending.take().as_deref(), Some("secondthird"));
+    }
+
+    #[test]
+    fn output_coalescing_gives_up_on_merging_once_the_burst_is_large() {
+        let mut pending = PendingOutput::default();
+        pending.push("first");
+        pending.take();
+
+        let chunk = "x".repeat(OUTPUT_FLUSH_BYTES / 2);
+        assert!(!pending.push(&chunk));
+        assert!(pending.push(&chunk), "a large burst must not keep growing");
+    }
+
+    #[test]
+    fn output_coalescing_reopens_the_window_once_it_elapses() {
+        let mut pending = PendingOutput::default();
+        pending.push("first");
+        pending.take();
+
+        std::thread::sleep(OUTPUT_FLUSH_INTERVAL * 2);
+        assert!(pending.push("later"));
+    }
+
+    #[test]
+    fn output_coalescing_has_nothing_to_emit_when_idle() {
+        let mut pending = PendingOutput::default();
+
+        assert!(pending.take().is_none());
+        pending.push("data");
+        pending.take();
+        assert!(pending.take().is_none());
+    }
 
     #[test]
     fn terminal_input_preserves_carriage_return_for_raw_mode_programs() {

@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
 };
 
@@ -9,8 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 use crate::{
     error::{AppError, AppResult},
     models::workspace::{
-        DetachedKubernetesWorkspace, DetachedSftpWorkspace, DetachedTerminalWorkspace,
-        DetachedWorkspace, DetachedWorkspaceKind,
+        DetachedSftpWorkspace, DetachedTerminalWorkspace, DetachedWorkspace, DetachedWorkspaceKind,
     },
 };
 
@@ -59,7 +57,6 @@ impl DetachedWorkspaceManager {
             title,
             terminal: Some(terminal),
             sftp: None,
-            kubernetes: None,
         };
         self.open(app_handle, workspace)
     }
@@ -79,33 +76,6 @@ impl DetachedWorkspaceManager {
             title,
             terminal: None,
             sftp: Some(DetachedSftpWorkspace { profile_id }),
-            kubernetes: None,
-        };
-        self.open(app_handle, workspace)
-    }
-
-    pub fn open_kubernetes(
-        &self,
-        app_handle: &AppHandle,
-        parent_label: String,
-        title: String,
-        profile_id: String,
-        context_key: String,
-    ) -> AppResult<DetachedWorkspace> {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        context_key.hash(&mut hasher);
-        let label = format!("detached-kubernetes-{profile_id}-{:x}", hasher.finish());
-        let workspace = DetachedWorkspace {
-            label: label.clone(),
-            parent_label,
-            kind: DetachedWorkspaceKind::Kubernetes,
-            title,
-            terminal: None,
-            sftp: None,
-            kubernetes: Some(DetachedKubernetesWorkspace {
-                profile_id,
-                context_key,
-            }),
         };
         self.open(app_handle, workspace)
     }

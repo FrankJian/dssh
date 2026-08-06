@@ -88,12 +88,71 @@ export function normalizeEditorRenderWhitespace(value: string | null): EditorRen
     : "selection";
 }
 
+/**
+ * How much terminal output is retained per session for replaying into a
+ * terminal that mounts later. Mirrors `MAX_SESSION_BUFFER_BYTES` in
+ * `src-tauri/src/ssh/session_manager.rs`, which caps the snapshot the backend
+ * keeps for the same sessions; the two are one "retained output" budget and
+ * should move together.
+ */
+export const RETAINED_OUTPUT_CHARS = 200_000;
+
+export const terminalLineHeightKey = "dssh.terminal.lineHeight";
+export const terminalLetterSpacingKey = "dssh.terminal.letterSpacing";
+
+/**
+ * Terminal typography. xterm builds the cell box from these: line height is a
+ * multiple of the font size, letter spacing is whole pixels added to the cell
+ * width. Fractional letter spacing is avoided on purpose — the cell width ends
+ * up on a half pixel and the glyph atlas renders blurry.
+ */
+export const TERMINAL_LINE_HEIGHT_DEFAULT = 1.05;
+export const TERMINAL_LINE_HEIGHT_MIN = 1;
+export const TERMINAL_LINE_HEIGHT_MAX = 2;
+export const TERMINAL_LINE_HEIGHT_STEP = 0.05;
+
+export const TERMINAL_LETTER_SPACING_DEFAULT = 1;
+export const TERMINAL_LETTER_SPACING_MIN = 0;
+export const TERMINAL_LETTER_SPACING_MAX = 4;
+
+export function clampTerminalLineHeight(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_LINE_HEIGHT_DEFAULT;
+  const clamped = Math.min(TERMINAL_LINE_HEIGHT_MAX, Math.max(TERMINAL_LINE_HEIGHT_MIN, value));
+  // Stepping by 0.05 in binary floats drifts (1.3000000000000003); round it off
+  // so the displayed value and the stored one stay identical.
+  return Math.round(clamped * 100) / 100;
+}
+
+export function clampTerminalLetterSpacing(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_LETTER_SPACING_DEFAULT;
+  return Math.min(
+    TERMINAL_LETTER_SPACING_MAX,
+    Math.max(TERMINAL_LETTER_SPACING_MIN, Math.round(value)),
+  );
+}
+
 export const terminalCopyOnSelectKey = "dssh.terminal.copyOnSelect";
 export const terminalRightClickKey = "dssh.terminal.rightClick";
 export const terminalGpuKey = "dssh.terminal.gpuAcceleration";
 export const terminalBgImageKey = "dssh.terminal.bgImage";
 export const terminalBgOpacityKey = "dssh.terminal.bgOpacity";
 export const terminalWorkspaceInsetKey = "dssh.terminal.workspaceInset";
+/** Shared by the main window and detached ones, so a new window opens the way
+ *  the user last left the chrome rather than re-showing a bar they hid.
+ *
+ *  Versioned because the previous key was rewritten on every mount: a stored
+ *  `false` could not be told apart from "never touched it", so flipping the
+ *  default below would have been invisible to anyone who had already run the
+ *  app. The suffix bump retires those auto-written values once. */
+export const sessionBarHiddenKey = "dssh.sessionBar.hidden.v2";
+
+/** Hidden until asked for — the tab strip already names the active session, so
+ *  the bar is mostly redundant chrome between the tabs and the terminal. */
+export const SESSION_BAR_HIDDEN_DEFAULT = true;
+
+export function loadSessionBarHidden(): boolean {
+  return parseBoolean(localStorage.getItem(sessionBarHiddenKey), SESSION_BAR_HIDDEN_DEFAULT);
+}
 export const s3UploadConcurrencyKey = "dssh.s3.uploadConcurrency";
 export const s3DownloadConcurrencyKey = "dssh.s3.downloadConcurrency";
 

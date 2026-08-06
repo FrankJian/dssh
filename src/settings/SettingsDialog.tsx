@@ -32,6 +32,13 @@ import {
   S3_TRANSFER_CONCURRENCY_MIN,
   TERMINAL_BG_OPACITY_MAX,
   TERMINAL_BG_OPACITY_MIN,
+  TERMINAL_LETTER_SPACING_DEFAULT,
+  TERMINAL_LETTER_SPACING_MAX,
+  TERMINAL_LETTER_SPACING_MIN,
+  TERMINAL_LINE_HEIGHT_DEFAULT,
+  TERMINAL_LINE_HEIGHT_MAX,
+  TERMINAL_LINE_HEIGHT_MIN,
+  TERMINAL_LINE_HEIGHT_STEP,
   TERMINAL_WORKSPACE_INSET_MAX,
   TERMINAL_WORKSPACE_INSET_MIN,
   type EditorRenderWhitespace,
@@ -55,6 +62,13 @@ interface SettingsDialogProps {
   onResetFontSize: () => void;
   fontFamily: string;
   onFontFamilyChange: (value: string) => void;
+  lineHeight: number;
+  onLineHeightChange: (value: number) => void;
+  onLineHeightStep: (direction: 1 | -1) => void;
+  onResetLineHeight: () => void;
+  letterSpacing: number;
+  onLetterSpacingChange: (value: number) => void;
+  onResetLetterSpacing: () => void;
   copyOnSelect: boolean;
   onCopyOnSelectChange: (value: boolean) => void;
   rightClick: RightClickAction;
@@ -150,12 +164,19 @@ export function SettingsDialog({
   editorSettings,
   fontFamily,
   fontSize,
+  lineHeight,
+  letterSpacing,
   gpuAcceleration,
   initialCategory,
   onClose,
   onCopyOnSelectChange,
   onFontFamilyChange,
   onFontSizeChange,
+  onLetterSpacingChange,
+  onLineHeightChange,
+  onLineHeightStep,
+  onResetLetterSpacing,
+  onResetLineHeight,
   onGpuAccelerationChange,
   onS3DownloadConcurrencyChange,
   onS3UploadConcurrencyChange,
@@ -551,6 +572,81 @@ export function SettingsDialog({
                   searchPlaceholder="搜索字体名称"
                   value={fontFamily}
                 />
+
+                <div className="settings-section__head">
+                  <h3>字符间距</h3>
+                  <p>行高按字号倍数计算，字间距按整像素加到每个字符格上；调大可让紧凑的等宽字体更易读。</p>
+                </div>
+                <div className="settings-stepper">
+                  <span className="settings-stepper__label">行高</span>
+                  <button
+                    aria-label="减小行高"
+                    className="settings-stepper__button"
+                    disabled={lineHeight <= TERMINAL_LINE_HEIGHT_MIN}
+                    onClick={() => onLineHeightStep(-1)}
+                    type="button"
+                  >
+                    <Icon name="minimize" height="16" width="16" />
+                  </button>
+                  <span className="settings-stepper__value">{lineHeight.toFixed(2)}</span>
+                  <button
+                    aria-label="增大行高"
+                    className="settings-stepper__button"
+                    disabled={lineHeight >= TERMINAL_LINE_HEIGHT_MAX}
+                    onClick={() => onLineHeightStep(1)}
+                    type="button"
+                  >
+                    <Icon name="plus" height="16" width="16" />
+                  </button>
+                  <input
+                    aria-label="终端行高"
+                    className="settings-range"
+                    max={TERMINAL_LINE_HEIGHT_MAX}
+                    min={TERMINAL_LINE_HEIGHT_MIN}
+                    onChange={(event) => onLineHeightChange(Number(event.currentTarget.value))}
+                    step={TERMINAL_LINE_HEIGHT_STEP}
+                    type="range"
+                    value={lineHeight}
+                  />
+                  <Button
+                    className="settings-stepper__reset"
+                    disabled={lineHeight === TERMINAL_LINE_HEIGHT_DEFAULT}
+                    onClick={onResetLineHeight}
+                    variant="ghost"
+                  >
+                    重置
+                  </Button>
+                </div>
+                <div className="settings-stepper">
+                  <span className="settings-stepper__label">字间距</span>
+                  <button
+                    aria-label="减小字间距"
+                    className="settings-stepper__button"
+                    disabled={letterSpacing <= TERMINAL_LETTER_SPACING_MIN}
+                    onClick={() => onLetterSpacingChange(letterSpacing - 1)}
+                    type="button"
+                  >
+                    <Icon name="minimize" height="16" width="16" />
+                  </button>
+                  <span className="settings-stepper__value">{letterSpacing}px</span>
+                  <button
+                    aria-label="增大字间距"
+                    className="settings-stepper__button"
+                    disabled={letterSpacing >= TERMINAL_LETTER_SPACING_MAX}
+                    onClick={() => onLetterSpacingChange(letterSpacing + 1)}
+                    type="button"
+                  >
+                    <Icon name="plus" height="16" width="16" />
+                  </button>
+                  <Button
+                    className="settings-stepper__reset"
+                    disabled={letterSpacing === TERMINAL_LETTER_SPACING_DEFAULT}
+                    onClick={onResetLetterSpacing}
+                    variant="ghost"
+                  >
+                    重置
+                  </Button>
+                </div>
 
                 <div className="settings-section__head">
                   <h3>鼠标</h3>

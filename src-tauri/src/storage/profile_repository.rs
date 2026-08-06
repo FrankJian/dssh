@@ -10,10 +10,6 @@ use serde_json::Value;
 
 use crate::{
     error::{AppError, AppResult},
-    models::kubernetes::{
-        CreateKubernetesProfileRequest, KubernetesAuditEntry, KubernetesContextSelection,
-        KubernetesProfile, KubernetesSource, UpdateKubernetesProfileRequest,
-    },
     models::s3::{
         CreateS3ProfileRequest, S3Bookmark, S3Credentials, S3Profile, UpdateS3ProfileRequest,
     },
@@ -27,32 +23,12 @@ const S3_MIGRATION: &str = include_str!("../../migrations/002_s3_profiles.sql");
 const S3_BOOKMARKS_MIGRATION: &str = include_str!("../../migrations/003_s3_bookmarks.sql");
 const AI_CHAT_HISTORY_MIGRATION: &str = include_str!("../../migrations/004_ai_chat_history.sql");
 const SSH_PROXY_MIGRATION: &str = include_str!("../../migrations/005_ssh_proxies.sql");
-const KUBERNETES_PROFILES_MIGRATION: &str =
-    include_str!("../../migrations/006_kubernetes_profiles.sql");
-const KUBERNETES_IMPORTS_MIGRATION: &str =
-    include_str!("../../migrations/007_kubernetes_imports.sql");
-const KUBERNETES_AUDIT_MIGRATION: &str = include_str!("../../migrations/008_kubernetes_audit.sql");
+const DROP_KUBERNETES_MIGRATION: &str = include_str!("../../migrations/006_drop_kubernetes.sql");
 const MAX_AI_CHAT_HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ProfileRepository {
     db_path: PathBuf,
-}
-
-/// Structured, redacted input for the Kubernetes audit table. Keeping this
-/// type in the repository layer prevents arbitrary YAML or command strings
-/// from being recorded by accident.
-pub struct KubernetesAuditRecord {
-    pub profile_id: String,
-    pub source: String,
-    pub context: String,
-    pub identity: Option<String>,
-    pub resource: Option<String>,
-    pub namespace: Option<String>,
-    pub names: Vec<String>,
-    pub action: String,
-    pub result: String,
-    pub error_code: Option<String>,
 }
 
 impl ProfileRepository {
@@ -497,111 +473,6 @@ impl ProfileRepository {
         })
     }
 
-    pub fn list_kubernetes_profiles(&self) -> AppResult<Vec<KubernetesProfile>> {
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "SELECT id, name, source_json, selected_contexts_json, favorite, description, tags,
-                    created_at, updated_at
-             FROM kubernetes_profiles
-             ORDER BY favorite DESC, name COLLATE NOCASE ASC",
-        )?;
-        Ok(statement
-            .query_map([], map_kubernetes_profile_row)?
-            .collect::<Result<Vec<_>, _>>()?)
-    }
-
-    pub fn get_kubernetes_profile(&self, id: &str) -> AppResult<Option<KubernetesProfile>> {
-        let connection = self.connection()?;
-        Ok(connection
-            .query_row(
-                "SELECT id, name, source_json, selected_contexts_json, favorite, description, tags,
-                        created_at, updated_at
-                 FROM kubernetes_profiles WHERE id = ?1",
-                params![id],
-                map_kubernetes_profile_row,
-            )
-            .optional()?)
-    }
-
-    pub fn create_kubernetes_profile(
-        &self,
-        request: CreateKubernetesProfileRequest,
-    ) -> AppResult<KubernetesProfile> {
-        let now = timestamp();
-        let profile = KubernetesProfile {
-            id: create_id_with_prefix("kubernetes-profile"),
-            name: request.name.trim().to_string(),
-            source: normalize_kubernetes_source(request.source)?,
-            selected_contexts: normalize_kubernetes_contexts(request.selected_contexts)?,
-            favorite: request.favorite,
-            description: normalize_optional(request.description),
-            tags: normalize_tags(request.tags),
-            created_at: now.clone(),
-            updated_at: now,
-        };
-        validate_kubernetes_profile(&profile)?;
-        let connection = self.connection()?;
-        insert_kubernetes_profile(&connection, &profile)?;
-        Ok(profile)
-    }
-
-    pub fn update_kubernetes_profile(
-        &self,
-        request: UpdateKubernetesProfileRequest,
-    ) -> AppResult<KubernetesProfile> {
-        let existing = self.get_kubernetes_profile(&request.id)?.ok_or_else(|| {
-            AppError::new(
-                "kubernetes_profile_not_found",
-                format!("Kubernetes profile '{}' does not exist.", request.id),
-            )
-        })?;
-        let profile = KubernetesProfile {
-            id: existing.id,
-            name: request.name.trim().to_string(),
-            source: normalize_kubernetes_source(request.source)?,
-            selected_contexts: normalize_kubernetes_contexts(request.selected_contexts)?,
-            favorite: request.favorite,
-            description: normalize_optional(request.description),
-            tags: normalize_tags(request.tags),
-            created_at: existing.created_at,
-            updated_at: timestamp(),
-        };
-        validate_kubernetes_profile(&profile)?;
-        let connection = self.connection()?;
-        update_kubernetes_profile(&connection, &profile)?;
-        Ok(profile)
-    }
-
-    pub fn delete_kubernetes_profile(&self, id: &str) -> AppResult<()> {
-        let connection = self.connection()?;
-        connection.execute("DELETE FROM kubernetes_profiles WHERE id = ?1", params![id])?;
-        Ok(())
-    }
-
-    pub fn set_kubernetes_profile_favorite(
-        &self,
-        id: &str,
-        favorite: bool,
-    ) -> AppResult<KubernetesProfile> {
-        let connection = self.connection()?;
-        if connection.execute(
-            "UPDATE kubernetes_profiles SET favorite = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, bool_to_i64(favorite), timestamp()],
-        )? == 0
-        {
-            return Err(AppError::new(
-                "kubernetes_profile_not_found",
-                format!("Kubernetes profile '{id}' does not exist."),
-            ));
-        }
-        self.get_kubernetes_profile(id)?.ok_or_else(|| {
-            AppError::new(
-                "kubernetes_profile_not_found",
-                format!("Kubernetes profile '{id}' does not exist."),
-            )
-        })
-    }
-
     fn migrate(&self) -> AppResult<()> {
         let connection = self.connection()?;
         connection.execute_batch(INIT_MIGRATION)?;
@@ -609,9 +480,7 @@ impl ProfileRepository {
         connection.execute_batch(S3_BOOKMARKS_MIGRATION)?;
         connection.execute_batch(AI_CHAT_HISTORY_MIGRATION)?;
         connection.execute_batch(SSH_PROXY_MIGRATION)?;
-        connection.execute_batch(KUBERNETES_PROFILES_MIGRATION)?;
-        connection.execute_batch(KUBERNETES_IMPORTS_MIGRATION)?;
-        connection.execute_batch(KUBERNETES_AUDIT_MIGRATION)?;
+        connection.execute_batch(DROP_KUBERNETES_MIGRATION)?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS app_secrets (
                 key TEXT PRIMARY KEY,
@@ -621,132 +490,6 @@ impl ProfileRepository {
         )?;
         ensure_columns(&connection)?;
         Ok(())
-    }
-
-    pub fn kubernetes_import_by_fingerprint(
-        &self,
-        content_fingerprint: &str,
-    ) -> AppResult<Option<String>> {
-        let connection = self.connection()?;
-        Ok(connection
-            .query_row(
-                "SELECT secret_ref FROM kubernetes_imports WHERE content_fingerprint = ?1",
-                params![content_fingerprint],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    pub fn register_kubernetes_import(
-        &self,
-        secret_ref: &str,
-        content_fingerprint: &str,
-    ) -> AppResult<()> {
-        let connection = self.connection()?;
-        connection.execute(
-            "INSERT INTO kubernetes_imports (secret_ref, content_fingerprint, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?3)",
-            params![secret_ref, content_fingerprint, timestamp()],
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_kubernetes_import(&self, secret_ref: &str) -> AppResult<()> {
-        let connection = self.connection()?;
-        connection.execute(
-            "DELETE FROM kubernetes_imports WHERE secret_ref = ?1",
-            params![secret_ref],
-        )?;
-        Ok(())
-    }
-
-    /// Store a redacted Kubernetes action record. Callers pass only
-    /// structured resource identity; YAML and arbitrary commands are not
-    /// accepted by this API.
-    pub fn record_kubernetes_audit(&self, record: &KubernetesAuditRecord) -> AppResult<()> {
-        let names = record
-            .names
-            .iter()
-            .take(100)
-            .map(|name| truncate_audit_value(name, 256))
-            .collect::<Vec<_>>();
-        let names_json = serde_json::to_string(&names)
-            .map_err(|error| AppError::new("kubernetes_audit_error", error.to_string()))?;
-        let connection = self.connection()?;
-        connection.execute(
-            "INSERT INTO kubernetes_audit (
-                profile_id, source, context, identity, resource, namespace,
-                names_json, action, result, error_code, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                truncate_audit_value(&record.profile_id, 256),
-                truncate_audit_value(&record.source, 64),
-                truncate_audit_value(&record.context, 256),
-                record
-                    .identity
-                    .as_deref()
-                    .map(|value| truncate_audit_value(value, 256)),
-                record
-                    .resource
-                    .as_deref()
-                    .map(|value| truncate_audit_value(value, 256)),
-                record
-                    .namespace
-                    .as_deref()
-                    .map(|value| truncate_audit_value(value, 253)),
-                names_json,
-                truncate_audit_value(&record.action, 64),
-                truncate_audit_value(&record.result, 32),
-                record
-                    .error_code
-                    .as_deref()
-                    .map(|value| truncate_audit_value(value, 128)),
-                timestamp(),
-            ],
-        )?;
-        // Keep the database bounded on long-lived installations.
-        connection.execute(
-            "DELETE FROM kubernetes_audit WHERE id NOT IN (
-                SELECT id FROM kubernetes_audit ORDER BY id DESC LIMIT 2000
-            )",
-            [],
-        )?;
-        Ok(())
-    }
-
-    pub fn list_kubernetes_audit(
-        &self,
-        profile_id: Option<&str>,
-        limit: u32,
-    ) -> AppResult<Vec<KubernetesAuditEntry>> {
-        let connection = self.connection()?;
-        let limit = i64::from(limit.clamp(1, 2000));
-        let mut statement = connection.prepare(
-            "SELECT id, profile_id, source, context, identity, resource, namespace,
-                    names_json, action, result, error_code, created_at
-             FROM kubernetes_audit
-             WHERE (?1 IS NULL OR profile_id = ?1)
-             ORDER BY id DESC LIMIT ?2",
-        )?;
-        let rows = statement.query_map(params![profile_id, limit], |row| {
-            let names_json: String = row.get(7)?;
-            let names = serde_json::from_str::<Vec<String>>(&names_json).unwrap_or_default();
-            Ok(KubernetesAuditEntry {
-                id: row.get(0)?,
-                profile_id: row.get(1)?,
-                source: row.get(2)?,
-                context: row.get(3)?,
-                identity: row.get(4)?,
-                resource: row.get(5)?,
-                namespace: row.get(6)?,
-                names,
-                action: row.get(8)?,
-                result: row.get(9)?,
-                error_code: row.get(10)?,
-                created_at: row.get(11)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     /// Read a stored secret value by key, if present.
@@ -977,74 +720,6 @@ fn map_s3_profile_row(row: &Row<'_>) -> rusqlite::Result<S3Profile> {
     })
 }
 
-fn map_kubernetes_profile_row(row: &Row<'_>) -> rusqlite::Result<KubernetesProfile> {
-    let source_json: String = row.get(2)?;
-    let contexts_json: String = row.get(3)?;
-    let source = serde_json::from_str(&source_json).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error))
-    })?;
-    let selected_contexts = serde_json::from_str(&contexts_json).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error))
-    })?;
-    Ok(KubernetesProfile {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        source,
-        selected_contexts,
-        favorite: row.get::<_, i64>(4)? != 0,
-        description: row.get(5)?,
-        tags: deserialize_tags(row.get::<_, Option<String>>(6)?.as_deref()),
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-    })
-}
-
-fn insert_kubernetes_profile(
-    connection: &Connection,
-    profile: &KubernetesProfile,
-) -> AppResult<()> {
-    connection.execute(
-        "INSERT INTO kubernetes_profiles (
-            id, name, source_json, selected_contexts_json, favorite, description, tags, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            profile.id,
-            profile.name,
-            serialize_kubernetes_source(&profile.source),
-            serialize_kubernetes_contexts(&profile.selected_contexts),
-            bool_to_i64(profile.favorite),
-            profile.description,
-            serialize_tags(&profile.tags),
-            profile.created_at,
-            profile.updated_at,
-        ],
-    )?;
-    Ok(())
-}
-
-fn update_kubernetes_profile(
-    connection: &Connection,
-    profile: &KubernetesProfile,
-) -> AppResult<()> {
-    connection.execute(
-        "UPDATE kubernetes_profiles
-         SET name = ?2, source_json = ?3, selected_contexts_json = ?4, favorite = ?5,
-             description = ?6, tags = ?7, updated_at = ?8
-         WHERE id = ?1",
-        params![
-            profile.id,
-            profile.name,
-            serialize_kubernetes_source(&profile.source),
-            serialize_kubernetes_contexts(&profile.selected_contexts),
-            bool_to_i64(profile.favorite),
-            profile.description,
-            serialize_tags(&profile.tags),
-            profile.updated_at,
-        ],
-    )?;
-    Ok(())
-}
-
 fn map_s3_bookmark_row(row: &Row<'_>) -> rusqlite::Result<S3Bookmark> {
     Ok(S3Bookmark {
         id: row.get(0)?,
@@ -1206,158 +881,6 @@ fn normalize_tags(tags: Vec<String>) -> Vec<String> {
         .filter(|tag| !tag.is_empty())
         .filter(|tag| seen.insert(tag.clone()))
         .collect()
-}
-
-fn normalize_kubernetes_source(source: KubernetesSource) -> AppResult<KubernetesSource> {
-    match source {
-        KubernetesSource::Local { kubeconfig_paths } => Ok(KubernetesSource::Local {
-            kubeconfig_paths: normalize_kubernetes_paths(kubeconfig_paths)?,
-        }),
-        KubernetesSource::LocalImported {
-            secret_ref,
-            display_names,
-        } => {
-            let secret_ref = secret_ref.trim().to_string();
-            if !is_valid_kubernetes_import_ref(&secret_ref) {
-                return Err(AppError::new(
-                    "validation_error",
-                    "Kubernetes 导入配置引用无效，请重新选择文件。",
-                ));
-            }
-            let mut seen = HashSet::new();
-            let display_names = display_names
-                .into_iter()
-                .map(|name| name.trim().to_string())
-                .filter(|name| !name.is_empty() && name.len() <= 255)
-                .filter(|name| !name.chars().any(char::is_control))
-                .filter(|name| seen.insert(name.clone()))
-                .collect::<Vec<_>>();
-            if display_names.is_empty() {
-                return Err(AppError::new(
-                    "validation_error",
-                    "Kubernetes 导入配置缺少文件显示名称。",
-                ));
-            }
-            Ok(KubernetesSource::LocalImported {
-                secret_ref,
-                display_names,
-            })
-        }
-        KubernetesSource::RemoteSsh {
-            ssh_profile_id,
-            kubeconfig_path,
-            kubectl_path,
-        } => {
-            let ssh_profile_id = ssh_profile_id.trim().to_string();
-            if ssh_profile_id.is_empty() {
-                return Err(AppError::new(
-                    "validation_error",
-                    "请选择用于 Kubernetes 远端来源的 SSH 连接。",
-                ));
-            }
-            Ok(KubernetesSource::RemoteSsh {
-                ssh_profile_id,
-                kubeconfig_path: normalize_kubernetes_path(kubeconfig_path)?,
-                kubectl_path: normalize_kubernetes_path(kubectl_path)?,
-            })
-        }
-    }
-}
-
-fn is_valid_kubernetes_import_ref(value: &str) -> bool {
-    value.len() == "kubeconfig-".len() + 32
-        && value.starts_with("kubeconfig-")
-        && value["kubeconfig-".len()..]
-            .chars()
-            .all(|character| character.is_ascii_hexdigit())
-}
-
-fn normalize_kubernetes_paths(paths: Vec<String>) -> AppResult<Vec<String>> {
-    paths
-        .into_iter()
-        .map(Some)
-        .map(normalize_kubernetes_path)
-        .collect::<AppResult<Vec<_>>>()
-        .map(|paths| paths.into_iter().flatten().collect())
-}
-
-fn normalize_kubernetes_path(value: Option<String>) -> AppResult<Option<String>> {
-    let Some(value) = normalize_optional(value) else {
-        return Ok(None);
-    };
-    if value.len() > 4096 || value.chars().any(char::is_control) {
-        return Err(AppError::new(
-            "validation_error",
-            "Kubeconfig 或 kubectl 路径格式无效。",
-        ));
-    }
-    Ok(Some(value))
-}
-
-fn normalize_kubernetes_contexts(
-    contexts: Vec<KubernetesContextSelection>,
-) -> AppResult<Vec<KubernetesContextSelection>> {
-    let mut seen = HashSet::new();
-    let mut normalized = Vec::new();
-    for context in contexts {
-        let source_id = context.source_id.trim().to_string();
-        let name = context.name.trim().to_string();
-        if source_id.is_empty() || name.is_empty() || source_id.len() > 4096 || name.len() > 512 {
-            return Err(AppError::new(
-                "validation_error",
-                "Kubernetes context 信息无效。",
-            ));
-        }
-        if source_id.chars().any(char::is_control) || name.chars().any(char::is_control) {
-            return Err(AppError::new(
-                "validation_error",
-                "Kubernetes context 信息无效。",
-            ));
-        }
-        let namespace = normalize_optional(context.namespace);
-        if namespace
-            .as_ref()
-            .is_some_and(|value| value.len() > 253 || value.chars().any(char::is_control))
-        {
-            return Err(AppError::new(
-                "validation_error",
-                "Kubernetes namespace 无效。",
-            ));
-        }
-        if seen.insert((source_id.clone(), name.clone())) {
-            normalized.push(KubernetesContextSelection {
-                source_id,
-                name,
-                namespace,
-                user: normalize_optional(context.user),
-            });
-        }
-    }
-    Ok(normalized)
-}
-
-fn validate_kubernetes_profile(profile: &KubernetesProfile) -> AppResult<()> {
-    if profile.name.trim().is_empty() {
-        return Err(AppError::new(
-            "validation_error",
-            "Kubernetes 连接名称不能为空。",
-        ));
-    }
-    if profile.name.len() > 200 {
-        return Err(AppError::new(
-            "validation_error",
-            "Kubernetes 连接名称过长。",
-        ));
-    }
-    Ok(())
-}
-
-fn serialize_kubernetes_source(source: &KubernetesSource) -> String {
-    serde_json::to_string(source).expect("Kubernetes source is serializable")
-}
-
-fn serialize_kubernetes_contexts(contexts: &[KubernetesContextSelection]) -> String {
-    serde_json::to_string(contexts).expect("Kubernetes contexts are serializable")
 }
 
 fn normalize_proxy(proxy: Option<SshProxy>) -> AppResult<Option<SshProxy>> {
@@ -1535,17 +1058,6 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-fn truncate_audit_value(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
-}
-
 fn timestamp() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1625,34 +1137,6 @@ impl From<&AuthMethod> for AuthFields {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn kubernetes_import_metadata_reuses_and_removes_fingerprint() {
-        let directory = std::env::temp_dir().join(format!("dssh-kube-import-test-{}", timestamp()));
-        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
-        repository
-            .register_kubernetes_import(
-                "kubeconfig-0123456789abcdef0123456789abcdef",
-                "fingerprint",
-            )
-            .unwrap();
-        assert_eq!(
-            repository
-                .kubernetes_import_by_fingerprint("fingerprint")
-                .unwrap()
-                .as_deref(),
-            Some("kubeconfig-0123456789abcdef0123456789abcdef")
-        );
-        repository
-            .delete_kubernetes_import("kubeconfig-0123456789abcdef0123456789abcdef")
-            .unwrap();
-        assert!(
-            repository
-                .kubernetes_import_by_fingerprint("fingerprint")
-                .unwrap()
-                .is_none()
-        );
-    }
 
     #[test]
     fn s3_profile_crud_keeps_secrets_out_of_profile_rows() {

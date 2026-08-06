@@ -5,9 +5,7 @@ pub mod connection_pool;
 pub mod host_keys;
 pub mod session_manager;
 
-pub use command::{
-    CommandOutput, run_ssh_command, run_ssh_command_with_input, run_ssh_command_with_limit,
-};
+pub use command::{CommandOutput, run_ssh_command};
 pub use connection_pool::{
     ChannelLease, ChannelOwner, ConnectionKey, ConnectionLease, SSH_TRANSPORT_STATUS_EVENT,
     SshConnectionDiagnostics, SshConnectionPool, SshTransportStatusEvent,

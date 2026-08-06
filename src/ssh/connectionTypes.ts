@@ -7,7 +7,7 @@ import type { IconName } from "../ui/Icon";
  * future Telnet/SFTP profile types can join this catalogue without changing
  * the new-connection flow or grouping UI.
  */
-export type ConnectionType = "ssh" | "kubernetes" | "telnet" | "sftp";
+export type ConnectionType = "ssh" | "telnet" | "sftp";
 
 export interface ConnectionTypeOption {
   id: ConnectionType;
@@ -17,18 +17,7 @@ export interface ConnectionTypeOption {
   available: boolean;
 }
 
-/** Existing Kubernetes profiles remain usable; new profile creation is paused
- * until the remote-context workflow is complete. */
-export const KUBERNETES_CONNECTION_CREATION_AVAILABLE = false;
-
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
-  {
-    available: KUBERNETES_CONNECTION_CREATION_AVAILABLE,
-    description: "集群资源浏览与 kubectl 工作区（完善中）",
-    icon: "database",
-    id: "kubernetes",
-    label: "Kubernetes",
-  },
   {
     available: true,
     description: "远程终端、文件管理与端口转发",

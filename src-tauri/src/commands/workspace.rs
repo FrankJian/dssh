@@ -4,8 +4,8 @@ use crate::{
     app::AppState,
     error::AppResult,
     models::workspace::{
-        DetachedWorkspace, OpenDetachedKubernetesRequest, OpenDetachedSftpRequest,
-        OpenDetachedTerminalRequest, UpdateDetachedWorkspaceRequest,
+        DetachedWorkspace, OpenDetachedSftpRequest, OpenDetachedTerminalRequest,
+        UpdateDetachedWorkspaceRequest,
     },
 };
 
@@ -47,21 +47,6 @@ pub async fn open_detached_sftp_workspace(
         request.parent_label,
         request.title,
         request.profile_id,
-    )
-}
-
-#[tauri::command]
-pub async fn open_detached_kubernetes_workspace(
-    app_handle: AppHandle,
-    state: State<'_, AppState>,
-    request: OpenDetachedKubernetesRequest,
-) -> AppResult<DetachedWorkspace> {
-    state.detached_workspaces.open_kubernetes(
-        &app_handle,
-        request.parent_label,
-        request.title,
-        request.profile_id,
-        request.context_key,
     )
 }
 

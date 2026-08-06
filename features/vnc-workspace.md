@@ -8,7 +8,7 @@
 
 **可以支持**，但不能把 VNC 当作 SSH profile 增加几个字段。项目已经有四项关键基础：
 
-- 连接管理器已有独立连接类型目录，并已以 Kubernetes 证明可用独立 profile / 工作区接入；
+- 连接管理器已有独立连接类型目录，可接入独立的 profile / 工作区；
 - 顶部工作区标签条、独立窗口和连接卡片可容纳非终端类工作区；
 - Rust 后端可持久化配置、管理进程内会话，并统一向前端暴露 Tauri 命令；
 - SSH 连接池已支持 direct-tcpip channel，VNC 可经现有 SSH profile 建立安全隧道，而无需启动外部 ssh 进程。
@@ -69,7 +69,7 @@ VncManager / LocalRfbBridge (Rust；仅回环、单次连接、短生命周期)
 
 ### 3.1 VNC profile
 
-VNC 使用独立表、独立 DTO 和独立 hook；连接管理器在渲染层聚合 SSH、Kubernetes 与 VNC 卡片。建议模型：
+VNC 使用独立表、独立 DTO 和独立 hook；连接管理器在渲染层聚合 SSH 与 VNC 卡片。建议模型：
 
 ~~~ts
 type VncTransport =

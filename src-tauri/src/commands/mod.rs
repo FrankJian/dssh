@@ -3,7 +3,6 @@ pub mod app;
 pub mod config;
 pub mod forwarding;
 pub mod hosttools;
-pub mod kubernetes;
 pub mod profiles;
 pub mod s3;
 pub mod sessions;

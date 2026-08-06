@@ -1,10 +1,5 @@
 import { useMemo, useState } from "react";
-import type {
-  KubernetesContextSelection,
-  KubernetesProfile,
-  SshProfile,
-  TerminalSession,
-} from "../models";
+import type { SshProfile, TerminalSession } from "../models";
 import type { SessionStatus } from "../models/terminal";
 import { Icon } from "../ui/Icon";
 import { SectionHeader } from "../ui/SectionHeader";
@@ -77,10 +72,6 @@ interface SessionTreeProps {
   activeSessionId: string | null;
   isSftpActive: boolean;
   profiles: SshProfile[];
-  kubernetesConnection: {
-    profile: KubernetesProfile;
-    context: KubernetesContextSelection;
-  } | null;
   onFocusTerminal: (sessionId: string) => void;
   onNewTerminal: (node: SessionNode) => void;
   onOpenSftp: (profile: SshProfile) => void;
@@ -93,7 +84,6 @@ interface SessionTreeProps {
   onDisconnectNode: (node: SessionNode) => void;
   onConnectProfile: (profile: SshProfile) => void;
   onOpenConnections: () => void;
-  onOpenKubernetes: () => void;
 }
 
 /**
@@ -110,7 +100,6 @@ export function SessionTree({
   activeSessionId,
   isSftpActive,
   profiles,
-  kubernetesConnection,
   onFocusTerminal,
   onNewTerminal,
   onOpenSftp,
@@ -123,7 +112,6 @@ export function SessionTree({
   onDisconnectNode,
   onConnectProfile,
   onOpenConnections,
-  onOpenKubernetes,
 }: SessionTreeProps) {
   const nodes = buildNodes(sessions, profiles);
   const favorites = profiles.filter((profile) => profile.favorite);
@@ -175,43 +163,9 @@ export function SessionTree({
         <SectionHeader title="会话" />
       </div>
 
-      {nodes.length > 0 || kubernetesConnection ? (
+      {nodes.length > 0 ? (
         <div className="session-tree" role="tree" aria-label="活动会话">
           <div className="session-tree__eyebrow">活动会话</div>
-          {kubernetesConnection ? (() => {
-            const nodeKey = `kubernetes:${kubernetesConnection.profile.id}`;
-            const collapsed = collapsedNodes.has(nodeKey);
-            return (
-              <div className="session-node" key={nodeKey}>
-                <div className="session-node__row">
-                  <button
-                    className="session-node__disclosure"
-                    aria-expanded={!collapsed}
-                    onClick={() => toggleNode(nodeKey)}
-                    type="button"
-                  >
-                    <span className="session-node__chevron" data-collapsed={collapsed}>
-                      <Icon name="chevron-right" height="14" width="14" />
-                    </span>
-                    <span className="session-node__status" data-status="connected" />
-                    <span className="session-node__label">
-                      <span className="session-node__title">{kubernetesConnection.profile.name}</span>
-                      <span className="session-node__sub">Kubernetes · {kubernetesConnection.context.name}</span>
-                    </span>
-                    <span className="session-node__count">1</span>
-                  </button>
-                </div>
-                {collapsed ? null : (
-                  <div className="session-node__children">
-                    <button className="session-child is-active" onClick={onOpenKubernetes} type="button">
-                      <Icon name="database" height="15" width="15" />
-                      <span>{kubernetesConnection.context.name}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })() : null}
           {nodes.map((node) => {
             const collapsed = collapsedNodes.has(node.key);
             const terminalWindows = node.sessions.filter((session) => {

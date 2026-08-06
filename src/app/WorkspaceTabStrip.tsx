@@ -2,7 +2,7 @@ import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
 
-export type WorkspaceTabKind = "ssh" | "local" | "sftp" | "kubernetes";
+export type WorkspaceTabKind = "ssh" | "local" | "sftp";
 
 export interface WorkspaceTabItem {
   id: string;
@@ -25,7 +25,6 @@ const KIND_ICON: Record<WorkspaceTabKind, IconName> = {
   ssh: "ssh",
   local: "terminalTool",
   sftp: "folder",
-  kubernetes: "database",
 };
 
 function TabTitle({ value }: { value: string }) {

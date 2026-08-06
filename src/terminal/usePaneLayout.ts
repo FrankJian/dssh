@@ -56,13 +56,12 @@ function removeLeaf(node: PaneNode, sessionId: string): PaneNode | null {
 function setSplitRatios(node: PaneNode, splitId: string, ratios: [number, number]): PaneNode {
   if (node.type === "leaf") return node;
   if (node.id === splitId) return { ...node, ratios };
-  return {
-    ...node,
-    children: [
-      setSplitRatios(node.children[0], splitId, ratios),
-      setSplitRatios(node.children[1], splitId, ratios),
-    ],
-  };
+  const first = setSplitRatios(node.children[0], splitId, ratios);
+  const second = setSplitRatios(node.children[1], splitId, ratios);
+  // Keep the node identity when the split is not in this branch, so dragging a
+  // divider does not force every other pane to re-render.
+  if (first === node.children[0] && second === node.children[1]) return node;
+  return { ...node, children: [first, second] };
 }
 
 /**
@@ -170,10 +169,17 @@ export function usePaneLayout() {
   }, []);
 
   const setRatios = useCallback((splitId: string, ratios: [number, number]) => {
-    setLayouts((current) => current.map((layout) => ({
-      ...layout,
-      root: setSplitRatios(layout.root, splitId, ratios) as PaneSplit,
-    })));
+    setLayouts((current) => {
+      let changed = false;
+      const next = current.map((layout) => {
+        const root = setSplitRatios(layout.root, splitId, ratios) as PaneSplit;
+        if (root === layout.root) return layout;
+        changed = true;
+        return { ...layout, root };
+      });
+      // Only the dragged window's tree is rebuilt; the rest keep their identity.
+      return changed ? next : current;
+    });
   }, []);
 
   /** Keep layouts coherent when a session is closed outside the pane UI. */

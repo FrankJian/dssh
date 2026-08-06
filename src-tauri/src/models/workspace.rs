@@ -13,7 +13,6 @@ pub struct DetachedWorkspace {
     pub title: String,
     pub terminal: Option<DetachedTerminalWorkspace>,
     pub sftp: Option<DetachedSftpWorkspace>,
-    pub kubernetes: Option<DetachedKubernetesWorkspace>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -21,7 +20,6 @@ pub struct DetachedWorkspace {
 pub enum DetachedWorkspaceKind {
     Terminal,
     Sftp,
-    Kubernetes,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -43,13 +41,6 @@ pub struct DetachedSftpWorkspace {
     pub profile_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DetachedKubernetesWorkspace {
-    pub profile_id: String,
-    pub context_key: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenDetachedTerminalRequest {
@@ -64,15 +55,6 @@ pub struct OpenDetachedSftpRequest {
     pub parent_label: String,
     pub title: String,
     pub profile_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenDetachedKubernetesRequest {
-    pub parent_label: String,
-    pub title: String,
-    pub profile_id: String,
-    pub context_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

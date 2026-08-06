@@ -3,7 +3,6 @@ import type {
   DetachedWorkspace,
   OpenDetachedSftpRequest,
   OpenDetachedTerminalRequest,
-  OpenDetachedKubernetesRequest,
 } from "../models";
 import { invokeCommand } from "./tauri";
 
@@ -21,10 +20,6 @@ export function openDetachedTerminalWorkspace(request: OpenDetachedTerminalReque
 
 export function openDetachedSftpWorkspace(request: OpenDetachedSftpRequest) {
   return invokeCommand<DetachedWorkspace>("open_detached_sftp_workspace", { request });
-}
-
-export function openDetachedKubernetesWorkspace(request: OpenDetachedKubernetesRequest) {
-  return invokeCommand<DetachedWorkspace>("open_detached_kubernetes_workspace", { request });
 }
 
 export function updateDetachedTerminalWorkspace(

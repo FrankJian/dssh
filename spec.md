@@ -178,7 +178,9 @@ Tauri 载荷统一 **camelCase**；改命令 / 事件时同步 Rust serde DTO �
 
 ## 7. 已规划功能规格
 
-- [Kubernetes 集群工作区](features/kubernetes-workspace.md)：本地 kubeconfig 与远端 SSH / kubectl 双来源、
-  多 context、资源 GUI、CLI 及安全修改流程。该能力尚未实现，不应被视为当前发布功能。
+- [终端吞吐、生命周期与显示保真](features/terminal-performance.md)：终端数据通路、xterm 实例生命周期与
+  显示保真的优化规格，含性能基线与指标门槛。尚未实施。
+- [液态玻璃（窗口材质与半透明外观）](features/liquid-glass.md)：可在设置中开关的半透明外观，分为纯 CSS 的
+  浮层磨砂与依赖系统材质的整窗透明两档。默认关闭，尚未实现。
 - [VNC 远程桌面工作区](features/vnc-workspace.md)：以 noVNC 渲染、Rust 侧 RFB 会话 bridge 为基础的独立 VNC
   viewer，支持经现有 SSH connection pool 的安全隧道。该能力尚未实现，不应被视为当前发布功能。
