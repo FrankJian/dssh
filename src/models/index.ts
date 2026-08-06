@@ -15,7 +15,7 @@ export type {
   S3ObjectListing,
   S3Profile,
 } from "./s3";
-export type { SessionStatus, TerminalSession, TerminalSize } from "./terminal";
+export type { SessionStatus, TerminalSession, TerminalSize, TerminalSnapshot } from "./terminal";
 export type {
   DetachedSftpWorkspace,
   DetachedTerminalWorkspace,

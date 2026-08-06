@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::models::terminal::TerminalSnapshot;
 
 /// A top-level workbench surface that has been moved out of the main window.
 /// The registry is deliberately process-local: it only coordinates live Tauri
@@ -33,6 +37,10 @@ pub struct DetachedTerminalWorkspace {
     /// lets UI-only layout revisions remain backward compatible with a running
     /// desktop process.
     pub layout: Option<Value>,
+    /// Latest xterm screen state. It exists only while a detached window is
+    /// returning to its parent and is never written to the database.
+    #[serde(default)]
+    pub terminal_snapshots: HashMap<String, TerminalSnapshot>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

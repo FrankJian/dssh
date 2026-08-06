@@ -7,6 +7,7 @@ import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings"
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { serializeTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTheme } from "../theme/useTheme";
@@ -193,9 +194,28 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     await currentWindow.destroy();
   }, [currentWindow]);
 
-  const handleReturn = useCallback(() => {
-    void closeWindow();
-  }, [closeWindow]);
+  const handleReturn = useCallback(async () => {
+    if (descriptor) {
+      const latestLayout = panes.findLayoutByTab(descriptor.tabSessionId) ?? null;
+      const sessionIds = latestLayout ? paneSessionIds(latestLayout) : visibleSessions.map((item) => item.id);
+      const terminalSnapshots = Object.fromEntries(
+        sessionIds.flatMap((sessionId) => {
+          const snapshot = serializeTerminal(sessionId);
+          return snapshot ? [[sessionId, snapshot]] : [];
+        }),
+      );
+      await updateDetachedTerminalWorkspace(workspace.label, {
+        tabSessionId: latestLayout?.tabSessionId ?? descriptor.tabSessionId,
+        sessionIds,
+        layout: latestLayout,
+        terminalSnapshots,
+      }).catch(() => {
+        // The raw backend scrollback remains a safe fallback if a snapshot
+        // cannot be transferred while the window is closing.
+      });
+    }
+    await closeWindow();
+  }, [closeWindow, descriptor, panes, visibleSessions, workspace.label]);
 
   const closeTab = useCallback(async () => {
     const ids = layout ? paneSessionIds(layout) : visibleSessions.map((session) => session.id);

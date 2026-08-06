@@ -7,6 +7,16 @@ pub struct TerminalSize {
     pub rows: u16,
 }
 
+/// Ephemeral xterm screen state passed between the parent and a detached
+/// window. It is deliberately not persisted alongside terminal sessions.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSnapshot {
+    pub data: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSession {

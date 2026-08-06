@@ -42,7 +42,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
-import { releaseTerminal } from "../terminal/terminalRegistry";
+import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTheme } from "../theme/useTheme";
@@ -356,6 +356,9 @@ function MainApp() {
   useEffect(() => {
     const closedPromise = onDetachedWorkspaceClosed((workspace) => {
       if (workspace.terminal) {
+        for (const [sessionId, snapshot] of Object.entries(workspace.terminal.terminalSnapshots ?? {})) {
+          restoreTerminalSnapshot(sessionId, snapshot);
+        }
         const restoredSessionId =
           workspace.terminal.layout?.focusedPaneId
           ?? workspace.terminal.sessionIds[0]

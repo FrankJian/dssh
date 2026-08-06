@@ -1,9 +1,10 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { isAppShortcut, matchesShortcut, matchesWheelShortcut } from "../app/shortcuts";
-import type { TerminalSize } from "../models";
+import type { TerminalSize, TerminalSnapshot } from "../models";
 import {
   clampFontSize,
   COPY_ON_SELECT_DEFAULT,
@@ -69,6 +70,8 @@ export interface TerminalHandle {
   detach(container: HTMLElement): void;
   focus(): void;
   applyTransparentTheme(): void;
+  /** Capture the rendered state before moving a workspace to another window. */
+  serialize(): TerminalSnapshot | null;
 }
 
 /** The session-less welcome terminal shown before anything is connected. */
@@ -110,6 +113,21 @@ interface RegistryEntry {
 
 const instances = new Map<string, RegistryEntry>();
 
+// Detached native windows have a separate JS runtime, so their xterm instance
+// cannot return with them. The parent consumes this screen state once rather
+// than reparsing historical PTY output at a different terminal width.
+const pendingSnapshots = new Map<string, TerminalSnapshot>();
+
+export function restoreTerminalSnapshot(sessionId: string, snapshot: TerminalSnapshot) {
+  if (snapshot.data && snapshot.cols > 0 && snapshot.rows > 0) {
+    pendingSnapshots.set(sessionId, snapshot);
+  }
+}
+
+export function serializeTerminal(sessionId: string): TerminalSnapshot | null {
+  return instances.get(sessionId)?.handle.serialize() ?? null;
+}
+
 export function acquireTerminal(setup: TerminalSetup): TerminalHandle {
   const key = setup.sessionId ?? WELCOME_KEY;
   const existing = instances.get(key);
@@ -129,6 +147,7 @@ export function acquireTerminal(setup: TerminalSetup): TerminalHandle {
 
 export function releaseTerminal(sessionId: string) {
   instances.get(sessionId)?.dispose();
+  pendingSnapshots.delete(sessionId);
 }
 
 /**
@@ -147,6 +166,10 @@ export function pruneTerminals(liveSessionIds: Iterable<string>) {
 
 function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const { sessionId, transparent, isLocalShell } = setup;
+  const restoredSnapshot = sessionId ? pendingSnapshots.get(sessionId) ?? null : null;
+  if (sessionId) {
+    pendingSnapshots.delete(sessionId);
+  }
 
   let props: TerminalLiveProps = {};
   let container: HTMLElement | null = null;
@@ -156,6 +179,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   let fitDeferred = false;
   let opened = false;
   let replaying = false;
+  let restoringSnapshot = false;
   let unsubscribeOutput: (() => void) | undefined;
 
   // xterm renders into this element, which travels with the instance rather
@@ -184,8 +208,15 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     windowsPty: isLocalShell ? windowsPtyOptions : undefined,
   });
   const fitAddon = new FitAddon();
+  const serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
+  terminal.loadAddon(serializeAddon);
   terminal.loadAddon(new WebLinksAddon());
+  // The serializer restores wrapped rows accurately only at the dimensions it
+  // captured. Do this before xterm creates its DOM and before the first fit.
+  if (restoredSnapshot) {
+    terminal.resize(restoredSnapshot.cols, restoredSnapshot.rows);
+  }
 
   function adjustFontSize(delta: number) {
     const current = clampFontSize(props.fontSize ?? FONT_SIZE_DEFAULT);
@@ -301,6 +332,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   }
 
   function scheduleFit() {
+    if (restoringSnapshot) {
+      return;
+    }
     if (resizeFrame !== null) {
       cancelAnimationFrame(resizeFrame);
     }
@@ -465,19 +499,33 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       // instance now outlives the view, this runs once per window, not on every
       // tab switch.
       if (sessionId) {
-        const backlog = setup.getBacklog?.(sessionId) ?? "";
-        if (backlog) {
-          // A backlog is history, not a live conversation. Parsing it replays
-          // any query it contains — cursor position, device attributes — and
-          // xterm answers those by writing to the PTY, injecting a reply to a
-          // question that was already answered when the bytes first arrived.
-          // PSReadLine then waits mid-sequence and swallows the next key the
-          // user presses, which is how the first character typed into a freshly
-          // detached local terminal disappeared.
+        if (restoredSnapshot) {
+          // The serializer records the terminal's state rather than its raw
+          // history. Parse it at its source geometry first, then fit it to the
+          // returning window. This avoids zsh prompt EOL markers (`%`) becoming
+          // visible extra lines when the two windows have different widths.
+          restoringSnapshot = true;
           replaying = true;
-          terminal.write(backlog, () => {
+          terminal.write(restoredSnapshot.data, () => {
             replaying = false;
+            restoringSnapshot = false;
+            scheduleFit();
           });
+        } else {
+          const backlog = setup.getBacklog?.(sessionId) ?? "";
+          if (backlog) {
+            // A backlog is history, not a live conversation. Parsing it replays
+            // any query it contains — cursor position, device attributes — and
+            // xterm answers those by writing to the PTY, injecting a reply to a
+            // question that was already answered when the bytes first arrived.
+            // PSReadLine then waits mid-sequence and swallows the next key the
+            // user presses, which is how the first character typed into a freshly
+            // detached local terminal disappeared.
+            replaying = true;
+            terminal.write(backlog, () => {
+              replaying = false;
+            });
+          }
         }
         unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) => {
           terminal.write(data);
@@ -532,6 +580,20 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       focus: () => terminal.focus(),
       applyTransparentTheme: () => {
         terminal.options.theme = transparentTerminalTheme;
+      },
+      serialize: () => {
+        if (!opened) {
+          return null;
+        }
+        try {
+          return {
+            data: serializeAddon.serialize({ scrollback: terminal.rows * 4 }),
+            cols: terminal.cols,
+            rows: terminal.rows,
+          };
+        } catch {
+          return null;
+        }
       },
     },
     dispose,

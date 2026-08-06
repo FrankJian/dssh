@@ -11,6 +11,16 @@ export interface TerminalSize {
   rows: number;
 }
 
+/**
+ * A transient xterm screen capture used only while a terminal workspace moves
+ * between native windows. It is never persisted to disk or sent to a server.
+ */
+export interface TerminalSnapshot {
+  data: string;
+  cols: number;
+  rows: number;
+}
+
 export interface TerminalSession {
   id: string;
   kind: "local" | "ssh";
