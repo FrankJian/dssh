@@ -326,6 +326,7 @@ function MainApp() {
     openSftpTab,
     closeSftpTab,
     closeSftpTabsForProfile,
+    updateSftpTabPaths,
     focusSftpTab,
     focusTerminal,
     tabOrder,
@@ -1420,7 +1421,11 @@ function MainApp() {
     mainSurface = (
       <div className="sftp-tab">
         <FileBrowser
+          initialLocalPath={activeSftpTab.localPath}
+          initialRemotePath={activeSftpTab.remotePath}
+          onTabPathsChange={updateSftpTabPaths}
           profileId={activeSftpTab.profileId}
+          tabId={activeSftpTab.id}
           onOpenInTerminal={(dir) => {
             const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
             // Surface the terminal so the cd is visible, then send it.

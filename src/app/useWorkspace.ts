@@ -9,7 +9,12 @@ export interface SftpTab {
   id: string;
   profileId: string;
   title: string;
+  /** Last successfully opened directories, retained while the tab is open. */
+  remotePath?: string;
+  localPath?: string;
 }
+
+export type SftpTabPaths = Pick<SftpTab, "remotePath" | "localPath">;
 
 /**
  * Coordinates which surface the main column shows. Terminal sessions remain the
@@ -63,6 +68,17 @@ export function useWorkspace() {
     setActiveSftpId((current) => (current === id ? null : current));
   }, []);
 
+  const updateSftpTabPaths = useCallback((id: string, paths: Partial<SftpTabPaths>) => {
+    setSftpTabs((current) => {
+      const tab = current.find((item) => item.id === id);
+      if (!tab) return current;
+      const remotePath = paths.remotePath ?? tab.remotePath;
+      const localPath = paths.localPath ?? tab.localPath;
+      if (remotePath === tab.remotePath && localPath === tab.localPath) return current;
+      return current.map((item) => item.id === id ? { ...item, remotePath, localPath } : item);
+    });
+  }, []);
+
   const focusSftpTab = useCallback((id: string) => {
     setActiveSftpId(id);
   }, []);
@@ -80,6 +96,7 @@ export function useWorkspace() {
     openSftpTab,
     closeSftpTab,
     closeSftpTabsForProfile,
+    updateSftpTabPaths,
     focusSftpTab,
     focusTerminal,
   };

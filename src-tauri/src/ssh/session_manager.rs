@@ -56,6 +56,11 @@ const MAX_SESSION_BUFFER_BYTES: usize = 200_000;
 const OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(4);
 /// Emit early once a burst reaches this size rather than growing the buffer.
 const OUTPUT_FLUSH_BYTES: usize = 16 * 1024;
+/// A local shell starts much faster than an SSH shell, so it can print its first
+/// prompt before xterm reports the real pane geometry. Give the renderer a
+/// short window to replace the request's fallback size before spawning it.
+const LOCAL_INITIAL_RESIZE_WAIT: Duration = Duration::from_millis(250);
+const LOCAL_INITIAL_RESIZE_POLL: Duration = Duration::from_millis(2);
 
 #[derive(Clone)]
 pub struct SessionManager {
@@ -633,6 +638,11 @@ fn run_local_session(
     mut rx: mpsc::Receiver<SessionCommand>,
     output: Arc<Mutex<String>>,
 ) -> AppResult<()> {
+    let Some((size, pending_input)) = wait_for_initial_local_resize(size, &mut rx) else {
+        emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
+        return Ok(());
+    };
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(pty_size(&size))
@@ -685,6 +695,13 @@ fn run_local_session(
 
     emit_status(&app_handle, &session_id, SessionStatus::Connected, None);
 
+    for data in pending_input {
+        writer
+            .write_all(data.as_bytes())
+            .and_then(|_| writer.flush())
+            .map_err(local_terminal_error)?;
+    }
+
     while let Some(command) = rx.blocking_recv() {
         match command {
             SessionCommand::Input(data) => {
@@ -717,6 +734,39 @@ fn run_local_session(
     sink.flush();
     emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
     Ok(())
+}
+
+/// Resolve the actual xterm geometry before a local shell prints its first
+/// prompt. zsh's inverse-video `%` end-of-line marker is cleared using the PTY
+/// width it sees at that moment; starting at the fallback width and resizing a
+/// frame later can leave that marker visible in the scrollback.
+fn wait_for_initial_local_resize(
+    mut size: TerminalSize,
+    rx: &mut mpsc::Receiver<SessionCommand>,
+) -> Option<(TerminalSize, Vec<String>)> {
+    let started = Instant::now();
+    let mut pending_input = Vec::new();
+
+    loop {
+        match rx.try_recv() {
+            Ok(SessionCommand::Resize(next_size)) => {
+                size = next_size;
+                break;
+            }
+            Ok(SessionCommand::Input(data)) => pending_input.push(data),
+            Ok(SessionCommand::Close) => return None,
+            Ok(SessionCommand::CancelReconnect) => {}
+            Err(mpsc::error::TryRecvError::Disconnected) => return None,
+            Err(mpsc::error::TryRecvError::Empty)
+                if started.elapsed() >= LOCAL_INITIAL_RESIZE_WAIT =>
+            {
+                break;
+            }
+            Err(mpsc::error::TryRecvError::Empty) => thread::sleep(LOCAL_INITIAL_RESIZE_POLL),
+        }
+    }
+
+    Some((size, pending_input))
 }
 
 pub(crate) async fn connect_ssh_with_client(
@@ -1136,10 +1186,30 @@ fn default_shell() -> LocalShell {
             args: vec!["-NoLogo".to_string()],
         }
     } else {
+        let program = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         LocalShell {
-            program: env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
-            args: Vec::new(),
+            args: login_shell_args(&program),
+            program,
         }
+    }
+}
+
+/// GUI applications on macOS and Linux generally start with a minimal PATH.
+/// Starting a common interactive shell as a login shell makes it load the same
+/// system environment as Terminal.app and other terminal emulators. In
+/// particular, this lets `.zshrc` safely invoke tools installed by Homebrew.
+/// Unknown shells keep their default invocation to avoid passing an unsupported
+/// `-l` flag.
+fn login_shell_args(program: &str) -> Vec<String> {
+    let shell_path = PathBuf::from(program);
+    let shell_name = shell_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    match shell_name {
+        "bash" | "fish" | "ksh" | "mksh" | "zsh" => vec!["-l".to_string()],
+        _ => Vec::new(),
     }
 }
 
@@ -1304,8 +1374,39 @@ mod tests {
 
     use super::{
         OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
-        input_requests_clean_exit, normalize_input, resolve_remote_forward_target,
+        SessionCommand, input_requests_clean_exit, login_shell_args, normalize_input,
+        resolve_remote_forward_target, wait_for_initial_local_resize,
     };
+    use crate::models::terminal::TerminalSize;
+
+    #[test]
+    fn common_local_shells_start_as_login_shells() {
+        for shell in ["/bin/zsh", "/bin/bash", "/opt/homebrew/bin/fish"] {
+            assert_eq!(login_shell_args(shell), vec!["-l"]);
+        }
+        assert!(login_shell_args("/bin/sh").is_empty());
+        assert!(login_shell_args("/usr/local/bin/nu").is_empty());
+    }
+
+    #[test]
+    fn local_shell_uses_the_first_renderer_size_before_starting() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        tx.blocking_send(SessionCommand::Resize(TerminalSize { cols: 47, rows: 18 }))
+            .expect("initial resize should be queued");
+
+        let (size, pending_input) = wait_for_initial_local_resize(
+            TerminalSize {
+                cols: 100,
+                rows: 30,
+            },
+            &mut rx,
+        )
+        .expect("session should start");
+
+        assert_eq!(size.cols, 47);
+        assert_eq!(size.rows, 18);
+        assert!(pending_input.is_empty());
+    }
 
     #[test]
     fn output_coalescing_emits_the_first_chunk_after_an_idle_gap_immediately() {

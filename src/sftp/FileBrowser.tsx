@@ -24,6 +24,14 @@ interface FileBrowserProps {
   /** Suppress the native WebView menu when no SFTP context actions exist. */
   disableContextMenu?: boolean;
   profileId: string | null;
+  /** Directories restored when an attached workspace tab is mounted again. */
+  initialRemotePath?: string;
+  initialLocalPath?: string;
+  tabId?: string;
+  onTabPathsChange?: (
+    tabId: string,
+    paths: { remotePath?: string; localPath?: string },
+  ) => void;
   /** Enter the given remote directory in the active terminal (`cd <dir>`). */
   onOpenInTerminal?: (dir: string) => void;
 }
@@ -113,12 +121,23 @@ function selectionAfterClick(
 
 /** WinSCP-style two-pane SFTP workspace. Remote operations remain inside the
  * verified Rust SFTP client; local paths are only listed after user navigation. */
-export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTerminal }: FileBrowserProps) {
-  const [remotePath, setRemotePath] = useState("");
-  const [remoteInput, setRemoteInput] = useState("");
+export function FileBrowser({
+  disableContextMenu = false,
+  initialLocalPath,
+  initialRemotePath,
+  onOpenInTerminal,
+  onTabPathsChange,
+  profileId,
+  tabId,
+}: FileBrowserProps) {
+  // Capture only the mount-time values. Successful navigation updates the tab
+  // model, but must not retrigger these initialization effects while mounted.
+  const initialPathsRef = useRef({ local: initialLocalPath, remote: initialRemotePath });
+  const [remotePath, setRemotePath] = useState(initialRemotePath ?? "");
+  const [remoteInput, setRemoteInput] = useState(initialRemotePath ?? "");
   const [remoteEntries, setRemoteEntries] = useState<SftpEntry[]>([]);
-  const [localPath, setLocalPath] = useState("");
-  const [localInput, setLocalInput] = useState("");
+  const [localPath, setLocalPath] = useState(initialLocalPath ?? "");
+  const [localInput, setLocalInput] = useState(initialLocalPath ?? "");
   const [localEntries, setLocalEntries] = useState<LocalFileEntry[]>([]);
   const [localRoots, setLocalRoots] = useState<LocalRoot[]>([]);
   const [selectedRemotePaths, setSelectedRemotePaths] = useState<Set<string>>(new Set());
@@ -145,12 +164,13 @@ export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTer
       setRemoteEntries(listing.entries);
       setSelectedRemotePaths(new Set());
       setRemoteAnchor(null);
+      if (tabId) onTabPathsChange?.(tabId, { remotePath: listing.path });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "读取服务器目录失败。");
     } finally {
       setLoadingRemote(false);
     }
-  }, [profileId]);
+  }, [onTabPathsChange, profileId, tabId]);
 
   const loadLocal = useCallback(async (path: string) => {
     setLoadingLocal(true);
@@ -162,12 +182,13 @@ export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTer
       setLocalEntries(listing.entries);
       setSelectedLocalPaths(new Set());
       setLocalAnchor(null);
+      if (tabId) onTabPathsChange?.(tabId, { localPath: listing.path });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "读取本机目录失败。");
     } finally {
       setLoadingLocal(false);
     }
-  }, []);
+  }, [onTabPathsChange, tabId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,7 +198,8 @@ export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTer
       setRemoteEntries([]);
       return;
     }
-    void sftpHome(profileId)
+    const restoredPath = initialPathsRef.current.remote;
+    void (restoredPath ? Promise.resolve(restoredPath) : sftpHome(profileId))
       .then((path) => { if (!cancelled) void loadRemote(path); })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "连接服务器文件系统失败。");
@@ -187,7 +209,8 @@ export function FileBrowser({ disableContextMenu = false, profileId, onOpenInTer
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([sftpLocalHome(), sftpLocalRoots()])
+    const restoredPath = initialPathsRef.current.local;
+    void Promise.all([restoredPath ? Promise.resolve(restoredPath) : sftpLocalHome(), sftpLocalRoots()])
       .then(([home, roots]) => {
         if (cancelled) return;
         setLocalRoots(roots);
