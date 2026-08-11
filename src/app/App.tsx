@@ -501,6 +501,31 @@ function MainApp() {
   const isConnections = activeActivity === "connections";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
+  // Keep every attached SFTP tab mounted. Besides retaining its directory
+  // state, this keeps an in-flight Tauri command and its progress listener
+  // alive while the user temporarily switches to a terminal or another tab.
+  const sftpTabSurfaces = sftpTabs
+    .filter((tab) => !detachedSftpProfileIds.has(tab.profileId))
+    .map((tab) => {
+      const isActive = isSftpActive && tab.id === activeSftpId;
+      return (
+        <div aria-hidden={!isActive} className="sftp-tab" hidden={!isActive} key={tab.id}>
+          <FileBrowser
+            initialLocalPath={tab.localPath}
+            initialRemotePath={tab.remotePath}
+            onTabPathsChange={updateSftpTabPaths}
+            profileId={tab.profileId}
+            tabId={tab.id}
+            onOpenInTerminal={(dir) => {
+              const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
+              // Surface the terminal so the cd is visible, then send it.
+              focusTerminal();
+              void writeToActiveSession(`cd ${quoted}\r`);
+            }}
+          />
+        </div>
+      );
+    });
 
   // Bring the active terminal surface to the front: clear any SFTP selection and
   // switch to the Sessions activity (S3 / Connections otherwise fill the column).
@@ -1418,23 +1443,7 @@ function MainApp() {
       />
     );
   } else if (isSftpActive && activeSftpTab) {
-    mainSurface = (
-      <div className="sftp-tab">
-        <FileBrowser
-          initialLocalPath={activeSftpTab.localPath}
-          initialRemotePath={activeSftpTab.remotePath}
-          onTabPathsChange={updateSftpTabPaths}
-          profileId={activeSftpTab.profileId}
-          tabId={activeSftpTab.id}
-          onOpenInTerminal={(dir) => {
-            const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
-            // Surface the terminal so the cd is visible, then send it.
-            focusTerminal();
-            void writeToActiveSession(`cd ${quoted}\r`);
-          }}
-        />
-      </div>
-    );
+    mainSurface = null;
   } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
     hasSessionBar = Boolean(activeSession) && !activeRemoteFilePath;
     mainSurface = (
@@ -1884,7 +1893,7 @@ function MainApp() {
             </>
           )
         }
-        main={mainSurface}
+        main={<>{mainSurface}{sftpTabSurfaces}</>}
       />
       {editorState ? (
         <ProfileEditor

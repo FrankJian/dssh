@@ -6439,6 +6439,38 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   border-color: var(--accent-border);
 }
 
+.sftp-dual-browser__search {
+  display: flex;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 4px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-faint);
+}
+
+.sftp-dual-browser__search:focus-within {
+  border-color: var(--accent-border);
+}
+
+.sftp-dual-browser__search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-base);
+  font-size: 11.5px;
+}
+
+.sftp-dual-browser__search input::placeholder {
+  color: var(--text-faint);
+}
+
 .sftp-dual-browser__list {
   min-height: 0;
   flex: 1;
