@@ -30,6 +30,8 @@ import {
   RIGHT_CLICK_OPTIONS,
   S3_TRANSFER_CONCURRENCY_MAX,
   S3_TRANSFER_CONCURRENCY_MIN,
+  TERMINAL_BG_GLASS_BLUR_MAX,
+  TERMINAL_BG_GLASS_BLUR_MIN,
   TERMINAL_BG_OPACITY_MAX,
   TERMINAL_BG_OPACITY_MIN,
   TERMINAL_LETTER_SPACING_DEFAULT,
@@ -79,6 +81,10 @@ interface SettingsDialogProps {
   onTerminalBgImageChange: (value: string) => void;
   terminalBgOpacity: number;
   onTerminalBgOpacityChange: (value: number) => void;
+  terminalBgGlassEnabled: boolean;
+  onTerminalBgGlassEnabledChange: (value: boolean) => void;
+  terminalBgGlassBlur: number;
+  onTerminalBgGlassBlurChange: (value: number) => void;
   terminalWorkspaceInset: number;
   onTerminalWorkspaceInsetChange: (value: number) => void;
   s3UploadConcurrency: number;
@@ -185,6 +191,8 @@ export function SettingsDialog({
   onRightClickChange,
   onTerminalBgImageChange,
   onTerminalBgOpacityChange,
+  onTerminalBgGlassEnabledChange,
+  onTerminalBgGlassBlurChange,
   onTerminalWorkspaceInsetChange,
   onThemeChange,
   navigationIcons,
@@ -194,6 +202,8 @@ export function SettingsDialog({
   s3UploadConcurrency,
   terminalBgImage,
   terminalBgOpacity,
+  terminalBgGlassEnabled,
+  terminalBgGlassBlur,
   terminalWorkspaceInset,
   themeMode,
 }: SettingsDialogProps) {
@@ -430,7 +440,7 @@ export function SettingsDialog({
     <div className="profile-editor-backdrop" role="presentation">
       <section
         aria-label="设置"
-        className={`settings-window${isDraggingWindow ? " is-dragging" : ""}`}
+        className={`settings-window is-glass-overlay${isDraggingWindow ? " is-dragging" : ""}`}
         ref={windowRef}
         style={{ transform: `translate(${windowOffset.x}px, ${windowOffset.y}px)` }}
       >
@@ -694,8 +704,11 @@ export function SettingsDialog({
                 <div className="settings-section__head">
                   <h3>终端背景</h3>
                   <p>
-                    调低不透明度可让终端背景变通透：设置了背景图时透出图片，否则透出应用背景。
+                    调低不透明度可让终端背景变通透：启用背景图磨砂且系统支持时透出图片，否则透出应用背景。
                     （窗口对桌面的整体透明需要系统级窗口透明，暂未开启。）
+                  </p>
+                  <p>
+                    背景图只以磨砂玻璃形式显示；关闭磨砂开关或当前系统 WebView 不支持背景模糊时，将自动隐藏图片并保留普通终端背景。
                   </p>
                 </div>
                 <label className="settings-field">
@@ -728,6 +741,28 @@ export function SettingsDialog({
                       {terminalBgImage || "未设置"}
                     </span>
                   </div>
+                  <label className="checkbox-field">
+                    <input
+                      checked={terminalBgGlassEnabled}
+                      onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    启用背景图磨砂玻璃
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-field__label">
+                      磨砂模糊度：{terminalBgGlassBlur}px
+                    </span>
+                    <input
+                      className="settings-range"
+                      disabled={!terminalBgImage || !terminalBgGlassEnabled}
+                      max={TERMINAL_BG_GLASS_BLUR_MAX}
+                      min={TERMINAL_BG_GLASS_BLUR_MIN}
+                      onChange={(event) => onTerminalBgGlassBlurChange(Number(event.currentTarget.value))}
+                      type="range"
+                      value={terminalBgGlassBlur}
+                    />
+                  </label>
                 </div>
 
                 <div className="settings-section__head">

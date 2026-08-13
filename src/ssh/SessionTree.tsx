@@ -158,7 +158,7 @@ export function SessionTree({
   }
 
   return (
-    <aside className="sidebar session-sidebar" aria-label="会话">
+    <aside className="sidebar session-sidebar is-glass-chrome" aria-label="会话">
       <div className="sidebar__top">
         <SectionHeader title="会话" />
       </div>

@@ -16,7 +16,7 @@ function cssColor(name: string): string {
 
 function applyTheme(monaco: MonacoApi) {
   const isLight = document.documentElement.dataset.theme === "light";
-  const themeName = isLight ? "dssh-violet-light" : "dssh-violet-dark";
+  const themeName = isLight ? "dssh-graphite-light" : "dssh-graphite-dark";
   monaco.editor.defineTheme(themeName, {
     base: isLight ? "vs" : "vs-dark",
     inherit: true,

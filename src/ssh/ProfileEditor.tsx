@@ -111,7 +111,7 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="profile-editor profile-editor--connection" aria-label={title}>
+      <section className="profile-editor profile-editor--connection is-glass-overlay" aria-label={title}>
         <header className="profile-editor__topbar">
           <h2>{title}</h2>
           <button

@@ -45,6 +45,7 @@ import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
+import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
 import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
 import { ToastHost, toast } from "../ui/ToastHost";
@@ -282,6 +283,10 @@ function MainApp() {
     setTerminalBgImage,
     terminalBgOpacity,
     setTerminalBgOpacity,
+    terminalBgGlassEnabled,
+    setTerminalBgGlassEnabled,
+    terminalBgGlassBlur,
+    setTerminalBgGlassBlur,
     terminalWorkspaceInset,
     setTerminalWorkspaceInset,
     s3DownloadConcurrency,
@@ -457,6 +462,12 @@ function MainApp() {
   // Terminal wallpaper: the chosen file is read once into a data URL and handed
   // to CSS. An unreadable/removed file silently falls back to no background.
   const [terminalBgDataUrl, setTerminalBgDataUrl] = useState<string | null>(null);
+  const terminalWallpaperGlassSupported = supportsTerminalWallpaperGlass();
+  const hasTerminalWallpaper = (
+    Boolean(terminalBgDataUrl)
+    && terminalBgGlassEnabled
+    && terminalWallpaperGlassSupported
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -486,9 +497,12 @@ function MainApp() {
     // app background) shows through; at 100% it stays the flat terminal colour.
     root.style.setProperty(
       "--terminal-surface",
-      terminalBgOpacity >= 100 ? "var(--terminal-bg)" : `rgba(20, 20, 28, ${terminalBgOpacity / 100})`,
+      terminalBgOpacity >= 100
+        ? "var(--terminal-bg)"
+        : `rgb(var(--terminal-bg-rgb) / ${terminalBgOpacity}%)`,
     );
-  }, [terminalBgDataUrl, terminalBgOpacity]);
+    root.style.setProperty("--terminal-wallpaper-blur", `${terminalBgGlassBlur}px`);
+  }, [terminalBgDataUrl, terminalBgGlassBlur, terminalBgOpacity]);
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -1386,7 +1400,7 @@ function MainApp() {
       getBacklog={getBacklog}
       gpuAcceleration={gpuAcceleration}
       backgroundAlpha={terminalBgOpacity / 100}
-      hasWallpaper={Boolean(terminalBgDataUrl)}
+      hasWallpaper={hasTerminalWallpaper}
       rightClick={rightClick}
       hasProfiles={profiles.length > 0}
       onCreateProfile={openCreateProfile}
@@ -1513,7 +1527,7 @@ function MainApp() {
         rightClick={rightClick}
         gpuAcceleration={gpuAcceleration}
         backgroundAlpha={terminalBgOpacity / 100}
-        hasWallpaper={Boolean(terminalBgDataUrl)}
+        hasWallpaper={hasTerminalWallpaper}
         onFontSizeChange={setFontSize}
       />
     );
@@ -1797,7 +1811,7 @@ function MainApp() {
         rightPanelWidth={rightPanelWidth}
         onRightPanelWidthChange={setRightPanelWidth}
         titleBar={zenMode || terminalFullscreenPaneId ? null : (
-          <div className={`titlebar${isMacOS ? " titlebar--mac" : ""}`}>
+          <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
             {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
             <div className="titlebar__drag" data-tauri-drag-region />
             {/* macOS shows the native traffic-light controls, so we only render
@@ -1968,6 +1982,10 @@ function MainApp() {
           onTerminalBgImageChange={setTerminalBgImage}
           terminalBgOpacity={terminalBgOpacity}
           onTerminalBgOpacityChange={setTerminalBgOpacity}
+          terminalBgGlassEnabled={terminalBgGlassEnabled}
+          onTerminalBgGlassEnabledChange={setTerminalBgGlassEnabled}
+          terminalBgGlassBlur={terminalBgGlassBlur}
+          onTerminalBgGlassBlurChange={setTerminalBgGlassBlur}
           terminalWorkspaceInset={terminalWorkspaceInset}
           onTerminalWorkspaceInsetChange={setTerminalWorkspaceInset}
           onThemeChange={setThemeMode}
@@ -1995,7 +2013,7 @@ function MainApp() {
       ) : null}
       {zenMode ? (
         <button
-          className="zen-exit"
+          className="zen-exit is-glass-overlay"
           onClick={() => setZenMode(false)}
           title={`退出禅模式（${formatShortcut(getShortcutBinding("exitFocusMode"))}）`}
           type="button"
@@ -2006,7 +2024,7 @@ function MainApp() {
       ) : null}
       {terminalFullscreenPaneId ? (
         <button
-          className="terminal-focus-exit"
+          className="terminal-focus-exit is-glass-overlay"
           onClick={() => setTerminalFullscreenPaneId(null)}
           title={`恢复终端视图（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
           type="button"

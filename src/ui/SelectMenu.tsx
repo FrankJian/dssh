@@ -204,7 +204,7 @@ export function SelectMenu({
         <Icon name="chevron-down" height="14" width="14" />
       </button>
       {open ? (
-        <div className="select-menu__popover">
+        <div className="select-menu__popover is-glass-overlay">
           {searchable ? (
             <input
               aria-label={`${ariaLabel}搜索`}

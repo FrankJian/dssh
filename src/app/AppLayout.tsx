@@ -116,7 +116,7 @@ export function AppLayout({
           </>
         ) : null}
         <div className="main-column">
-          {tabStrip ? <div className="main-column__tabs">{tabStrip}</div> : null}
+          {tabStrip ? <div className="main-column__tabs is-glass-chrome">{tabStrip}</div> : null}
           <div className="main-column__content">{main}</div>
         </div>
         {rightPanel ? (
@@ -129,7 +129,7 @@ export function AppLayout({
               aria-label="调整面板宽度"
             />
             <aside
-              className="right-dock"
+              className="right-dock is-glass-chrome"
               style={{ width: `${rightPanelWidth}px`, minWidth: `${rightPanelWidth}px` }}
             >
               {rightPanel}

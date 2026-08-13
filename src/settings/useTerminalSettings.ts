@@ -16,6 +16,8 @@ import {
   terminalFontSizeKey,
   terminalGpuKey,
   terminalRightClickKey,
+  terminalBgGlassBlurKey,
+  terminalBgGlassEnabledKey,
   terminalBgImageKey,
   terminalBgOpacityKey,
   terminalWorkspaceInsetKey,
@@ -27,7 +29,10 @@ import {
   TERMINAL_LINE_HEIGHT_STEP,
   TERMINAL_LETTER_SPACING_DEFAULT,
   clampBgOpacity,
+  clampTerminalBgGlassBlur,
   clampTerminalWorkspaceInset,
+  TERMINAL_BG_GLASS_BLUR_DEFAULT,
+  TERMINAL_BG_GLASS_ENABLED_DEFAULT,
   TERMINAL_BG_OPACITY_DEFAULT,
   TERMINAL_WORKSPACE_INSET_DEFAULT,
   s3DownloadConcurrencyKey,
@@ -82,6 +87,13 @@ export function useTerminalSettings() {
     const raw = localStorage.getItem(terminalBgOpacityKey);
     return raw ? clampBgOpacity(Number.parseInt(raw, 10)) : TERMINAL_BG_OPACITY_DEFAULT;
   });
+  const [terminalBgGlassEnabled, setTerminalBgGlassEnabledState] = useState<boolean>(() =>
+    parseBoolean(localStorage.getItem(terminalBgGlassEnabledKey), TERMINAL_BG_GLASS_ENABLED_DEFAULT),
+  );
+  const [terminalBgGlassBlur, setTerminalBgGlassBlurState] = useState<number>(() => {
+    const raw = localStorage.getItem(terminalBgGlassBlurKey);
+    return raw ? clampTerminalBgGlassBlur(Number.parseInt(raw, 10)) : TERMINAL_BG_GLASS_BLUR_DEFAULT;
+  });
   const [terminalWorkspaceInset, setTerminalWorkspaceInsetState] = useState<number>(() => {
     const raw = localStorage.getItem(terminalWorkspaceInsetKey);
     return raw
@@ -132,6 +144,14 @@ export function useTerminalSettings() {
   }, [terminalBgOpacity]);
 
   useEffect(() => {
+    localStorage.setItem(terminalBgGlassEnabledKey, String(terminalBgGlassEnabled));
+  }, [terminalBgGlassEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(terminalBgGlassBlurKey, String(terminalBgGlassBlur));
+  }, [terminalBgGlassBlur]);
+
+  useEffect(() => {
     localStorage.setItem(terminalWorkspaceInsetKey, String(terminalWorkspaceInset));
   }, [terminalWorkspaceInset]);
 
@@ -157,6 +177,14 @@ export function useTerminalSettings() {
 
   const setTerminalBgOpacity = useCallback((value: number) => {
     setTerminalBgOpacityState(clampBgOpacity(value));
+  }, []);
+
+  const setTerminalBgGlassEnabled = useCallback((value: boolean) => {
+    setTerminalBgGlassEnabledState(value);
+  }, []);
+
+  const setTerminalBgGlassBlur = useCallback((value: number) => {
+    setTerminalBgGlassBlurState(clampTerminalBgGlassBlur(value));
   }, []);
 
   const setTerminalWorkspaceInset = useCallback((value: number) => {
@@ -245,6 +273,10 @@ export function useTerminalSettings() {
     setTerminalBgImage,
     terminalBgOpacity,
     setTerminalBgOpacity,
+    terminalBgGlassEnabled,
+    setTerminalBgGlassEnabled,
+    terminalBgGlassBlur,
+    setTerminalBgGlassBlur,
     terminalWorkspaceInset,
     setTerminalWorkspaceInset,
     s3UploadConcurrency,

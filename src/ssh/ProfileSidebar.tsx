@@ -59,7 +59,7 @@ export function ProfileSidebar({
   }
 
   return (
-    <aside className="sidebar" aria-label="SSH 配置">
+    <aside className="sidebar is-glass-chrome" aria-label="SSH 配置">
       <div className="sidebar__top">
         <SectionHeader title="SSH 配置" />
         <IconButton className="icon-button--primary" label="新建 SSH 配置" onClick={onCreateProfile}>

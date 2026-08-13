@@ -70,13 +70,9 @@
 
 - 将 S3 从独立 activity 的子标签迁入 `WorkspaceTabStrip`，与终端、SFTP 使用一致的标签生命周期与重排交互。
 
-### 8. 液态玻璃（窗口材质与半透明外观）
+### 8. 原生窗口材质（桌面透视）
 
-- 在设置 → 外观提供“关闭 / 仅浮层 / 整窗”三档窗口材质与三档强度，默认关闭。仅浮层档是纯 CSS
-  `backdrop-filter`，跨平台无风险；整窗档需要窗口透明 + 系统材质（Windows 11 Mica / Acrylic、macOS
-  vibrancy），会影响窗口缩放性能、resize 边框与启动首帧，必须先完成可行性验证。终端默认保持完全不透明，
-  玻璃不得降低正文可读性。完整规格见 [`features/liquid-glass.md`](features/liquid-glass.md)，分阶段实施清单见
-  [`tasks.md`](tasks.md#液态玻璃窗口材质与半透明外观)。
+- 默认 Graphite Glass 的 CSS chrome / 浮层材质已经落地；后续只在设置 → 外观提供“关闭 / 整窗”的**原生窗口材质**可选项。整窗档需要窗口透明 + 系统材质（Windows 11 Mica / Acrylic、macOS vibrancy），会影响窗口缩放性能、resize 边框与启动首帧，必须先完成可行性验证。终端默认保持完全不透明，桌面透视不得降低正文可读性。完整规格见 [`features/liquid-glass.md`](features/liquid-glass.md)，主题实现与验收边界见 [`features/graphite-glass-theme.md`](features/graphite-glass-theme.md)。
 
 ### 9. VNC 远程桌面工作区
 

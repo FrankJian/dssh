@@ -23,7 +23,7 @@ interface TerminalViewProps {
   gpuAcceleration?: boolean;
   /** Terminal background alpha (0–1). Below 1 the surface behind shows through. */
   backgroundAlpha?: number;
-  /** True when a wallpaper image is configured behind the terminal. */
+  /** True when a supported frosted wallpaper can be shown behind the terminal. */
   hasWallpaper?: boolean;
   /** True for a local shell; SSH sessions always talk to a remote Unix PTY. */
   isLocalShell?: boolean;
@@ -60,8 +60,9 @@ export function TerminalView({
   autoFocus = true,
   sessionId,
 }: TerminalViewProps) {
-  // A wallpaper needs the terminal canvas to let the CSS-rendered image and
-  // overlay through, and any alpha < 1 needs to reveal the app beneath it.
+  // A supported wallpaper needs the terminal canvas to let the CSS-rendered
+  // image and frosted overlay through, and any alpha < 1 needs to reveal the
+  // app beneath it.
   // In both cases xterm must use its transparent-canvas rendering path.
   const transparent = hasWallpaper || backgroundAlpha < 1;
   const containerRef = useRef<HTMLDivElement | null>(null);

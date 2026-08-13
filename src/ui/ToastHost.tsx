@@ -53,7 +53,7 @@ export function ToastHost() {
   return (
     <div className="toast-host" role="status" aria-live="polite">
       {toasts.map((item) => (
-        <div className="toast" data-kind={item.kind} key={item.id}>
+        <div className="toast is-glass-overlay" data-kind={item.kind} key={item.id}>
           <Icon name={KIND_ICON[item.kind]} height="15" width="15" />
           <span className="toast__message">{item.message}</span>
           <button

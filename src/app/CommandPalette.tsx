@@ -94,7 +94,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
       <div
-        className="palette"
+        className="palette is-glass-overlay"
         role="dialog"
         aria-label="命令面板"
         onMouseDown={(event) => event.stopPropagation()}

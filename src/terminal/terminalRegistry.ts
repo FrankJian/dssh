@@ -81,7 +81,7 @@ const welcomeOutput = ["\x1b[1;34mdssh 终端\x1b[0m", "", "请选择左侧 SSH 
 
 const transparentTerminalTheme: ITheme = {
   ...terminalTheme,
-  background: "rgba(20, 20, 28, 0)",
+  background: "rgba(0, 0, 0, 0)",
 };
 
 /**

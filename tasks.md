@@ -89,9 +89,9 @@
 
 **Phase 7 验收**：吞吐相对 Phase 6 有可测量的提升，且 CJK 与 ANSI 密集场景无解码错误；否则回退并保留事件通道。
 
-## 液态玻璃（窗口材质与半透明外观）
+## 原生窗口材质（桌面透视）
 
-> 状态：尚未开始。实施严格遵循 [液态玻璃规格](features/liquid-glass.md) 的 Phase 0 → 1 → 2 → 3 → 4 → 5；Phase 6 为可选增强，不属于发布门槛。效果默认关闭；Phase 1 可独立发布，Phase 3 必须先通过 Phase 0 的窗口行为验证才能开工。
+> 状态：待实现的可选增强。默认 Graphite Glass 的 token、应用内 chrome / 浮层材质、fallback 与终端协同已在 [`features/graphite-glass-theme.md`](features/graphite-glass-theme.md) 实现；这里仅保留 Tauri 原生窗口材质。实施严格遵循 [液态玻璃规格](features/liquid-glass.md) 的 Phase 0 → 1 → 2 → 3 → 4 → 5；Phase 6 为可选增强，不属于发布门槛。原生材质默认关闭；后续窗口实现必须先通过 Phase 0 的窗口行为验证。
 
 ### Phase 0：可行性与基线
 
@@ -103,26 +103,25 @@
 
 **Phase 0 验收**：三种材质在两个平台各有一组可比的性能与窗口行为记录；“免重启切换”是否可行有明确结论。结论为否时更新规格再进入 Phase 3，但不阻塞 Phase 1、2。
 
-### Phase 1：CSS 材质层（跨平台，零窗口风险）
+### Phase 1：原生材质偏好模型（不重做 CSS 玻璃）
 
-- [ ] **G1.1 修复未定义 token**：`global.css:8752/8827/8912` 的 `--bg-base` / `--bg-raised` 从未在 `:root` 定义。先补定义或改用既有语义 token，使独立窗口外壳有确定的表面色可供材质覆盖。
-- [ ] **G1.2 玻璃 token**：在主题 token 之后新增 `--glass-blur`、`--glass-saturate`、`--glass-chrome-bg`、`--glass-overlay-bg`、`--glass-border`、`--glass-shadow`，深浅主题各一份；半透明值一律用 `color-mix(in srgb, <token> <alpha>%, transparent)`，不得出现字面色值。
-- [ ] **G1.3 `data-material` 覆盖块**：实现 `[data-material=“overlay“]` 与 `[data-material=”window”]` 两级表面 token 覆盖，以及 `[data-material-intensity]` 的 low / medium / high 数值映射。只覆盖表面色，不改任何组件的布局规则。
-- [ ] **G1.4 磨砂表面类**：新增单一共享类 `.is-glass-surface` 承载 `backdrop-filter`，挂到规格第 5.3 节列出的浮层与 chrome 容器上；确保从 `.app-shell` 起嵌套磨砂不超过两层，模态遮罩只调 alpha 不叠模糊。
-- [ ] **G1.5 降级查询**：实现 `@media (prefers-reduced-transparency: reduce)` 强制回落到不透明，以及 `@supports not (backdrop-filter: blur(1px))` 时退化为无模糊的半透明底色。
-- [ ] **G1.6 对比度校准**：在深浅主题 × 三档强度 × 亮 / 暗桌面壁纸下测量 `--text-primary`、次级文字与图标的对比度，把不达标的 alpha 调高，最终数值回写规格第 4 节表格。
+- [x] **G1.1 Graphite 基线**：`--bg-base` / `--bg-raised` 已映射到语义 surface token；`--glass-*`、`.is-glass-chrome` / `.is-glass-overlay`、实色 fallback 与减少透明度覆盖均由 Graphite Glass 实现。人工视觉验收仍待统一执行。
+- [ ] **G1.2 原生材质状态**：新增仅用于桌面透视的 `data-window-material="off|window"` 和偏好解析；不得新增 `overlay` 模式、`data-material` 或第二套 CSS 磨砂类。
+- [ ] **G1.3 原生材质 token 覆盖**：只在 `data-window-material="window"` 下调整窗口底板透明度，复用已有 `--glass-*` 与表面 token；不改变终端、编辑器或文件列表背景。
+- [ ] **G1.4 降级路径**：原生材质不支持时回退到 `off`；Graphite Glass 的 `@supports` / 减少透明度 fallback 继续独立生效。
+- [ ] **G1.5 对比度校准**：在真实桌面亮 / 暗背景、深浅主题下测量原生材质合成后的正文、次级文字与图标，最终值回写规格。
 
-**Phase 1 验收**：手动把 `data-material` 写进 DOM 即可看到完整浮层磨砂效果，深浅主题都通过对比度检查；未开启时的渲染与改动前逐像素一致。
+**Phase 1 验收**：原生偏好不会改写默认 Graphite Glass 表面；不支持的环境稳定退回默认主题。
 
 ### Phase 2：设置项与状态管理
 
-- [ ] **G2.1 设置常量**：在 `src/settings/settings.ts` 增加 `appearanceGlassModeKey` / `appearanceGlassIntensityKey`、`GlassMode` / `GlassIntensity` 类型、默认值与 `normalizeGlassMode` / `normalizeGlassIntensity` 解析函数，沿用现有 `parseBoolean` 一类的容错风格。
-- [ ] **G2.2 `useGlassSettings`**：新增 hook 管理模式与强度，写 localStorage，写 `document.documentElement.dataset.material` / `dataset.materialIntensity`，并**照抄 `useTheme` 的 `storage` 事件监听**实现跨窗口同步（现有 `useTerminalSettings` 没有这一层，不要以它为模板）。
-- [ ] **G2.3 外观设置 UI**：在 `SettingsDialog.tsx` 的 `“appearance“` 分类中，主题之后新增”窗口材质“区块：三档模式（沿用 `.settings-theme__option` 的分段按钮样式）+ 三档强度；不支持的选项禁用并给出原因，被系统”减少透明度”覆盖时显示提示。
+- [ ] **G2.1 设置常量**：在 `src/settings/settings.ts` 增加 `appearanceGlassModeKey` / `appearanceGlassIntensityKey`、`GlassMode`（仅 `off | window`）/ `GlassIntensity` 类型、默认值与解析函数，沿用现有 `parseBoolean` 一类的容错风格。
+- [ ] **G2.2 `useGlassSettings`**：新增 hook 管理模式与强度，写 localStorage，写 `document.documentElement.dataset.windowMaterial` / `dataset.windowMaterialIntensity`，并**照抄 `useTheme` 的 `storage` 事件监听**实现跨窗口同步（现有 `useTerminalSettings` 没有这一层，不要以它为模板）。
+- [ ] **G2.3 外观设置 UI**：在 `SettingsDialog.tsx` 的 `“appearance“` 分类中，主题之后新增“原生窗口材质”区块：关闭 / 整窗两档（沿用 `.settings-theme__option` 的分段按钮样式）+ 可选强度；不支持的选项禁用并给出原因。不得提供关闭默认 Graphite Glass 的选项。
 - [ ] **G2.4 接线主窗口与独立窗口**：在 `App.tsx` 与 `DetachedWorkspace.tsx` 各接入 hook；确认独立窗口在无设置面板的情况下也能通过 `storage` 同步实时更新。
-- [ ] **G2.5 文案更新**：删除 `SettingsDialog.tsx:598-603` 中“窗口对桌面的整体透明需要系统级窗口透明，暂未开启”的说明，改为描述终端不透明度与窗口材质的实际叠加行为。
+- [ ] **G2.5 文案更新**：把“窗口对桌面的整体透明需要系统级窗口透明，暂未开启”改为说明“Graphite Glass 默认只作用于应用内 chrome / 浮层；整窗桌面透视需要系统级窗口透明”。
 
-**Phase 2 验收**：设置里切换模式与强度立即生效并持久化；重开应用与打开独立窗口都保持一致；此时 `window` 档暂按 `overlay` 渲染。
+**Phase 2 验收**：设置里切换模式与强度立即生效并持久化；重开应用与打开独立窗口都保持一致；`off` 状态保留默认 Graphite Glass。
 
 ### Phase 3：窗口材质（`window` 模式）
 
@@ -142,19 +141,19 @@
 - [ ] **G4.2 保持终端透明路径不变**：确认 `TerminalView.tsx` 的 `allowTransparency` 判定仍只由壁纸与 `backgroundAlpha` 决定，玻璃开启不得强制终端走 WebGL 透明渲染。
 - [ ] **G4.3 内容区豁免**：确认终端画布、Monaco 编辑器正文、SFTP / S3 / 远端文件树列表均未被磨砂波及，滚动性能无回退。
 - [ ] **G4.4 终端选中态复核**：按 `terminalTheme.ts:13-22` 的既有理由，目视确认玻璃开启后选中文字仍清晰可辨，必要时只调整选中色而不改渲染路径。
-- [ ] **G4.5 工作区回归**：Zen 模式、分屏（最多四格）、标签拖拽重排、独立窗口分离与回归、命令面板、右键菜单、Toast 在三档模式下逐一目视回归。
+- [ ] **G4.5 工作区回归**：Zen 模式、分屏（最多四格）、标签拖拽重排、独立窗口分离与回归、命令面板、右键菜单、Toast 在原生材质关闭 / 整窗两档下逐一目视回归。
 
 **Phase 4 验收**：终端默认不透明度下渲染与 `off` 状态一致；开启玻璃后所有工作区形态无视觉错位、无可读性下降、无滚动掉帧。
 
 ### Phase 5：验收、性能与发布
 
-- [ ] **G5.1 性能矩阵**：按 G0.4 的方法复测 `off` / `overlay` / `window`×三档强度的终端吞吐帧率、CPU、内存与窗口拖拽缩放表现，记录进规格；回退超出可接受范围的组合需调低默认强度或移除该档。
+- [ ] **G5.1 性能矩阵**：按 G0.4 的方法复测 `off` / `window`×三档强度的终端吞吐帧率、CPU、内存与窗口拖拽缩放表现，记录进规格；回退超出可接受范围的组合需调低默认强度或移除该档。
 - [ ] **G5.2 可访问性审计**：完成对比度审计与键盘导航、焦点环、禁用 / 错误 / 破坏性状态在磨砂背景上的可辨性检查；验证 `prefers-reduced-transparency` 在两个平台真实生效。
-- [ ] **G5.3 跨平台人工验收**：在 Windows 11、Windows 10、macOS 的**打包产物**（不只是 `tauri dev`）上验证三档模式、深浅主题、跟随系统主题、独立窗口、中文输入法与多显示器。
+- [ ] **G5.3 跨平台人工验收**：在 Windows 11、Windows 10、macOS 的**打包产物**（不只是 `tauri dev`）上验证原生材质关闭 / 整窗、深浅主题、跟随系统主题、独立窗口、中文输入法与多显示器。
 - [ ] **G5.4 文档更新**：更新 `README.md` 的功能说明、`spec.md` 的界面约定与已规划功能列表，并把本节完成项压缩为简短记录。
 - [ ] **G5.5 全套验证**：`pnpm exec tsc --noEmit`、`pnpm build`、`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 全部通过。
 
-**Phase 5 验收**：默认关闭时行为与今天完全一致；开启后在两个平台的打包产物上表现稳定、可读、可回退。
+**Phase 5 验收**：原生材质关闭时保留默认 Graphite Glass；开启后在两个平台的打包产物上表现稳定、可读、可回退。
 
 ### Phase 6：可选增强，不进入发布门槛
 

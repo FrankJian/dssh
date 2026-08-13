@@ -43,7 +43,7 @@ export function ActivityBar({
   const showNewLocalTerminal = visibleNavigationIcons.includes("newLocalTerminal");
 
   return (
-    <nav className="activity-bar" aria-label="主导航">
+    <nav className="activity-bar is-glass-chrome" aria-label="主导航">
       <div className="activity-bar__top">
         <IconButton
           active={!sidebarCollapsed}

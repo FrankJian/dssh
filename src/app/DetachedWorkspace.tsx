@@ -38,7 +38,7 @@ function DetachedTitlebar({
   onReturn: () => void;
 }) {
   return (
-    <div className={`titlebar detached-titlebar${isMacOS ? " titlebar--mac" : ""}`}>
+    <div className={`titlebar detached-titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
       <div className="titlebar__drag" data-tauri-drag-region />
       <div className="detached-titlebar__title" data-tauri-drag-region title={title}>{title}</div>
       <button
@@ -333,7 +333,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   return (
     <div className="detached-workspace">
       {terminalFullscreenPaneId ? null : <DetachedTitlebar title={workspace.title} onReturn={handleReturn} />}
-      {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar">
+      {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar is-glass-chrome">
         <div className="detached-workspace__tab">
           <span className="detached-workspace__tab-title" title={workspace.title}>
             <Icon name="terminalTool" height="15" width="15" />
@@ -398,7 +398,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       </main>
       {terminalFullscreenPaneId ? (
         <button
-          className="terminal-focus-exit"
+          className="terminal-focus-exit is-glass-overlay"
           onClick={() => setTerminalFullscreenPaneId(null)}
           title={`恢复终端视图（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
           type="button"

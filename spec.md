@@ -85,36 +85,38 @@ Duo SSH 是面向开发与运维的**跨平台（Windows / macOS）SSH 管理器
 - 点击“合并回主窗口”或直接关闭原生子窗口会恢复原标签并自动聚焦原 session；点击子窗口标签内的关闭按钮则关闭对应终端 session，不再恢复。
 - `detached-*` 窗口使用独立 Tauri capability。新增或修改子窗口 API 权限后必须完整重启应用，Vite 热更新不足以刷新 capability。
 
-## 4. 视觉系统（Violet / Nebula）
+## 4. 视觉系统（Graphite Glass）
 
-主色为**冷紫罗兰**，底色为石墨灰，深色为默认、浅色为可选。
+默认视觉身份是**冷黑石墨 + 雾白 + 克制冰蓝**。深色为默认、浅色为可选；黑白灰负责层级，冰蓝仅表达焦点、选中、链接与主操作。窗口 chrome 和浮层使用轻量玻璃材质，终端、Monaco 与滚动内容区保持不透明或近不透明。
 
 ### 4.1 关键 token
 
 | Token | 深色 | 浅色 |
 | --- | --- | --- |
-| `--accent` | `#7c6ff0` | `#6d5ce0` |
-| `--accent-strong` | `#8b7cf6` | `#5b4bd0` |
-| `--accent-soft` | `rgba(124,111,240,.14)` | `rgba(109,92,224,.10)` |
-| `--bg-app` | `#16161e` | `#f7f7fb` |
-| `--bg-sidebar` / `--bg-panel` | `#1d1d28` | `#eff0f5` / `#ffffff` |
-| `--bg-elevated` | `#24242f` | `#ffffff` |
-| `--bg-selected` | `#2a2740` | `#e4e0fa` |
-| `--border-subtle` / `--border-strong` | `#2a2a38` / `#3a3a4a` | `#e2e2ec` / `#cfcfdc` |
-| `--text-strong` / `--text-base` / `--text-muted` | `#f2f2f7` / `#e6e6f0` / `#9e9eb0` | `#17171f` / `#2a2a38` / `#6c6c7e` |
-| 状态 | `--success #4ade80` · `--warning #fbbf24` · `--danger #f87171` · `--info #7c9cf0` | |
+| `--accent` | `#79a6c9` | `#426f8d` |
+| `--accent-strong` | `#a8c7de` | `#2d5d7b` |
+| `--accent-soft` | `rgb(121 166 201 / 13%)` | `rgb(66 111 141 / 10%)` |
+| `--bg-app` | `#0b0e12` | `#f4f6f8` |
+| `--bg-sidebar` / `--bg-panel` | 半透明冷石墨 | 半透明冷白 |
+| `--bg-elevated` | `rgb(27 34 43 / 92%)` | `rgb(255 255 255 / 94%)` |
+| `--bg-selected` | `rgb(121 166 201 / 15%)` | `rgb(66 111 141 / 13%)` |
+| `--border-subtle` / `--border-strong` | 雾白 `8.5%` / `16%` | 冷灰 `10%` / `20%` |
+| `--text-strong` / `--text-base` / `--text-muted` | `#f4f7fa` / `#dde4ea` / `#98a4af` | `#171c21` / `#252b31` / `#596672` |
+| 状态 | `--success #73c9a2` · `--warning #d6b56c` · `--danger #e18484` · `--info #82b3d5` | 各自使用较深色以保持浅底对比度 |
+
+共享材质 token（`--glass-*`）只允许由 `.is-glass-chrome` 与 `.is-glass-overlay` 用于稳定 chrome 和浮层。`prefers-reduced-transparency` 与无 `backdrop-filter` 环境退化为实色表面；不得在终端、Monaco、文件树和长列表添加 filter。完整边界见 [`features/graphite-glass-theme.md`](features/graphite-glass-theme.md)。
 
 圆角 `2/4/6/8/999`；间距刻度 `4/8/12/16/20/24`；活动栏 48、标签条与标题栏 36。
 
 ### 4.2 终端调色板
 
-`terminal/terminalTheme.ts`：背景 `#14141c`、前景 `#e6e6f0`、光标 `#8b7cf6`（紫罗兰）。
+`terminal/terminalTheme.ts`：背景 `#0b0e12`、前景 `#dde4ea`、光标 `#a8c7de`（冰蓝）。
 
-**选中色刻意贴近底色**（`#2b2550`，非活动 `#201c38`）：xterm 的 WebGL 渲染器会把单元格背景烘焙进字形纹理，高对比的选中色会让选中文字的抗锯齿明显不同（看起来像字重变了）。调整这两个值前请先复核该影响（后续渲染策略见 [`TODO.md`](TODO.md)“终端外观增强”）。
+**选中色刻意贴近底色**（`#182630`，非活动 `#121c24`）：xterm 的 WebGL 渲染器会把单元格背景烘焙进字形纹理，高对比的选中色会让选中文字的抗锯齿明显不同（看起来像字重变了）。调整这两个值前请先复核该影响（后续渲染策略见 [`TODO.md`](TODO.md)“终端外观增强”）。
 
 ### 4.3 终端背景
 
-可选壁纸（图片经后端读成 data URL）+ **背景不透明度**（20–100%）。不透明度调低时终端表面变通透，透出壁纸或应用背景；100% 为纯色。启用透明时 xterm 走 `allowTransparency` 路径。
+可选壁纸（图片经后端读成 data URL）+ **背景图磨砂开关与模糊度**（4–32px）+ **背景不透明度**（0–100%）。壁纸仅在当前 WKWebView / WebView2 支持背景模糊、且用户开启磨砂时显示；不支持或关闭磨砂时回到普通终端背景。不透明度调低时终端表面变通透，透出壁纸或应用背景；100% 为纯色。启用透明时 xterm 走 `allowTransparency` 路径。
 
 ## 5. 关键机制
 
@@ -180,7 +182,7 @@ Tauri 载荷统一 **camelCase**；改命令 / 事件时同步 Rust serde DTO �
 
 - [终端吞吐、生命周期与显示保真](features/terminal-performance.md)：终端数据通路、xterm 实例生命周期与
   显示保真的优化规格，含性能基线与指标门槛。尚未实施。
-- [液态玻璃（窗口材质与半透明外观）](features/liquid-glass.md)：可在设置中开关的半透明外观，分为纯 CSS 的
-  浮层磨砂与依赖系统材质的整窗透明两档。默认关闭，尚未实现。
+- [Graphite Glass 主题](features/graphite-glass-theme.md)：默认的冷黑、冰蓝与应用内 chrome / 浮层玻璃材质，已实现；终端、Monaco 与滚动内容区保持不模糊。
+- [原生窗口材质](features/liquid-glass.md)：可选的整窗桌面透视，依赖系统材质，默认关闭、尚未实现。
 - [VNC 远程桌面工作区](features/vnc-workspace.md)：以 noVNC 渲染、Rust 侧 RFB 会话 bridge 为基础的独立 VNC
   viewer，支持经现有 SSH connection pool 的安全隧道。该能力尚未实现，不应被视为当前发布功能。

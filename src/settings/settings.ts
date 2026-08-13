@@ -136,6 +136,8 @@ export const terminalRightClickKey = "dssh.terminal.rightClick";
 export const terminalGpuKey = "dssh.terminal.gpuAcceleration";
 export const terminalBgImageKey = "dssh.terminal.bgImage";
 export const terminalBgOpacityKey = "dssh.terminal.bgOpacity";
+export const terminalBgGlassEnabledKey = "dssh.terminal.bgGlassEnabled";
+export const terminalBgGlassBlurKey = "dssh.terminal.bgGlassBlur";
 export const terminalWorkspaceInsetKey = "dssh.terminal.workspaceInset";
 /** Shared by the main window and detached ones, so a new window opens the way
  *  the user last left the chrome rather than re-showing a bar they hid.
@@ -187,6 +189,20 @@ export const TERMINAL_BG_OPACITY_MAX = 100;
 export function clampBgOpacity(value: number): number {
   if (!Number.isFinite(value)) return TERMINAL_BG_OPACITY_DEFAULT;
   return Math.min(TERMINAL_BG_OPACITY_MAX, Math.max(TERMINAL_BG_OPACITY_MIN, Math.round(value)));
+}
+
+/** Wallpaper is intentionally only rendered as a frosted background. */
+export const TERMINAL_BG_GLASS_ENABLED_DEFAULT = true;
+export const TERMINAL_BG_GLASS_BLUR_DEFAULT = 20;
+export const TERMINAL_BG_GLASS_BLUR_MIN = 4;
+export const TERMINAL_BG_GLASS_BLUR_MAX = 32;
+
+export function clampTerminalBgGlassBlur(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_BG_GLASS_BLUR_DEFAULT;
+  return Math.min(
+    TERMINAL_BG_GLASS_BLUR_MAX,
+    Math.max(TERMINAL_BG_GLASS_BLUR_MIN, Math.round(value)),
+  );
 }
 
 /** Shared right/bottom breathing room around terminal workspaces, in pixels. */

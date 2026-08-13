@@ -1,18 +1,18 @@
-# 液态玻璃（窗口材质与半透明外观）规格
+# 液态玻璃（原生窗口材质）规格
 
-> 状态：尚未开始，仅完成可行性调研。本文定义 Duo SSH 全局“液态玻璃”外观的边界、平台能力差异与实施约束。
-> 该效果**默认关闭**，必须由用户在设置中显式开启；开启后不得降低终端可读性，也不得改变现有布局密度。
+> 状态：待实现的可选增强。默认的应用内 Graphite Glass 配色、chrome / 浮层磨砂、实色 fallback 与减少透明度降级，已由 [`graphite-glass-theme.md`](graphite-glass-theme.md) 定义并实施。
+> 本文只定义“透出桌面背景”的原生窗口材质。该效果**默认关闭**，必须由用户显式开启；开启后不得降低终端可读性，也不得改变现有布局密度。
 
-## 1. 结论：能实现，但要拆成两层
+## 1. 结论：默认 CSS 玻璃与原生窗口材质必须分层
 
 “液态玻璃”在桌面应用里其实是两件不同的事，能力、风险和跨平台一致性完全不同。必须分层实现，不能当成一个开关。
 
-| 层 | 做法 | 平台 | 风险 |
+| 层 | 做法 | 平台 | 归属 |
 | --- | --- | --- | --- |
-| **A. 应用内磨砂**（overlay） | CSS `backdrop-filter: blur() saturate()` + 半透明 token，模糊的是应用自身的下层内容 | WebView2 / WKWebView 均原生支持，全平台一致 | 低。不需要窗口透明，不影响窗口行为 |
-| **B. 窗口材质**（window） | 窗口 `transparent: true` + Tauri `windowEffects`（Windows Mica / Acrylic、macOS Vibrancy），模糊的是**桌面背景** | Windows 11 / macOS 10.14+ | 中高。改变窗口创建方式，影响缩放性能、resize 边框、启动闪烁 |
+| **A. 应用内玻璃** | CSS `backdrop-filter` + Graphite Glass 半透明 token，模糊应用自身下层内容 | WebView2 / WKWebView | 已实现；不新增设置或第二套类 |
+| **B. 窗口材质** | `transparent: true` + Tauri `windowEffects`（Windows Mica / Acrylic、macOS Vibrancy），模糊**桌面背景** | Windows 11 / macOS 10.14+ | 本文主责；会影响缩放性能、resize 边框与启动首帧 |
 
-只做 A 就能拿到绝大部分“玻璃感”（命令面板、模态、右键菜单、下拉浮层、Toast 悬浮在内容之上时的磨砂），且零平台风险；B 才是“整个应用透出桌面”的那种效果，代价明显更大。因此本规格把两者做成同一个设置项的三档，而不是两个独立开关。
+应用内玻璃已经覆盖命令面板、模态、右键菜单、下拉浮层、Toast 与 workspace chrome，且不依赖窗口透明。B 才是“整个应用透出桌面”的效果，代价明显更大。因此后续设置只控制 B，不能关闭或再次实现 A。
 
 macOS 26 的原生 Liquid Glass（`NSGlassEffectView`）只能通过私有 API 触及（社区插件 `tauri-plugin-liquid-glass` / `electron-liquid-glass` 都是这么做的）。**首版不引入私有 API**：它不受 Apple 文档保障、可能随系统小版本失效，且会影响 App Store 分发资格。首版在 macOS 上用公开的 `NSVisualEffectView` 材质（Tauri `Effect::UnderWindowBackground` / `HudWindow` / `Sidebar`），观感接近；真·Liquid Glass 见第 9 节可选阶段。
 
@@ -20,11 +20,11 @@ macOS 26 的原生 Liquid Glass（`NSGlassEffectView`）只能通过私有 API �
 
 ### 目标
 
-- 在设置 → 外观中提供窗口材质控制：**关闭 / 仅浮层 / 整窗**三档 + 强度三档，切换后立即生效，无需重启。
-- 深浅主题各自有独立的玻璃 token，两套都保证正文与图标达到 WCAG AA 对比度。
+- 在设置 → 外观中提供原生窗口材质控制：**关闭 / 整窗**两档；若平台和 Phase 0 结论允许，切换后立即生效，无需重启。
+- 复用 Graphite Glass 的深浅主题 token，两套都保证正文与图标达到 WCAG AA 对比度。
 - 主窗口与所有 `detached-*` 独立窗口表现一致，且跨窗口实时同步。
 - 平台不支持时自动降级并在设置里说明原因，不出现“开了没反应”的哑状态。
-- 终端默认仍然完全不透明；玻璃只作用于外壳 chrome 与浮层。
+- 终端默认仍然完全不透明；原生材质只透过外壳 chrome 与窗口底板。
 
 ### 非目标
 
@@ -33,6 +33,7 @@ macOS 26 的原生 Liquid Glass（`NSGlassEffectView`）只能通过私有 API �
 - 不改动现有终端背景图与终端不透明度功能，也不用玻璃取代它们。
 - 首版不引入 macOS 私有 API，不引入 Linux 支持（项目当前只发布 Windows / macOS）。
 - 不为玻璃新增任何后端数据存储；它是纯前端偏好 + 窗口属性。
+- 不重新实现、覆盖或条件化 Graphite Glass 的 `.is-glass-chrome` / `.is-glass-overlay`。
 
 ## 3. 当前代码基线
 
@@ -43,24 +44,22 @@ macOS 26 的原生 Liquid Glass（`NSGlassEffectView`）只能通过私有 API �
 - `src-tauri/Cargo.toml` 的 `tauri` 没有 `macos-private-api` feature；`window-vibrancy` 只是 Tauri 的传递依赖，应用代码未使用。
 - 独立窗口在 `src-tauri/src/workspace/mod.rs:140-160` 用 `WebviewWindowBuilder` 创建，同样没有透明或材质设置。
 - `src-tauri/capabilities/default.json`（`main`）与 `capabilities/detached-workspace.json`（`detached-*`）都没有 `core:window:allow-set-effects`。
-- `src/theme/global.css` 的 token 层在 `:root`（7-115，深色默认）与 `:root[data-theme="light"]`（117-171）；`.app-shell:230-238` 是实际上色的那一层（`var(--bg-app)` + `border-radius: 6px`）。
-- **全仓库没有任何 `backdrop-filter` / `filter: blur`**，玻璃层是全新的。
-- `src/theme/useTheme.ts` 用 `document.documentElement.dataset.theme` 落地，并监听 `storage` 事件做跨窗口同步——玻璃设置应完全照抄这个模式。
+- `src/theme/global.css` 已定义 Graphite Glass token、`.is-glass-chrome` 与 `.is-glass-overlay`；这些 CSS 表面不依赖窗口透明。
+- `src/theme/useTheme.ts` 用 `document.documentElement.dataset.theme` 落地，并监听 `storage` 事件做跨窗口同步——原生窗口材质偏好应照抄该模式。
 - `src/settings/SettingsDialog.tsx:43` 的 `SettingsCategory` 已有 `"appearance"`，其 UI 在 445-502（主题 + 左侧导航栏），玻璃控件加在这里。
-- 终端已有独立的半透明通道：`settings.ts:95` 的 `dssh.terminal.bgOpacity` → `App.tsx:463-475` 写 `--terminal-surface`，`TerminalView.tsx` 据此决定 xterm 的 `allowTransparency`。玻璃必须与它协同，不能各算各的。
-- `SettingsDialog.tsx:598-603` 现存文案明确写着“窗口对桌面的整体透明需要系统级窗口透明，暂未开启”——本功能落地后这句话要改。
-- 遗留缺陷：`global.css:8752/8827/8912` 的独立窗口样式引用了从未定义的 `--bg-base` / `--bg-raised`，目前靠继承兜底。玻璃改造前必须先修，否则独立窗口的材质无处挂载。
+- 终端已有独立的半透明通道：`settings.ts` 的 `dssh.terminal.bgOpacity` → `App.tsx` 写 `--terminal-surface`，`TerminalView.tsx` 据此决定 xterm 的 `allowTransparency`。原生窗口材质必须与它协同，不能各算各的。
+- `--bg-base` / `--bg-raised` 已映射至现有语义 surface token，独立窗口可复用同一套材质。
 
 ## 4. 设置模型
 
-三档模式 + 三档强度，一个 localStorage 前缀，两个键：
+原生窗口材质采用两档模式；Graphite Glass 的应用内磨砂始终由全局主题提供，不是这个设置项的一部分。可选强度仅作用于后续原生材质：
 
 ```ts
 // src/settings/settings.ts
 export const appearanceGlassModeKey = "dssh.appearance.glassMode";
 export const appearanceGlassIntensityKey = "dssh.appearance.glassIntensity";
 
-export type GlassMode = "off" | "overlay" | "window";
+export type GlassMode = "off" | "window";
 export type GlassIntensity = "low" | "medium" | "high";
 
 export const GLASS_MODE_DEFAULT: GlassMode = "off";
@@ -69,9 +68,8 @@ export const GLASS_INTENSITY_DEFAULT: GlassIntensity = "medium";
 
 | 模式 | 效果 | 依赖 |
 | --- | --- | --- |
-| `off` | 现状，完全不透明 | 无 |
-| `overlay` | 命令面板、模态、右键菜单、下拉浮层、Toast、Zen 退出条使用磨砂；窗口仍不透明 | 仅 CSS，全平台 |
-| `window` | 在 `overlay` 基础上，标题栏 / 活动栏 / 侧栏 / 标签条 / 右侧 dock 与应用底板透出桌面 | 窗口透明 + 系统材质 |
+| `off` | 保留 Graphite Glass 的应用内 chrome / 浮层材质，不透出桌面 | 无 |
+| `window` | 在 Graphite Glass 基础上，窗口底板与 chrome 透出桌面 | 窗口透明 + 系统材质 |
 
 强度只映射到两个数值，不引入更多变量：
 
@@ -85,34 +83,21 @@ export const GLASS_INTENSITY_DEFAULT: GlassIntensity = "medium";
 
 **降级规则**，按顺序判定，第一条命中即生效：
 
-1. 用户选 `window` 但平台不支持（Windows 10、无 DWM 合成、macOS < 10.14）→ 按 `overlay` 渲染，设置里该选项禁用并说明原因。
-2. 系统开启“减少透明度”（`@media (prefers-reduced-transparency: reduce)`，macOS 辅助功能 / Windows 透明效果关闭）→ 无论选了什么都按 `off` 渲染，设置里显示“已被系统偏好覆盖”。
-3. `backdrop-filter` 不被支持（`@supports not (backdrop-filter: blur(1px))`）→ 退化为不带模糊的半透明底色，不留下“完全透明看不清”的状态。
+1. 用户选 `window` 但平台不支持（Windows 10、无 DWM 合成、macOS < 10.14）→ 按 `off` 渲染，设置里该选项禁用并说明原因。
+2. 系统开启“减少透明度” → 不施加原生窗口材质；Graphite Glass CSS 按自己的实色 fallback 渲染。
+3. `backdrop-filter` 不被支持 → 只影响 Graphite Glass 的 CSS fallback，不改变窗口材质能力判定。
 
 ## 5. 前端实现约定
 
 ### 5.1 Token 层
 
-在 `:root` 上追加 `data-material` 属性（与 `data-theme` 平行，由 `useGlassSettings` 写入）：
+在 `:root` 上追加 `data-window-material` 属性（与 `data-theme` 平行，由 `useGlassSettings` 写入）：
 
 ```
-<html data-theme="dark" data-material="window" data-material-intensity="medium">
+<html data-theme="dark" data-window-material="window" data-window-material-intensity="medium">
 ```
 
-`global.css` 新增一段紧跟主题 token 的 `[data-material]` 覆盖块，只重定义**表面色**，不碰组件规则：
-
-- 新增变量：`--glass-blur`、`--glass-saturate`、`--glass-chrome-bg`、`--glass-overlay-bg`、`--glass-border`、`--glass-shadow`。
-- `[data-material="overlay“]` 只覆盖 `--bg-elevated` 与模态面板底色；`[data-material=”window"]` 追加覆盖 `--bg-app`、`--bg-titlebar`、`--bg-toolbar`、`--bg-activity`、`--bg-sidebar`、`--bg-panel`。
-- 半透明值统一用 `color-mix(in srgb, <原 token> <alpha>%, transparent)` 表达，深浅主题各写一份，禁止字面色值（`AGENTS.md` 的 token 约束照旧）。
-
-`backdrop-filter` 无法写进颜色 token，只能是规则。为此新增**一条**共享类 `.is-glass-surface`，挂到需要磨砂的容器上，避免在几十个组件选择器里重复：
-
-```css
-[data-material="overlay"] .is-glass-surface,
-[data-material="window"] .is-glass-surface {
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-}
-```
+`global.css` 已在主题 token 后定义 `--glass-*`，并以 `.is-glass-chrome` / `.is-glass-overlay` 集中承载 `backdrop-filter`。原生窗口材质只允许 `[data-window-material="window"]` 追加覆盖 `.app-shell` 的窗口底板透明度；不得重定义 chrome / overlay token，不得新增第二组玻璃类。
 
 ### 5.2 层数上限
 
@@ -124,25 +109,16 @@ export const GLASS_INTENSITY_DEFAULT: GlassIntensity = "medium";
 
 ### 5.3 需要处理的表面
 
-| 表面 | 类名 | `overlay` | `window` |
+| 表面 | 类名 | Graphite Glass（默认） | 原生 `window` |
 | --- | --- | --- | --- |
-| 应用底板 | `.app-shell` | — | 透明 + 系统材质 |
-| 标题栏 | `.titlebar` | — | 磨砂 |
-| 活动栏 | `.activity-bar` | — | 磨砂 |
-| 左侧栏 | `.sidebar` | — | 磨砂 |
-| 标签条 | `.main-column__tabs` | — | 磨砂 |
-| 右侧 dock | `.right-dock`（含 `.host-tools` / `.ai-chat`） | — | 磨砂 |
-| 命令面板 | `.palette` | 磨砂 | 磨砂 |
-| 模态面板 | `.profile-editor` / `.settings-window` | 磨砂 | 磨砂 |
-| 模态遮罩 | `.profile-editor-backdrop` / `.palette-backdrop` | 仅调 alpha | 仅调 alpha |
-| 右键菜单 | `.context-menu` | 磨砂 | 磨砂 |
-| 下拉浮层 | `.select-menu__popover` / `.settings-popover` | 磨砂 | 磨砂 |
-| Toast | `.toast` | 磨砂 | 磨砂 |
-| Zen 退出条 | `.zen-exit` | 磨砂 | 磨砂 |
-| 独立窗口外壳 | `.detached-workspace` / `.detached-workspace__tabbar` | — | 磨砂（先修 `--bg-base` / `--bg-raised`） |
+| 应用底板 | `.app-shell` | 冷黑环境底纹 | 透明 + 系统材质 |
+| 标题栏 / 活动栏 / 左侧栏 / 标签条 / 右侧 dock | `.is-glass-chrome` | 磨砂 | 复用默认规则 |
+| 命令面板 / 模态 / 菜单 / 下拉 / Toast / Zen 退出条 | `.is-glass-overlay` 或已有公共规则 | 磨砂 | 复用默认规则 |
+| 模态遮罩 | `.profile-editor-backdrop` / `.palette-backdrop` | 仅压暗 | 仅压暗 |
+| 独立窗口外壳 | `.detached-workspace` / `.detached-workspace__tabbar` | 同一套 token | 复用默认规则 |
 | 终端 / 编辑器 / 文件列表 | — | 不处理 | 不处理 |
 
-`html`、`body`、`#root`、`.app-root` 在 `window` 模式下必须为 `background: transparent`；`off` / `overlay` 下保持现状。
+`html`、`body`、`#root`、`.app-root` 仅在 `data-window-material="window"` 下改为透明；默认 Graphite Glass 始终保持当前应用内画布。
 
 ## 6. 窗口材质实现约定（`window` 模式）
 
@@ -151,7 +127,7 @@ export const GLASS_INTENSITY_DEFAULT: GlassIntensity = "medium";
 Tauri 的 `transparent` 只能在窗口创建时确定，`setEffects` / `clear_effects` 才能运行时改。为了做到“切换不重启”，采用：
 
 - **窗口永远以 `transparent: true` 创建**（主窗口 + `detached-*`）。
-- `off` / `overlay` 时不施加任何系统材质，并由 CSS 给 `.app-shell` 铺满不透明底色 —— 用户看到的与今天完全一致。
+- `off` 时不施加任何系统材质，并保留 Graphite Glass 的应用内画布与 chrome / overlay 材质。
 - `window` 时由 Rust 施加平台材质，CSS 同步把底板改成透明。
 
 这条决策的代价必须在 Phase 0 验掉（见 6.4），否则退回“切换需重启”的保守方案。
@@ -215,18 +191,18 @@ fn apply_window_material(window: Window, material: WindowMaterialRequest) -> Res
 ## 9. 实施阶段
 
 1. **Phase 0 可行性与基线**：透明窗口在 Windows 11 / macOS 上的窗口行为与性能实测，决定“免重启切换”是否可行。
-2. **Phase 1 CSS 材质层**：token、`data-material`、`.is-glass-surface`、深浅两套、降级查询。全平台零风险，可独立发布。
+2. **Phase 1 原生材质状态**：`data-window-material`、偏好持久化、跨窗口同步与能力感知；复用 Graphite Glass token，不重做 CSS 磨砂。
 3. **Phase 2 设置与状态**：`useGlassSettings`、localStorage、跨窗口 `storage` 同步、外观设置 UI、能力感知的禁用态。
 4. **Phase 3 窗口材质**：Tauri 配置、Rust 命令与平台探测、主窗口与独立窗口施加、最大化圆角、首帧闪烁处理。
 5. **Phase 4 终端与内容协同**：合成顺序、终端不透明度叠加、文案更新、Zen / 分屏 / 独立窗口回归。
 6. **Phase 5 验收与发布**：性能矩阵、对比度审计、跨平台人工验收、全套 `tsc` / `build` / `fmt` / `clippy` / `test`。
 7. **Phase 6（可选，非发布门槛）** macOS 26 原生 Liquid Glass：`NSGlassEffectView` 属私有 API，需单独评审可用性、失效兜底与分发影响，通过后才作为 macOS 26+ 的增强材质，不得成为默认路径。
 
-分阶段任务清单见 [`tasks.md`](../tasks.md#液态玻璃窗口材质与半透明外观)。
+分阶段任务清单见 [`tasks.md`](../tasks.md#原生窗口材质桌面透视)。
 
 ## 10. 验收标准
 
-- 三档模式 × 深浅主题 × Windows 11 / macOS 全部目视正确，切换即时生效且无需重启。
+- 原生窗口材质关闭 / 整窗 × 深浅主题 × Windows 11 / macOS 全部目视正确，切换即时生效且无需重启。
 - Windows 10 与开启“减少透明度”的机器上，UI 呈现明确的降级说明，不出现无效开关。
 - 主窗口与独立窗口表现一致；在一个窗口改设置，另一个窗口同步更新。
 - 开启 `window` + `high` 强度时：终端连续输出（`cat` 大文件）帧率与内存相对 `off` 基线的回退在可接受范围内并有记录；窗口拖动 / 缩放无肉眼卡顿（Acrylic 除外，其代价需单独记录并在 UI 标注）。
@@ -236,8 +212,8 @@ fn apply_window_material(window: Window, material: WindowMaterialRequest) -> Res
 
 ## 11. 决策记录
 
-- **分三档而非布尔开关**：`overlay` 与 `window` 的技术风险差一个数量级。合成一个开关会迫使全平台承担窗口透明的代价，而多数“玻璃感”其实来自浮层。
+- **应用内玻璃与原生材质分开**：默认 Graphite Glass 不承担窗口透明风险；后续原生材质只控制桌面透视。
 - **窗口恒定透明、材质运行期切换**：Tauri 的 `transparent` 不可运行时变更，这是唯一能做到免重启切换的路径；代价（首帧闪烁、窗口行为）由 Phase 0 兜底验证。
 - **走 Rust 命令而非前端 `setEffects`**：平台能力探测必须在 Rust 侧完成，顺带避免给 WebView 扩权。
 - **首版不用 macOS 私有 API**：`NSGlassEffectView` 无文档保障、可能随系统更新失效，且影响分发资格。公开 vibrancy 材质已能达成设计目标。
-- **默认关闭**：Duo SSH 的设计基调是紧凑的原生 IDE 工具而非装饰性界面；玻璃是可选偏好，不是新的默认外观。
+- **原生桌面透视默认关闭**：Graphite Glass 是默认外观；桌面透视仍是高风险可选偏好。

@@ -1,8 +1,9 @@
 /*
- * dssh "Violet / Nebula" design tokens.
- * Layout mirrors a native IDE workspace; the palette is a cool violet-on-graphite
- * identity deliberately distinct from warm-orange terminal apps. Component styles
- * only ever reference these semantic tokens — never literal colors.
+ * dssh "Graphite Glass" design tokens.
+ * The workspace remains a compact native IDE. Cold graphite surfaces carry the
+ * hierarchy, while restrained ice blue is reserved for meaningful interaction.
+ * Component styles only ever reference these semantic tokens — never literal
+ * colours.
  */
 :root {
   color-scheme: dark;
@@ -12,78 +13,86 @@
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
-  color: #e6e6f0;
-  background: #16161e;
+  color: var(--text-base);
+  background: var(--bg-app);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
   /* Background layers (app → activity → sidebar/panel → elevated; sunken for inputs/terminal) */
-  --bg-app: #16161e;
+  --bg-app: #0b0e12;
   --bg-app-accent: transparent;
-  --bg-activity: #121219;
-  --bg-titlebar: #14141c;
-  --bg-toolbar: #1a1a24;
-  --bg-panel: #1d1d28;
-  --bg-panel-muted: #22222e;
-  --bg-sunken: #14141c;
-  --bg-elevated: #24242f;
-  --bg-sidebar: #1d1d28;
-  --bg-hover: #262633;
-  --bg-selected: #2a2740;
-  --bg-empty-area: #16161e;
-  --bg-empty-panel: #1d1d28;
-  --bg-modal-backdrop: rgba(8, 8, 12, 0.6);
-  --bg-modal-header: #1d1d28;
-  --bg-modal-footer: #1d1d28;
+  --bg-activity: rgb(10 13 17 / 90%);
+  --bg-titlebar: rgb(14 18 23 / 82%);
+  --bg-toolbar: rgb(17 21 27 / 84%);
+  --bg-panel: rgb(18 23 29 / 86%);
+  --bg-panel-muted: rgb(24 30 38 / 86%);
+  --bg-sunken: #0d1116;
+  --bg-elevated: rgb(27 34 43 / 92%);
+  --bg-sidebar: rgb(18 23 29 / 86%);
+  --bg-hover: rgb(231 240 247 / 5.5%);
+  --bg-selected: rgb(121 166 201 / 15%);
+  --bg-empty-area: #0b0e12;
+  --bg-empty-panel: rgb(18 23 29 / 94%);
+  --bg-modal-backdrop: rgb(3 5 8 / 65%);
+  --bg-modal-header: rgb(21 27 34 / 94%);
+  --bg-modal-footer: rgb(21 27 34 / 94%);
+  --bg-base: var(--bg-app);
+  --bg-raised: var(--bg-toolbar);
 
   /* Borders + text */
-  --border-subtle: #2a2a38;
-  --border-strong: #3a3a4a;
-  --divider: #24242f;
-  --text-strong: #f2f2f7;
-  --text-base: #e6e6f0;
-  --text-muted: #9e9eb0;
-  --text-faint: #6c6c7e;
+  --border-subtle: rgb(221 232 240 / 8.5%);
+  --border-strong: rgb(221 232 240 / 16%);
+  --divider: rgb(221 232 240 / 6.5%);
+  --text-strong: #f4f7fa;
+  --text-base: #dde4ea;
+  --text-muted: #98a4af;
+  --text-faint: #707d89;
 
-  /* Accent (violet) + on-accent + tints */
-  --accent: #7c6ff0;
-  --accent-strong: #8b7cf6;
-  --accent-soft: rgba(124, 111, 240, 0.14);
-  --accent-border: rgba(124, 111, 240, 0.45);
+  /* Accent (ice blue) + on-accent + tints */
+  --accent: #79a6c9;
+  --accent-strong: #a8c7de;
+  --accent-soft: rgb(121 166 201 / 13%);
+  --accent-border: rgb(144 187 219 / 42%);
   --accent-fg: #ffffff;
-  --selection: #2a2740;
-  --btn-primary-bg: #7c6ff0;
-  --btn-primary-bg-hover: #8b7cf6;
+  --selection: rgb(121 166 201 / 15%);
+  --btn-primary-bg: #416f8d;
+  --btn-primary-bg-hover: #4a7692;
   --btn-primary-fg: #ffffff;
+  --btn-danger-bg: #a8464d;
+  --btn-danger-bg-hover: #bb535b;
 
   /* Status */
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --info: #7c9cf0;
+  --success: #73c9a2;
+  --warning: #d6b56c;
+  --danger: #e18484;
+  --info: #82b3d5;
 
   /* Code editor syntax and highlighting */
-  --code-comment: #9692aa;
-  --code-keyword: #a99dff;
-  --code-string: #79d8be;
-  --code-number: #ffb88a;
-  --code-type: #78c8f5;
-  --code-selection: #3d3768;
-  --code-selection-inactive: #2f2a4e;
-  --code-line-highlight: #1d1a2a;
-  --code-indent: #2b2938;
-  --code-find-match: #725b25;
-  --code-find-match-highlight: #4e4324;
+  --code-comment: #84919c;
+  --code-keyword: #98b8d0;
+  --code-string: #7ab9a8;
+  --code-number: #d6b27e;
+  --code-type: #88bddc;
+  --code-selection: #1d3443;
+  --code-selection-inactive: #172630;
+  --code-line-highlight: #111820;
+  --code-indent: #202b35;
+  --code-find-match: #615534;
+  --code-find-match-highlight: #3e3928;
 
-  --terminal-bg: #14141c;
+  --terminal-bg: #0b0e12;
+  --terminal-bg-rgb: 11 14 18;
   /* Optional terminal wallpaper + surface alpha, set from the terminal settings.
      The wallpaper is painted at full strength; how much of it (or of the app
      background) shows through is controlled by the terminal's own alpha. */
   --terminal-bg-image: none;
   --terminal-surface: var(--terminal-bg);
   --terminal-workspace-inset: 4px;
+  --terminal-wallpaper-blur: 20px;
+  --terminal-wallpaper-saturate: 108%;
+  --terminal-wallpaper-highlight: rgb(244 247 250 / 4%);
 
   /* Radii */
   --radius-xs: 2px;
@@ -91,7 +100,23 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-pill: 999px;
-  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 8px 24px rgb(0 0 0 / 45%);
+  --shadow-popover: 0 10px 28px rgb(0 0 0 / 34%);
+
+  /* Shared glass material. Only stable chrome and overlays may consume these. */
+  --glass-blur-chrome: 14px;
+  --glass-blur-overlay: 18px;
+  --glass-saturate: 112%;
+  --glass-highlight: rgb(255 255 255 / 5.5%);
+  --glass-border: var(--border-subtle);
+  --glass-shadow-overlay: 0 12px 32px rgb(0 0 0 / 32%);
+  --glass-fallback-bg: #151a21;
+  --app-canvas:
+    radial-gradient(72% 54% at 100% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 72%),
+    radial-gradient(58% 52% at 0% 100%, rgb(148 174 191 / 4%), transparent 74%),
+    var(--bg-app);
+  --scrollbar-thumb: rgb(161 183 198 / 28%);
+  --scrollbar-thumb-hover: rgb(161 183 198 / 45%);
 
   /* Spacing scale */
   --space-1: 4px;
@@ -116,58 +141,73 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  color: #2a2a38;
-  background: #f7f7fb;
-  --bg-app: #f7f7fb;
+  color: var(--text-base);
+  background: var(--bg-app);
+  --bg-app: #f4f6f8;
   --bg-app-accent: transparent;
-  --bg-activity: #edeef3;
-  --bg-titlebar: #f0f0f6;
-  --bg-toolbar: #f2f2f8;
-  --bg-panel: #ffffff;
-  --bg-panel-muted: #eff0f5;
-  --bg-sunken: #f2f2f8;
-  --bg-elevated: #ffffff;
-  --bg-sidebar: #eff0f5;
-  --bg-hover: #e7e7f0;
-  --bg-selected: #e4e0fa;
-  --bg-empty-area: #f2f2f8;
-  --bg-empty-panel: #ffffff;
-  --bg-modal-backdrop: rgba(20, 20, 28, 0.28);
-  --bg-modal-header: #f2f2f8;
-  --bg-modal-footer: #f2f2f8;
-  --border-subtle: #e2e2ec;
-  --border-strong: #cfcfdc;
-  --divider: #e8e8f0;
-  --text-strong: #17171f;
-  --text-base: #2a2a38;
-  --text-muted: #6c6c7e;
-  --text-faint: #9a9aab;
-  --accent: #6d5ce0;
-  --accent-strong: #5b4bd0;
-  --accent-soft: rgba(109, 92, 224, 0.1);
-  --accent-border: rgba(109, 92, 224, 0.4);
+  --bg-activity: rgb(231 235 239 / 94%);
+  --bg-titlebar: rgb(238 242 245 / 90%);
+  --bg-toolbar: rgb(238 242 245 / 90%);
+  --bg-panel: rgb(248 250 251 / 92%);
+  --bg-panel-muted: rgb(238 242 245 / 90%);
+  --bg-sunken: #eef1f4;
+  --bg-elevated: rgb(255 255 255 / 94%);
+  --bg-sidebar: rgb(248 250 251 / 92%);
+  --bg-hover: rgb(31 47 59 / 5.5%);
+  --bg-selected: rgb(66 111 141 / 13%);
+  --bg-empty-area: #f4f6f8;
+  --bg-empty-panel: rgb(248 250 251 / 96%);
+  --bg-modal-backdrop: rgb(20 29 36 / 28%);
+  --bg-modal-header: rgb(248 250 251 / 96%);
+  --bg-modal-footer: rgb(248 250 251 / 96%);
+  --bg-base: var(--bg-app);
+  --bg-raised: var(--bg-toolbar);
+  --border-subtle: rgb(31 47 59 / 10%);
+  --border-strong: rgb(31 47 59 / 20%);
+  --divider: rgb(31 47 59 / 8%);
+  --text-strong: #171c21;
+  --text-base: #252b31;
+  --text-muted: #596672;
+  --text-faint: #64717c;
+  --accent: #426f8d;
+  --accent-strong: #2d5d7b;
+  --accent-soft: rgb(66 111 141 / 10%);
+  --accent-border: rgb(45 93 123 / 38%);
   --accent-fg: #ffffff;
-  --selection: #e4e0fa;
-  --btn-primary-bg: #6d5ce0;
-  --btn-primary-bg-hover: #5b4bd0;
+  --selection: rgb(66 111 141 / 13%);
+  --btn-primary-bg: #426f8d;
+  --btn-primary-bg-hover: #47728e;
   --btn-primary-fg: #ffffff;
-  --success: #16a34a;
-  --warning: #b7791f;
-  --danger: #dc2626;
-  --info: #5b57d6;
-  --code-comment: #6d6a83;
-  --code-keyword: #6755d8;
-  --code-string: #197b67;
-  --code-number: #a2532c;
-  --code-type: #176c99;
-  --code-selection: #dcd8ff;
-  --code-selection-inactive: #ebe9f8;
-  --code-line-highlight: #efedf7;
-  --code-indent: #e3e0ec;
-  --code-find-match: #f5d681;
-  --code-find-match-highlight: #f9e9b5;
-  --terminal-bg: #14141c;
-  --shadow-soft: 0 8px 24px rgba(20, 20, 40, 0.14);
+  --btn-danger-bg: #b8474f;
+  --btn-danger-bg-hover: #c95860;
+  --success: #287c5d;
+  --warning: #8b651f;
+  --danger: #b5484f;
+  --info: #3d7292;
+  --code-comment: #657581;
+  --code-keyword: #3d6d8b;
+  --code-string: #24705f;
+  --code-number: #8e652f;
+  --code-type: #28698d;
+  --code-selection: #d7e5ee;
+  --code-selection-inactive: #e4edf2;
+  --code-line-highlight: #eaf0f3;
+  --code-indent: #d9e2e7;
+  --code-find-match: #edda9a;
+  --code-find-match-highlight: #f4e9c5;
+  --terminal-bg: #0b0e12;
+  --terminal-bg-rgb: 11 14 18;
+  --shadow-soft: 0 8px 24px rgb(20 29 36 / 14%);
+  --shadow-popover: 0 10px 28px rgb(20 29 36 / 18%);
+  --glass-highlight: rgb(255 255 255 / 46%);
+  --glass-shadow-overlay: 0 12px 32px rgb(20 29 36 / 16%);
+  --glass-fallback-bg: #f8fafb;
+  --app-canvas:
+    radial-gradient(72% 54% at 100% 0%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 72%),
+    radial-gradient(58% 52% at 0% 100%, rgb(111 132 145 / 3%), transparent 74%),
+    var(--bg-app);
+  --scrollbar-thumb: rgb(71 93 108 / 24%);
+  --scrollbar-thumb-hover: rgb(71 93 108 / 40%);
 }
 
 * {
@@ -202,7 +242,7 @@ button {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.28) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -218,13 +258,54 @@ button {
 *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background-color: rgba(148, 163, 184, 0.28);
+  background-color: var(--scrollbar-thumb);
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(148, 163, 184, 0.45);
+  background-color: var(--scrollbar-thumb-hover);
   background-clip: padding-box;
+}
+
+/* Glass is intentionally limited to stable workspace chrome and transient
+   overlays. Content surfaces such as terminals, Monaco and virtualized lists
+   keep their own opaque backgrounds and never receive these classes. */
+.is-glass-chrome {
+  border-color: var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  -webkit-backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-saturate));
+}
+
+.is-glass-overlay {
+  border-color: var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow-overlay);
+  -webkit-backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .is-glass-chrome,
+  .is-glass-overlay {
+    background: var(--glass-fallback-bg) !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-shell,
+  .detached-workspace {
+    background: var(--bg-app);
+  }
+
+  .is-glass-chrome,
+  .is-glass-overlay {
+    background: var(--glass-fallback-bg) !important;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 .app-shell {
@@ -234,7 +315,7 @@ button {
   flex-direction: column;
   overflow: hidden;
   border-radius: 6px;
-  background: var(--bg-app);
+  background: var(--app-canvas);
 }
 
 .app-body {
@@ -245,7 +326,7 @@ button {
   flex: 1;
 }
 
-/* ===== Violet workspace shell: rail | sidebar | main-column | right-dock ===== */
+/* ===== Graphite workspace shell: rail | sidebar | main-column | right-dock ===== */
 .activity-rail {
   display: flex;
   flex: 0 0 auto;
@@ -318,7 +399,7 @@ button {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: var(--bg-app);
+  background: transparent;
 }
 
 .main-column__tabs {
@@ -441,7 +522,7 @@ button {
 }
 
 .host-tools__title > svg {
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .host-tools__target {
@@ -511,7 +592,7 @@ button {
 }
 
 .host-tools__empty > svg {
-  color: var(--accent-strong);
+  color: var(--text-muted);
   opacity: 0.8;
 }
 
@@ -828,7 +909,7 @@ button {
 }
 
 .session-tree--empty > svg {
-  color: var(--accent-strong);
+  color: var(--text-muted);
   opacity: 0.6;
 }
 
@@ -1088,6 +1169,10 @@ button {
 
 .session-child > svg {
   flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.session-child.is-active > svg {
   color: var(--accent-strong);
 }
 
@@ -1169,7 +1254,7 @@ button {
 
 .session-terminal__rename-form > svg {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .session-terminal__rename-input {
@@ -1301,7 +1386,7 @@ button {
 
 .session-pane__rename-form > svg {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .session-pane__rename-input {
@@ -1724,7 +1809,7 @@ button {
 }
 
 .session-manager__empty > svg {
-  color: var(--accent-strong);
+  color: var(--text-muted);
   opacity: 0.7;
 }
 
@@ -2449,8 +2534,8 @@ button {
 }
 
 .window-control--close:hover {
-  background: #e81123;
-  color: #fff;
+  background: var(--btn-danger-bg);
+  color: var(--accent-fg);
 }
 
 .activity-bar {
@@ -3272,7 +3357,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .remote-file-tree__row--directory > svg,
 .remote-file-tree__row--root > svg {
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .remote-file-tree__chevron,
@@ -3597,7 +3682,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .remote-file-editor__tab-label > svg {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .remote-file-editor__dirty {
@@ -4149,6 +4234,27 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .terminal-view[data-wallpaper="true"]::after {
   z-index: 1;
   background: var(--terminal-surface);
+  box-shadow: inset 0 1px 0 var(--terminal-wallpaper-highlight);
+  -webkit-backdrop-filter: blur(var(--terminal-wallpaper-blur)) saturate(var(--terminal-wallpaper-saturate));
+  backdrop-filter: blur(var(--terminal-wallpaper-blur)) saturate(var(--terminal-wallpaper-saturate));
+}
+
+/* Wallpaper is deliberately an opt-in frosted layer rather than a plain image.
+   The runtime only sets data-wallpaper when the current WKWebView / WebView2
+   supports one of these properties; this feature query is a second guard for
+   embedded or older runtimes that report a stale capability. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .terminal-view[data-wallpaper="true"]::before,
+  .terminal-view[data-wallpaper="true"]::after {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .terminal-view[data-wallpaper="true"]::before,
+  .terminal-view[data-wallpaper="true"]::after {
+    display: none;
+  }
 }
 
 /* The element xterm renders into. It belongs to the terminal instance rather
@@ -4189,12 +4295,12 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .terminal-view .xterm-viewport::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 8px;
-  background-color: rgba(148, 163, 184, 0.34);
+  background-color: var(--scrollbar-thumb);
   background-clip: padding-box;
 }
 
 .terminal-view .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(148, 163, 184, 0.5);
+  background-color: var(--scrollbar-thumb-hover);
   background-clip: padding-box;
 }
 
@@ -4266,7 +4372,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .tab.is-active .tab__index {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .tab__title {
@@ -4707,6 +4813,10 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .select-menu__option .icon {
   flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.select-menu__option.is-selected .icon {
   color: var(--accent-strong);
 }
 
@@ -5011,9 +5121,9 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .s3-profile-editor__test.is-success {
-  border-color: color-mix(in srgb, #16803c 55%, var(--border-subtle));
-  background: color-mix(in srgb, #16803c 12%, transparent);
-  color: #146c32;
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border-subtle));
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
 }
 
 .profile-form__section-title {
@@ -5030,11 +5140,11 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   min-height: 34px;
   align-items: center;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, #16803c 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
   border-radius: 2px;
   padding: 7px 10px;
-  color: #146c32;
-  background: color-mix(in srgb, #16803c 9%, transparent);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 9%, transparent);
   font-size: 12px;
 }
 
@@ -6292,7 +6402,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .context-menu__item:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--bg-hover);
   color: var(--text-strong);
 }
 
@@ -6302,7 +6412,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .file-browser__suggestion.is-active {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--bg-selected);
   color: var(--text-strong);
 }
 
@@ -6609,7 +6719,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .sftp-dual-browser__row > svg {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .sftp-dual-browser__row > span {
@@ -6852,7 +6962,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .ai-chat__title .icon {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .ai-chat__title > span {
@@ -6911,7 +7021,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .ai-chat__empty .icon {
-  color: var(--accent-strong);
+  color: var(--text-muted);
 }
 
 .ai-chat__empty-title {
@@ -7520,6 +7630,10 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .ai-model-picker__option .icon {
   flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.ai-model-picker__option.is-selected .icon {
   color: var(--accent-strong);
 }
 
@@ -7598,7 +7712,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .ai-chat__context .icon {
-  color: var(--accent-strong);
+  color: var(--text-muted);
   flex: 0 0 auto;
 }
 
@@ -7908,7 +8022,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--bg-panel);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-popover, 0 8px 24px rgba(0, 0, 0, 0.18));
+  box-shadow: var(--shadow-popover);
 }
 
 .copilot-login__header {
@@ -8001,7 +8115,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--bg-panel);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-popover, 0 8px 24px rgba(0, 0, 0, 0.18));
+  box-shadow: var(--shadow-popover);
 }
 
 .config-password__header {
@@ -8272,7 +8386,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .s3-table__public--public-read {
-  color: #146c32;
+  color: var(--success);
   font-weight: 600;
 }
 
@@ -9105,6 +9219,78 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--bg-base);
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* Dialogs predate the shared overlay class, but they are all stable modal
+   containers rather than scrolling content. Keep their visual material in one
+   place so newly added dialogs do not grow their own blur recipe. */
+:is(
+  .settings-popover,
+  .context-menu,
+  .hostkey-dialog,
+  .remote-file-tree__confirm,
+  .update-notification,
+  .sftp-create-directory__dialog,
+  .copilot-login,
+  .config-password,
+  .s3-acl-dialog,
+  .s3-delete-dialog,
+  .ssh-delete-dialog,
+  .detached-close-dialog,
+  .s3-cleanup-dialog,
+  .s3-open-location-dialog
+) {
+  border-color: var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow-overlay);
+  -webkit-backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :is(
+    .settings-popover,
+    .context-menu,
+    .hostkey-dialog,
+    .remote-file-tree__confirm,
+    .update-notification,
+    .sftp-create-directory__dialog,
+    .copilot-login,
+    .config-password,
+    .s3-acl-dialog,
+    .s3-delete-dialog,
+    .ssh-delete-dialog,
+    .detached-close-dialog,
+    .s3-cleanup-dialog,
+    .s3-open-location-dialog
+  ) {
+    background: var(--glass-fallback-bg);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :is(
+    .settings-popover,
+    .context-menu,
+    .hostkey-dialog,
+    .remote-file-tree__confirm,
+    .update-notification,
+    .sftp-create-directory__dialog,
+    .copilot-login,
+    .config-password,
+    .s3-acl-dialog,
+    .s3-delete-dialog,
+    .ssh-delete-dialog,
+    .detached-close-dialog,
+    .s3-cleanup-dialog,
+    .s3-open-location-dialog
+  ) {
+    background: var(--glass-fallback-bg);
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 /* Update proxy field in the About panel. */

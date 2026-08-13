@@ -81,7 +81,7 @@ export function S3ProfileSidebar(props: Props) {
   }
 
   return (
-    <aside className="sidebar" aria-label="S3 配置">
+    <aside className="sidebar is-glass-chrome" aria-label="S3 配置">
       <div className="sidebar__top">
         <SectionHeader title="对象存储 (S3)" />
         <IconButton className="icon-button--primary" label="新建 S3 配置" onClick={props.onCreate}>

@@ -53,7 +53,7 @@ VncManager / LocalRfbBridge (Rust；仅回环、单次连接、短生命周期)
 - 提供保存的直连 VNC profile，以及通过已保存 SSH profile 到达内网 VNC endpoint 的 SSH tunnel profile。
 - 在统一顶部标签条中打开一个交互式 VNC 桌面：鼠标、键盘、缩放、裁剪、全屏、只读模式、显式的剪贴板同步和安全的断开 / 重连。
 - 支持多个独立 VNC 标签；同一 profile 可以按配置共享或新建服务器会话。
-- 复用 Violet / Nebula token、连接管理搜索 / 分组 / 收藏、最近连接、命令面板、Toast、独立窗口和错误规范化。
+- 复用 Graphite Glass token、连接管理搜索 / 分组 / 收藏、最近连接、命令面板、Toast、独立窗口和错误规范化。
 - 使 VNC 密码、TLS 客户端凭据和会话 capability 永不写入日志、前端持久化状态或普通 SQLite 字段。
 
 ### 2.2 非目标

@@ -135,7 +135,7 @@ export function S3ProfileEditor({ mode, profile, onClose, onSubmit }: Props) {
   const title = mode === "create" ? "新建 S3 配置" : "编辑 S3 配置";
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="profile-editor profile-editor--s3" aria-label={title}>
+      <section className="profile-editor profile-editor--s3 is-glass-overlay" aria-label={title}>
         <header className="profile-editor__topbar">
           <h2>{title}</h2>
           <button className="icon-button" aria-label="关闭编辑器" onClick={onClose} type="button">
