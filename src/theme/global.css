@@ -1376,6 +1376,13 @@ button {
   flex: 1;
 }
 
+/* SFTP tabs stay mounted in the background so transfers and directory state
+   survive tab switches, but inactive surfaces must not remain visible beside
+   the selected terminal. */
+.sftp-tab[hidden] {
+  display: none !important;
+}
+
 .sftp-tab > .sftp-dual-browser {
   width: 100%;
   flex: 1 1 auto;
@@ -6469,6 +6476,95 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .sftp-dual-browser__search input::placeholder {
   color: var(--text-faint);
+}
+
+.sftp-create-directory__backdrop {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--bg-modal-backdrop);
+}
+
+.sftp-create-directory__dialog {
+  display: grid;
+  width: min(360px, 100%);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.sftp-create-directory__dialog h2,
+.sftp-create-directory__dialog p {
+  margin: 0;
+}
+
+.sftp-create-directory__dialog h2 {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.sftp-create-directory__dialog p {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-create-directory__dialog label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sftp-create-directory__dialog input {
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--bg-sunken);
+  color: var(--text-base);
+}
+
+.sftp-create-directory__dialog input:focus {
+  border-color: var(--accent-border);
+}
+
+.sftp-create-directory__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sftp-create-directory__actions button {
+  min-width: 64px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-toolbar);
+  color: var(--text-base);
+  cursor: pointer;
+}
+
+.sftp-create-directory__actions button:last-child {
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.sftp-create-directory__actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .sftp-dual-browser__list {

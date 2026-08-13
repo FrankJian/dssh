@@ -178,6 +178,9 @@ export function FileBrowser({
   const [selectedLocalPaths, setSelectedLocalPaths] = useState<Set<string>>(new Set());
   const [remoteSearch, setRemoteSearch] = useState("");
   const [localSearch, setLocalSearch] = useState("");
+  const [createDirectorySide, setCreateDirectorySide] = useState<"remote" | "local" | null>(null);
+  const [directoryName, setDirectoryName] = useState("");
+  const [isCreatingDirectory, setIsCreatingDirectory] = useState(false);
   const [remoteAnchor, setRemoteAnchor] = useState<string | null>(null);
   const [localAnchor, setLocalAnchor] = useState<string | null>(null);
   const [loadingRemote, setLoadingRemote] = useState(false);
@@ -324,15 +327,28 @@ export function FileBrowser({
     if (!event.shiftKey) setLocalAnchor(entry.path);
   }
 
-  async function createDirectory(side: "remote" | "local") {
+  function beginCreateDirectory(side: "remote" | "local") {
     const parentPath = side === "remote" ? remotePath : localPath;
     if (!parentPath || isTransferring) return;
-    const name = window.prompt("新建目录名", "")?.trim();
-    if (!name) return;
+    setError(null);
+    setDirectoryName("");
+    setCreateDirectorySide(side);
+  }
+
+  async function createDirectory() {
+    const side = createDirectorySide;
+    const parentPath = side === "remote" ? remotePath : localPath;
+    const name = directoryName.trim();
+    if (!side || !parentPath || isCreatingDirectory) return;
+    if (!name) {
+      setError("请输入目录名。");
+      return;
+    }
     if (!validDirectoryName(name)) {
       setError("目录名不能为空，且不能包含路径分隔符。");
       return;
     }
+    setIsCreatingDirectory(true);
     try {
       if (side === "remote") {
         if (!profileId) return;
@@ -344,6 +360,10 @@ export function FileBrowser({
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "创建目录失败。");
+    } finally {
+      setIsCreatingDirectory(false);
+      setCreateDirectorySide(null);
+      setDirectoryName("");
     }
   }
 
@@ -491,7 +511,7 @@ export function FileBrowser({
       <Pane
         entries={visibleRemoteEntries}
         isLoading={loadingRemote}
-        onCreateDirectory={() => void createDirectory("remote")}
+        onCreateDirectory={() => beginCreateDirectory("remote")}
         onEnter={(entry) => entry.isDir && void loadRemote(entry.path)}
         onPathSubmit={() => remoteInput.trim() && void loadRemote(remoteInput.trim())}
         onRefresh={() => remotePath && void loadRemote(remotePath)}
@@ -532,7 +552,7 @@ export function FileBrowser({
       <Pane
         entries={visibleLocalEntries}
         isLoading={loadingLocal}
-        onCreateDirectory={() => void createDirectory("local")}
+        onCreateDirectory={() => beginCreateDirectory("local")}
         onEnter={(entry) => entry.isDir && void loadLocal(entry.path)}
         onPathSubmit={() => localInput.trim() && void loadLocal(localInput.trim())}
         onRefresh={() => localPath && void loadLocal(localPath)}
@@ -584,6 +604,43 @@ export function FileBrowser({
           <Icon name="terminalTool" height="14" width="14" />
           <span>在终端中打开服务器目录</span>
         </button>
+      ) : null}
+      {createDirectorySide ? (
+        <div className="sftp-create-directory__backdrop" role="presentation">
+          <form
+            aria-labelledby="sftp-create-directory-title"
+            className="sftp-create-directory__dialog"
+            onSubmit={(event) => { event.preventDefault(); void createDirectory(); }}
+            role="dialog"
+          >
+            <h2 id="sftp-create-directory-title">
+              新建{createDirectorySide === "remote" ? "服务器" : "本机"}目录
+            </h2>
+            <p>{createDirectorySide === "remote" ? remotePath : localPath}</p>
+            <label>
+              <span>目录名</span>
+              <input
+                autoFocus
+                disabled={isCreatingDirectory}
+                onChange={(event) => setDirectoryName(event.currentTarget.value)}
+                placeholder="例如：备份"
+                value={directoryName}
+              />
+            </label>
+            <div className="sftp-create-directory__actions">
+              <button
+                disabled={isCreatingDirectory}
+                onClick={() => setCreateDirectorySide(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button disabled={isCreatingDirectory || !directoryName.trim()} type="submit">
+                {isCreatingDirectory ? "创建中…" : "创建"}
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
     </section>
   );
