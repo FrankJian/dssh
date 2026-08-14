@@ -176,6 +176,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   let lastSize: TerminalSize | null = null;
   let webgl: WebglAddon | null = null;
   let resizeFrame: number | null = null;
+  let cursorRestoreTimer: number | null = null;
   let fitDeferred = false;
   let opened = false;
   let replaying = false;
@@ -206,6 +207,32 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // text/cursor/selection over that layer while transparency is enabled.
     theme: transparent ? transparentTerminalTheme : terminalTheme,
     windowsPty: isLocalShell ? windowsPtyOptions : undefined,
+  });
+
+  // Full-screen terminal applications such as Vim can change DEC cursor
+  // modes (blink and style). xterm keeps those modes after the application
+  // leaves the alternate screen, so the shell prompt can come back with a
+  // permanently visible cursor. Restore the app's cursor defaults only when
+  // returning to the normal buffer; the application keeps its own cursor
+  // style while it is running in the alternate screen.
+  const bufferChangeDisposable = terminal.buffer.onBufferChange((buffer) => {
+    if (buffer.type !== "normal") {
+      return;
+    }
+    if (cursorRestoreTimer !== null) {
+      window.clearTimeout(cursorRestoreTimer);
+    }
+    cursorRestoreTimer = window.setTimeout(() => {
+      cursorRestoreTimer = null;
+      if (terminal.buffer.active.type !== "normal") {
+        return;
+      }
+      terminal.options.cursorBlink = true;
+      terminal.options.cursorStyle = "bar";
+      // Reset any DEC private cursor override left by the alternate-screen
+      // application so the options above are the values the renderer uses.
+      terminal.write("\x1b[0 q");
+    }, 0);
   });
   const fitAddon = new FitAddon();
   const serializeAddon = new SerializeAddon();
@@ -559,10 +586,15 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       cancelAnimationFrame(resizeFrame);
       resizeFrame = null;
     }
+    if (cursorRestoreTimer !== null) {
+      window.clearTimeout(cursorRestoreTimer);
+      cursorRestoreTimer = null;
+    }
     host.removeEventListener("wheel", handleWheel);
     host.removeEventListener("paste", handlePaste, true);
     host.removeEventListener("contextmenu", handleContextMenu);
     unsubscribeOutput?.();
+    bufferChangeDisposable.dispose();
     selectionDisposable.dispose();
     dataDisposable.dispose();
     webgl?.dispose();

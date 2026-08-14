@@ -1168,7 +1168,8 @@ function MainApp() {
   }, [activePaneLayout, activeSessionId, focusTerminal, terminalFullscreenPaneId]);
 
   // ⌘K / Ctrl+K toggles the command palette; ⌘⇧↵ / Ctrl+Shift+Enter focuses
-  // the current terminal pane. Escape restores that pane first, then zen mode.
+  // the current terminal pane. The configurable exit binding restores that
+  // pane first, then zen mode.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (isCommandPaletteShortcut(event)) {

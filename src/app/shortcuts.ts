@@ -61,9 +61,9 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     id: "exitFocusMode",
     category: "终端",
     label: "退出终端全屏 / 禅模式",
-    description: "优先恢复终端全屏，其次退出禅模式。",
+    description: "优先恢复终端全屏，其次退出禅模式；默认使用主修饰键 + Alt + Enter。",
     input: "key",
-    defaultBinding: { alt: false, key: "Escape", primary: false, shift: false },
+    defaultBinding: { alt: true, key: "Enter", primary: true, shift: false },
   },
   {
     id: "increaseTerminalFont",
