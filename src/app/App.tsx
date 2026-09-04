@@ -194,8 +194,9 @@ function MainApp() {
     localStorage.setItem("dssh.zenMode", String(zenMode));
   }, [zenMode]);
 
-  // Update failures stay silent here: a startup network error should not block
-  // SSH work. The About page remains available for a manual check with details.
+  // This service is a no-op unless the opt-in setting is enabled. Update
+  // failures stay silent here: a startup network error should not block SSH
+  // work. The About page remains available for a manual check with details.
   useEffect(() => {
     let cancelled = false;
     void checkForStartupUpdate()

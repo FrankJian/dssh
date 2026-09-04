@@ -4,7 +4,12 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useState } from "react";
 import { isMacOS } from "../platform";
-import { checkForUpdate, UPDATE_PROXY_KEY } from "../services/appUpdateService";
+import {
+  checkForUpdate,
+  isUpdateCheckOnStartupEnabled,
+  UPDATE_CHECK_ON_STARTUP_KEY,
+  UPDATE_PROXY_KEY,
+} from "../services/appUpdateService";
 import { invokeCommand } from "../services/tauri";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -64,10 +69,15 @@ export function AboutSection() {
   const [copied, setCopied] = useState(false);
   const [update, setUpdate] = useState<UpdateState>({ phase: "idle" });
   const [proxy, setProxy] = useState<string>(() => localStorage.getItem(UPDATE_PROXY_KEY) ?? "");
+  const [checkOnStartup, setCheckOnStartup] = useState(isUpdateCheckOnStartupEnabled);
 
   useEffect(() => {
     localStorage.setItem(UPDATE_PROXY_KEY, proxy);
   }, [proxy]);
+
+  useEffect(() => {
+    localStorage.setItem(UPDATE_CHECK_ON_STARTUP_KEY, String(checkOnStartup));
+  }, [checkOnStartup]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +216,21 @@ export function AboutSection() {
             前往 GitHub Issues
           </Button>
         </div>
+      </div>
+
+      <div className="settings-card" aria-label="更新设置">
+        <strong>更新设置</strong>
+        <label className="checkbox-field">
+          <input
+            checked={checkOnStartup}
+            onChange={(event) => setCheckOnStartup(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          启动时自动检查更新
+        </label>
+        <p className="settings-card__hint">
+          默认关闭。关闭后仍可随时手动检查更新。
+        </p>
       </div>
 
       <div className="settings-config__actions">
