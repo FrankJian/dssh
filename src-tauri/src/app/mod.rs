@@ -8,7 +8,10 @@ use crate::{
     forwarding::ForwardManager,
     s3::S3Manager,
     sftp::SftpManager,
-    ssh::{HostKeyVerifier, SessionManager, SshConnectionDiagnostics, SshConnectionPool},
+    ssh::{
+        HostKeyVerifier, SessionManager, SshAuthPromptManager, SshConnectionDiagnostics,
+        SshConnectionPool,
+    },
     storage::{ProfileRepository, StorageConfig},
     workspace::DetachedWorkspaceManager,
 };
@@ -22,6 +25,7 @@ pub struct AppState {
     pub forwards: ForwardManager,
     pub ai: AiManager,
     pub host_keys: Arc<HostKeyVerifier>,
+    pub ssh_auth_prompts: Arc<SshAuthPromptManager>,
     pub ssh_diagnostics: Arc<SshConnectionDiagnostics>,
     pub ssh_pool: SshConnectionPool,
     pub detached_workspaces: DetachedWorkspaceManager,
@@ -41,9 +45,11 @@ impl AppState {
             &app_data_dir,
             app_handle.clone(),
         ));
+        let ssh_auth_prompts = Arc::new(SshAuthPromptManager::new(app_handle.clone()));
         let ssh_diagnostics = Arc::new(SshConnectionDiagnostics::default());
         let ssh_pool = SshConnectionPool::new(
             host_keys.clone(),
+            ssh_auth_prompts.clone(),
             ssh_diagnostics.clone(),
             app_handle.clone(),
         );
@@ -60,6 +66,7 @@ impl AppState {
             forwards: ForwardManager::new(ssh_pool.clone()),
             ai: AiManager::default(),
             host_keys,
+            ssh_auth_prompts,
             ssh_diagnostics,
             ssh_pool,
             detached_workspaces: DetachedWorkspaceManager::default(),

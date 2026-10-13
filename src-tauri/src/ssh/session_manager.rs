@@ -14,8 +14,8 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use russh::{
-    ChannelMsg, Pty,
-    client::{self, Handler},
+    ChannelMsg, MethodKind, Pty,
+    client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
     keys::{PrivateKeyWithHashAlg, decode_secret_key},
 };
 use tauri::{AppHandle, Emitter};
@@ -34,6 +34,7 @@ use crate::{
             TerminalStatusEvent,
         },
     },
+    ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
     ssh::host_keys::HostKeyVerifier,
     ssh::{ChannelOwner, SshConnectionPool},
 };
@@ -443,6 +444,15 @@ async fn run_ssh_session(
                 backoff = RECONNECT_BACKOFF_BASE;
             }
             Err(error) => {
+                if error.code == "auth_prompt_cancelled" {
+                    emit_status(
+                        &app_handle,
+                        &session_id,
+                        SessionStatus::Disconnected,
+                        Some("SSH 多因子认证已取消。".to_string()),
+                    );
+                    return Ok(());
+                }
                 if grace_deadline.is_none() {
                     // Initial connection failure: surfaced as Failed by the caller.
                     return Err(error);
@@ -953,6 +963,7 @@ async fn establish_http_tunnel(
 pub async fn authenticate<H: client::Handler>(
     handle: &mut client::Handle<H>,
     profile: &SshProfile,
+    auth_prompts: &SshAuthPromptManager,
 ) -> AppResult<()> {
     let result = match &profile.auth_method {
         AuthMethod::Password { secret_ref } => {
@@ -992,11 +1003,77 @@ pub async fn authenticate<H: client::Handler>(
         }
     };
 
-    if result.success() {
-        Ok(())
-    } else {
-        Err(AppError::new("auth_error", "SSH authentication failed."))
+    match result {
+        AuthResult::Success => Ok(()),
+        AuthResult::Failure {
+            remaining_methods, ..
+        } if remaining_methods.contains(&MethodKind::KeyboardInteractive) => {
+            authenticate_keyboard_interactive(handle, profile, auth_prompts).await
+        }
+        AuthResult::Failure { .. } => {
+            Err(AppError::new("auth_error", "SSH authentication failed."))
+        }
     }
+}
+
+async fn authenticate_keyboard_interactive<H: client::Handler>(
+    handle: &mut client::Handle<H>,
+    profile: &SshProfile,
+    auth_prompts: &SshAuthPromptManager,
+) -> AppResult<()> {
+    const MAX_CHALLENGE_ROUNDS: usize = 8;
+
+    let mut response = handle
+        .authenticate_keyboard_interactive_start(profile.username.clone(), None::<String>)
+        .await
+        .map_err(ssh_error)?;
+
+    for _ in 0..MAX_CHALLENGE_ROUNDS {
+        match response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            KeyboardInteractiveAuthResponse::Failure { .. } => {
+                return Err(AppError::new(
+                    "auth_error",
+                    "SSH 多因子认证失败，请检查验证码后重试。",
+                ));
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                let answers = if prompts.is_empty() {
+                    Vec::new()
+                } else {
+                    auth_prompts
+                        .request(
+                            &profile.host,
+                            profile.port,
+                            &profile.username,
+                            name,
+                            instructions,
+                            prompts
+                                .into_iter()
+                                .map(|prompt| SshAuthPrompt {
+                                    prompt: prompt.prompt,
+                                    echo: prompt.echo,
+                                })
+                                .collect(),
+                        )
+                        .await?
+                };
+                response = handle
+                    .authenticate_keyboard_interactive_respond(answers)
+                    .await
+                    .map_err(ssh_error)?;
+            }
+        }
+    }
+
+    Err(AppError::new(
+        "auth_error",
+        "SSH 服务器请求了过多轮多因子认证。",
+    ))
 }
 
 #[derive(Default)]

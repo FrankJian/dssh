@@ -93,3 +93,13 @@ pub fn cancel_reconnect(state: State<'_, AppState>, session_id: String) -> AppRe
 pub fn respond_host_key_prompt(state: State<'_, AppState>, prompt_id: String, accept: bool) {
     state.host_keys.respond(&prompt_id, accept);
 }
+
+/// Answer or cancel a keyboard-interactive SSH authentication challenge.
+#[tauri::command]
+pub fn respond_ssh_auth_prompt(
+    state: State<'_, AppState>,
+    prompt_id: String,
+    responses: Option<Vec<String>>,
+) -> AppResult<()> {
+    state.ssh_auth_prompts.respond(&prompt_id, responses)
+}

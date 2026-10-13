@@ -89,6 +89,7 @@ pub fn run() {
             commands::sessions::close_ssh_session,
             commands::sessions::cancel_reconnect,
             commands::sessions::respond_host_key_prompt,
+            commands::sessions::respond_ssh_auth_prompt,
             commands::workspace::list_detached_workspaces,
             commands::workspace::get_detached_workspace,
             commands::workspace::open_detached_terminal_workspace,

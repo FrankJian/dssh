@@ -2210,6 +2210,62 @@ button {
   background: var(--bg-modal-footer);
 }
 
+.ssh-auth-dialog form {
+  display: flex;
+  flex-direction: column;
+}
+
+.ssh-auth-dialog__instructions {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.ssh-auth-dialog__fields {
+  display: grid;
+  gap: 10px;
+}
+
+.ssh-auth-dialog__field {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ssh-auth-dialog__field input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--bg-sunken);
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.ssh-auth-dialog__field input:focus {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-strong) 24%, transparent);
+}
+
+.ssh-auth-dialog__field input:disabled {
+  opacity: 0.55;
+}
+
+.ssh-auth-dialog__error {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+}
+
 /* ===== Zen mode ===== */
 .zen-exit,
 .terminal-focus-exit {

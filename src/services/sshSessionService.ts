@@ -78,6 +78,21 @@ export interface HostKeyChangedEvent {
   presentedFingerprint: string;
 }
 
+export interface SshAuthPromptField {
+  prompt: string;
+  echo: boolean;
+}
+
+export interface SshAuthPromptEvent {
+  promptId: string;
+  host: string;
+  port: number;
+  username: string;
+  name: string;
+  instructions: string;
+  prompts: SshAuthPromptField[];
+}
+
 export interface SshTransportStatusEvent {
   profileId: string;
   state: "connecting" | "ready" | "reconnecting" | "failed";
@@ -88,12 +103,20 @@ export function respondHostKeyPrompt(promptId: string, accept: boolean) {
   return invokeCommand<void>("respond_host_key_prompt", { promptId, accept });
 }
 
+export function respondSshAuthPrompt(promptId: string, responses: string[] | null) {
+  return invokeCommand<void>("respond_ssh_auth_prompt", { promptId, responses });
+}
+
 export function onHostKeyPrompt(handler: (event: HostKeyPromptEvent) => void) {
   return listen<HostKeyPromptEvent>("ssh://hostkey-prompt", (event) => handler(event.payload));
 }
 
 export function onHostKeyChanged(handler: (event: HostKeyChangedEvent) => void) {
   return listen<HostKeyChangedEvent>("ssh://hostkey-changed", (event) => handler(event.payload));
+}
+
+export function onSshAuthPrompt(handler: (event: SshAuthPromptEvent) => void) {
+  return listen<SshAuthPromptEvent>("ssh://auth-prompt", (event) => handler(event.payload));
 }
 
 export function onSshTransportStatus(handler: (event: SshTransportStatusEvent) => void) {

@@ -10,9 +10,12 @@ import { readImageDataUrl } from "../services/configService";
 import {
   onHostKeyChanged,
   onHostKeyPrompt,
+  onSshAuthPrompt,
   onSshTransportStatus,
   respondHostKeyPrompt,
+  respondSshAuthPrompt,
   type HostKeyPromptEvent,
+  type SshAuthPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
 import type { S3Profile, SshProfile, TerminalSession } from "../models";
@@ -36,6 +39,7 @@ import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
 import { HostKeyPrompt } from "../ssh/HostKeyPrompt";
+import { SshAuthPrompt } from "../ssh/SshAuthPrompt";
 import { useProfiles } from "../ssh/useProfiles";
 import { useRecentConnections } from "../ssh/useRecentConnections";
 import { PaneGrid } from "../terminal/PaneGrid";
@@ -183,6 +187,7 @@ function MainApp() {
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
+  const [sshAuthPrompts, setSshAuthPrompts] = useState<SshAuthPromptEvent[]>([]);
   const [startupUpdate, setStartupUpdate] = useState<Update | null>(null);
   const reconnectingProfiles = useRef(new Set<string>());
   const [zenMode, setZenMode] = useState<boolean>(
@@ -210,6 +215,19 @@ function MainApp() {
       });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Keyboard-interactive challenges are typically OTP/MFA prompts. Queue them
+  // because independent profiles may begin connecting at the same time.
+  useEffect(() => {
+    const promptPromise = onSshAuthPrompt((event) => {
+      setSshAuthPrompts((current) =>
+        current.some((item) => item.promptId === event.promptId) ? current : [...current, event],
+      );
+    });
+    return () => {
+      void promptPromise.then((unlisten) => unlisten());
     };
   }, []);
   const aiConfig = useAiConfig();
@@ -821,6 +839,11 @@ function MainApp() {
   function resolveHostKeyPrompt(promptId: string, accept: boolean) {
     void respondHostKeyPrompt(promptId, accept);
     setHostKeyPrompts((current) => current.filter((item) => item.promptId !== promptId));
+  }
+
+  async function resolveSshAuthPrompt(promptId: string, responses: string[] | null) {
+    await respondSshAuthPrompt(promptId, responses);
+    setSshAuthPrompts((current) => current.filter((item) => item.promptId !== promptId));
   }
 
   function openCreateProfile() {
@@ -2011,6 +2034,14 @@ function MainApp() {
           prompt={hostKeyPrompts[0]}
           onAccept={() => resolveHostKeyPrompt(hostKeyPrompts[0].promptId, true)}
           onReject={() => resolveHostKeyPrompt(hostKeyPrompts[0].promptId, false)}
+        />
+      ) : null}
+      {sshAuthPrompts.length > 0 ? (
+        <SshAuthPrompt
+          key={sshAuthPrompts[0].promptId}
+          prompt={sshAuthPrompts[0]}
+          onCancel={() => resolveSshAuthPrompt(sshAuthPrompts[0].promptId, null)}
+          onSubmit={(responses) => resolveSshAuthPrompt(sshAuthPrompts[0].promptId, responses)}
         />
       ) : null}
       {zenMode ? (

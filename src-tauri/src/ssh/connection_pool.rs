@@ -24,7 +24,7 @@ use crate::{
     error::{AppError, AppResult},
     models::ssh_profile::{AuthMethod, SshProfile},
     ssh::{
-        HostKeyVerifier,
+        HostKeyVerifier, SshAuthPromptManager,
         session_manager::{
             RemoteForwardTarget, RemoteForwardTargets, SshClient, authenticate,
             connect_ssh_with_client, ssh_error,
@@ -218,6 +218,7 @@ pub struct SshConnectionPool {
 struct PoolInner {
     entries: Mutex<HashMap<ConnectionKey, Arc<PoolEntry>>>,
     host_keys: Arc<HostKeyVerifier>,
+    auth_prompts: Arc<SshAuthPromptManager>,
     diagnostics: Arc<SshConnectionDiagnostics>,
     idle_timeout: Duration,
     max_channels: usize,
@@ -289,6 +290,7 @@ pub struct ChannelLease {
 impl SshConnectionPool {
     pub fn new(
         host_keys: Arc<HostKeyVerifier>,
+        auth_prompts: Arc<SshAuthPromptManager>,
         diagnostics: Arc<SshConnectionDiagnostics>,
         app_handle: AppHandle,
     ) -> Self {
@@ -296,6 +298,7 @@ impl SshConnectionPool {
             inner: Arc::new(PoolInner {
                 entries: Mutex::new(HashMap::new()),
                 host_keys,
+                auth_prompts,
                 diagnostics,
                 idle_timeout: Duration::from_secs(DEFAULT_IDLE_TIMEOUT_SECS),
                 max_channels: DEFAULT_MAX_CHANNELS_PER_TRANSPORT,
@@ -420,7 +423,7 @@ impl SshConnectionPool {
         );
         let mut handle = connect_ssh_with_client(config, profile, client).await?;
         self.inner.diagnostics.record_transport_opened();
-        if let Err(error) = authenticate(&mut handle, profile).await {
+        if let Err(error) = authenticate(&mut handle, profile, &self.inner.auth_prompts).await {
             let _ = handle
                 .disconnect(Disconnect::ByApplication, "", "English")
                 .await;
@@ -457,6 +460,19 @@ impl SshConnectionPool {
                         return;
                     }
                     Err(error) => {
+                        if error.code == "auth_prompt_cancelled" {
+                            entry.reconnect_started.store(false, Ordering::Release);
+                            entry
+                                .set_state(EntryState::Failed(PoolFailure::from_error(&error)))
+                                .await;
+                            pool.remove_if_same(&key, &entry).await;
+                            pool.emit_state(
+                                &key,
+                                ConnectionState::Failed,
+                                Some("SSH 多因子认证已取消。".to_string()),
+                            );
+                            return;
+                        }
                         if Instant::now() >= deadline {
                             entry.reconnect_started.store(false, Ordering::Release);
                             entry
