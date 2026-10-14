@@ -89,10 +89,7 @@ impl ZmodemFinishFilter {
         }
 
         self.pending.extend_from_slice(input);
-        loop {
-            let Some(&first) = self.pending.first() else {
-                break;
-            };
+        while let Some(&first) = self.pending.first() {
             match self.trailer {
                 HexTrailer::Start if first == b'\r' => {
                     self.pending.remove(0);

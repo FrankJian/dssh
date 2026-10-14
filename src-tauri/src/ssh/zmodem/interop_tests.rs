@@ -46,9 +46,12 @@ async fn lrzsz_pty_upload_returns_to_shell_without_enter() {
             })
             .unwrap();
         let mut command = CommandBuilder::new("/bin/sh");
+        // Original lrzsz 0.12.20 leaves IEXTEN enabled in its raw mode.
+        // BSD PTYs can then eat VLNEXT from binary payloads; establish an
+        // eight-bit-clean test PTY before running this older receiver.
         command.args([
             "-c",
-            "\"$1\" -y; rc=$?; printf '\\r\\nDSSH_RZ_EXIT_%s\\r\\n' \"$rc\"",
+            "stty -iexten; \"$1\" -y; rc=$?; printf '\\r\\nDSSH_RZ_EXIT_%s\\r\\n' \"$rc\"",
             "rz-test",
             &rz,
         ]);
