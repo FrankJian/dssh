@@ -76,6 +76,27 @@ pub struct TerminalStatusEvent {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalTransferPromptEvent {
+    pub session_id: String,
+    pub detection_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalTransferStatusEvent {
+    pub session_id: String,
+    pub detection_id: String,
+    pub state: String,
+    pub file_name: Option<String>,
+    pub file_index: Option<u32>,
+    pub file_count: Option<u32>,
+    pub transferred: u64,
+    pub total: Option<u64>,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionStatus {

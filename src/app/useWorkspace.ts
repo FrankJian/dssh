@@ -79,6 +79,10 @@ export function useWorkspace() {
     });
   }, []);
 
+  const renameSftpTab = useCallback((id: string, title: string) => {
+    setSftpTabs((current) => current.map((tab) => tab.id === id ? { ...tab, title } : tab));
+  }, []);
+
   const focusSftpTab = useCallback((id: string) => {
     setActiveSftpId(id);
   }, []);
@@ -97,6 +101,7 @@ export function useWorkspace() {
     closeSftpTab,
     closeSftpTabsForProfile,
     updateSftpTabPaths,
+    renameSftpTab,
     focusSftpTab,
     focusTerminal,
   };

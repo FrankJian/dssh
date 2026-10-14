@@ -32,6 +32,21 @@ export interface TerminalStatusEvent {
   message?: string;
 }
 
+export interface TerminalTransferPromptEvent {
+  sessionId: string;
+  detectionId: string;
+}
+
+export interface TerminalTransferStatusEvent extends TerminalTransferPromptEvent {
+  state: "awaitingSelection" | "transferring" | "completed" | "cancelled" | "failed";
+  fileName?: string;
+  fileIndex?: number;
+  fileCount?: number;
+  transferred: number;
+  total?: number;
+  message?: string;
+}
+
 export function listSshSessions() {
   return invokeCommand<TerminalSession[]>("list_ssh_sessions");
 }
@@ -50,6 +65,18 @@ export function startLocalSession(request: StartLocalSessionRequest) {
 
 export function writeSshSession(request: WriteSshSessionRequest) {
   return invokeCommand<void>("write_ssh_session", { request });
+}
+
+export function respondZmodemPrompt(
+  sessionId: string,
+  detectionId: string,
+  paths: string[] | null,
+) {
+  return invokeCommand<void>("respond_zmodem_prompt", { sessionId, detectionId, paths });
+}
+
+export function cancelZmodemTransfer(sessionId: string, detectionId: string) {
+  return invokeCommand<void>("cancel_zmodem_transfer", { sessionId, detectionId });
 }
 
 export function resizeSshSession(request: ResizeSshSessionRequest) {
@@ -129,4 +156,12 @@ export function onTerminalOutput(handler: (event: TerminalOutputEvent) => void) 
 
 export function onTerminalStatus(handler: (event: TerminalStatusEvent) => void) {
   return listen<TerminalStatusEvent>("terminal-status", (event) => handler(event.payload));
+}
+
+export function onTerminalTransferPrompt(handler: (event: TerminalTransferPromptEvent) => void) {
+  return listen<TerminalTransferPromptEvent>("terminal://zmodem-prompt", (event) => handler(event.payload));
+}
+
+export function onTerminalTransferStatus(handler: (event: TerminalTransferStatusEvent) => void) {
+  return listen<TerminalTransferStatusEvent>("terminal://zmodem-status", (event) => handler(event.payload));
 }

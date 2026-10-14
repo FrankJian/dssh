@@ -1,6 +1,6 @@
 [package]
 name = "dssh"
-version = "0.4.30"
+version = "0.4.31"
 description = "A lightweight cross-platform SSH manager"
 authors = ["Jian-Frank Xie"]
 edition = "2024"
@@ -28,6 +28,7 @@ rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"
 russh = { version = "0.62", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2"
 tokio = { version = "1.52.3", features = ["sync", "io-util", "process", "fs", "net", "rt", "time", "macros"] }
+zmodem2 = "=0.7.3"
 futures = "0.3"
 portable-pty = "0.9.0"
 genai = "0.6"

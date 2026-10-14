@@ -465,7 +465,11 @@ impl SshConnectionPool {
                             entry
                                 .set_state(EntryState::Failed(PoolFailure::from_error(&error)))
                                 .await;
-                            pool.remove_if_same(&key, &entry).await;
+                            // Keep the cancelled failure visible to channel
+                            // owners already retrying through this entry. If
+                            // removed here, their next acquire starts a fresh
+                            // handshake and immediately raises another OTP
+                            // prompt, defeating the user's cancellation.
                             pool.emit_state(
                                 &key,
                                 ConnectionState::Failed,

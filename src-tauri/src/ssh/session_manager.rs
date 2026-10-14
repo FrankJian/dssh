@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     io::{Read, Write},
     path::PathBuf,
@@ -20,7 +20,8 @@ use russh::{
 };
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::TcpStream,
     sync::{Mutex as AsyncMutex, mpsc, oneshot},
 };
@@ -31,12 +32,17 @@ use crate::{
         ssh_profile::{AuthMethod, SshProfile, SshProxy},
         terminal::{
             SessionStatus, TerminalOutputEvent, TerminalSession, TerminalSessionKind, TerminalSize,
-            TerminalStatusEvent,
+            TerminalStatusEvent, TerminalTransferPromptEvent, TerminalTransferStatusEvent,
         },
     },
     ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
     ssh::host_keys::HostKeyVerifier,
+    ssh::zmodem::{ZmodemDetection, ZmodemFinishFilter, ZmodemProbe, flush_sender_output},
     ssh::{ChannelOwner, SshConnectionPool},
+};
+use zmodem2::{
+    Action as ZmodemAction, Event as ZmodemEvent, FileInfo as ZmodemFileInfo, Position,
+    Sender as ZmodemSender,
 };
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
@@ -62,6 +68,12 @@ const OUTPUT_FLUSH_BYTES: usize = 16 * 1024;
 /// short window to replace the request's fallback size before spawning it.
 const LOCAL_INITIAL_RESIZE_WAIT: Duration = Duration::from_millis(250);
 const LOCAL_INITIAL_RESIZE_POLL: Duration = Duration::from_millis(2);
+const ZMODEM_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+const ZMODEM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_ZMODEM_BUFFERED_BYTES: usize = 1024 * 1024;
+const MAX_ZMODEM_FILES: usize = 64;
+const ZMODEM_PROMPT_EVENT: &str = "terminal://zmodem-prompt";
+const ZMODEM_STATUS_EVENT: &str = "terminal://zmodem-status";
 
 #[derive(Clone)]
 pub struct SessionManager {
@@ -92,6 +104,13 @@ struct SessionHandle {
 #[derive(Debug)]
 enum SessionCommand {
     Input(String),
+    ZmodemResponse {
+        detection_id: String,
+        paths: Option<Vec<String>>,
+    },
+    CancelZmodem {
+        detection_id: String,
+    },
     Resize(TerminalSize),
     Close,
     /// Stop retrying during grace-period reconnect and settle as disconnected.
@@ -344,6 +363,26 @@ impl SessionManager {
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
     }
 
+    pub fn respond_zmodem_prompt(
+        &self,
+        session_id: &str,
+        detection_id: String,
+        paths: Option<Vec<String>>,
+    ) -> AppResult<()> {
+        let tx = self.session_tx(session_id)?;
+        tx.try_send(SessionCommand::ZmodemResponse {
+            detection_id,
+            paths,
+        })
+        .map_err(|error| AppError::new("terminal_transfer_error", error.to_string()))
+    }
+
+    pub fn cancel_zmodem_transfer(&self, session_id: &str, detection_id: String) -> AppResult<()> {
+        let tx = self.session_tx(session_id)?;
+        tx.try_send(SessionCommand::CancelZmodem { detection_id })
+            .map_err(|error| AppError::new("terminal_transfer_error", error.to_string()))
+    }
+
     pub fn resize_session(&self, session_id: &str, size: TerminalSize) -> AppResult<()> {
         let tx = self.session_tx(session_id)?;
         tx.try_send(SessionCommand::Resize(size))
@@ -499,6 +538,8 @@ async fn run_ssh_session(
                     }
                     Some(SessionCommand::Resize(new_size)) => size = new_size,
                     Some(SessionCommand::Input(_)) => {}
+                    Some(SessionCommand::ZmodemResponse { .. })
+                    | Some(SessionCommand::CancelZmodem { .. }) => {}
                 },
             }
         }
@@ -513,6 +554,65 @@ async fn run_ssh_session(
         }
         backoff = (backoff * 2).min(RECONNECT_BACKOFF_MAX);
     }
+}
+
+enum SshReadEvent {
+    Data(Vec<u8>),
+    ExtendedData(Vec<u8>),
+}
+
+struct ZmodemFile {
+    name: String,
+    size: u64,
+    modified: Option<SystemTime>,
+    file: File,
+    transferred: u64,
+}
+
+struct ActiveZmodem {
+    detection_id: String,
+    sender: ZmodemSender,
+    awaiting_selection: bool,
+    buffered_wire: Vec<u8>,
+    files: VecDeque<ZmodemFile>,
+    current: Option<ZmodemFile>,
+    file_count: u32,
+    completed_files: u32,
+    files_without_sent_data: u32,
+    total: u64,
+    completed_bytes: u64,
+    last_activity: Instant,
+    selection_deadline: Instant,
+    cancel_requested: bool,
+    last_progress_event: Instant,
+}
+
+impl ActiveZmodem {
+    fn pending(detection: ZmodemDetection) -> Self {
+        let now = Instant::now();
+        Self {
+            detection_id: create_session_id(),
+            sender: detection.sender,
+            awaiting_selection: true,
+            buffered_wire: detection.trailing,
+            files: VecDeque::new(),
+            current: None,
+            file_count: 0,
+            completed_files: 0,
+            files_without_sent_data: 0,
+            total: 0,
+            completed_bytes: 0,
+            last_activity: now,
+            selection_deadline: now + ZMODEM_PROMPT_TIMEOUT,
+            cancel_requested: false,
+            last_progress_event: Instant::now(),
+        }
+    }
+}
+
+enum TransferPump {
+    Idle,
+    Completed,
 }
 
 /// Establish one SSH connection, attach a PTY + shell, and pump I/O until the
@@ -554,72 +654,317 @@ async fn connect_and_run(
     // fit sends a window-change (SIGWINCH) which triggers a repaint for shells
     // that need one. Sending an extra newline here would echo a duplicate
     // prompt, so we intentionally do not nudge the shell.
-    let (mut reader, writer) = channel.split();
-
-    // The read task signals completion via the oneshot: `true` = clean shell
-    // exit (do not reconnect), `false`/dropped = transport lost.
+    let (mut reader, mut writer) = channel.split();
+    let (read_tx, mut read_rx) = mpsc::channel::<SshReadEvent>(16);
     let (drop_tx, mut drop_rx) = oneshot::channel::<bool>();
-    let sink = OutputSink::new(app_handle.clone(), session_id.to_string(), output.clone());
-    let read_sink = sink.clone();
     let read_task = tauri::async_runtime::spawn(async move {
-        let mut utf8_carry: Vec<u8> = Vec::new();
         let mut clean_exit = false;
-        loop {
-            // While a burst is still buffered, bound the wait so its tail is
-            // emitted on schedule instead of riding along with the next packet.
-            // `wait()` is a plain mpsc receive, so cancelling it drops nothing.
-            let message = if read_sink.has_pending() {
-                match tokio::time::timeout(OUTPUT_FLUSH_INTERVAL, reader.wait()).await {
-                    Ok(message) => message,
-                    Err(_) => {
-                        read_sink.flush();
-                        continue;
+        while let Some(message) = reader.wait().await {
+            match message {
+                ChannelMsg::Data { data } => {
+                    if read_tx
+                        .send(SshReadEvent::Data(data.to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
                     }
                 }
-            } else {
-                reader.wait().await
-            };
-
-            match message {
-                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    let text = decode_with_carry(&mut utf8_carry, &data);
-                    read_sink.push(&text);
+                ChannelMsg::ExtendedData { data, .. } => {
+                    if read_tx
+                        .send(SshReadEvent::ExtendedData(data.to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-                Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::ExitSignal { .. }) => {
+                ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. } => {
                     clean_exit = true;
                 }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                ChannelMsg::Eof | ChannelMsg::Close => break,
                 _ => {}
             }
         }
-        // A shell prints its parting output (e.g. `logout`) immediately before
-        // EOF, so nothing may stay buffered behind the closed channel.
-        read_sink.flush();
         let _ = drop_tx.send(clean_exit);
     });
 
+    let sink = OutputSink::new(app_handle.clone(), session_id.to_string(), output.clone());
+    let mut utf8_carry = Vec::new();
+    let mut probe = ZmodemProbe::default();
+    let mut finish_filter = ZmodemFinishFilter::default();
+    let mut transfer: Option<ActiveZmodem> = None;
     let mut pending_command = String::new();
     let mut close_requested = false;
     let outcome = loop {
+        if transfer
+            .as_ref()
+            .is_some_and(|active| !active.awaiting_selection)
+        {
+            let result = pump_zmodem_transfer(
+                app_handle,
+                session_id,
+                transfer.as_mut().expect("active transfer was checked"),
+                &mut writer,
+            )
+            .await;
+            match result {
+                Ok(TransferPump::Idle) => {}
+                Ok(TransferPump::Completed) => {
+                    let completed = transfer.take().expect("completed transfer exists");
+                    finish_filter.finish_transfer();
+                    if completed.cancel_requested {
+                        probe.suppress_until_cancel();
+                    }
+                    if !completed.cancel_requested && !completed.buffered_wire.is_empty() {
+                        let filtered = finish_filter.feed(&completed.buffered_wire);
+                        let tail = decode_with_carry(&mut utf8_carry, &filtered);
+                        sink.push(&tail);
+                    }
+                }
+                Err(error) => {
+                    let detection_id = transfer
+                        .as_ref()
+                        .map(|active| active.detection_id.clone())
+                        .unwrap_or_default();
+                    emit_zmodem_status(
+                        app_handle,
+                        session_id,
+                        detection_id,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        0,
+                        None,
+                        Some(error.message),
+                    );
+                    finish_filter.finish_transfer();
+                    transfer = None;
+                    probe.suppress_until_cancel();
+                    if error.code == "ssh_error" {
+                        break ConnOutcome::Dropped;
+                    }
+                }
+            }
+        }
+
+        let flush_wait = if sink.has_pending() {
+            OUTPUT_FLUSH_INTERVAL
+        } else {
+            Duration::from_secs(3600)
+        };
+        let timer_wait = transfer.as_ref().map(|active| {
+            if active.awaiting_selection {
+                active
+                    .selection_deadline
+                    .saturating_duration_since(Instant::now())
+            } else {
+                ZMODEM_IDLE_TIMEOUT.saturating_sub(active.last_activity.elapsed())
+            }
+        });
+
         tokio::select! {
             command = rx.recv() => match command {
                 Some(SessionCommand::Input(data)) => {
+                    if let Some(active) = transfer.as_mut() {
+                        if !active.awaiting_selection && data.contains('\u{3}') {
+                            active.cancel_requested = true;
+                            active.sender.abort();
+                        }
+                        // The remote file protocol owns the channel until it
+                        // reaches a terminal state; do not interleave keystrokes.
+                        continue;
+                    }
+                    if data.contains('\u{3}') {
+                        probe.rearm();
+                    }
                     close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
                         break if close_requested { ConnOutcome::Closed } else { ConnOutcome::Dropped };
                     }
                 }
+                Some(SessionCommand::ZmodemResponse { detection_id, paths }) => {
+                    let Some(active) = transfer.as_mut().filter(|active| {
+                        active.awaiting_selection && active.detection_id == detection_id
+                    }) else {
+                        continue;
+                    };
+                    let Some(paths) = paths.filter(|paths| !paths.is_empty()) else {
+                        emit_zmodem_status(
+                            app_handle, session_id, detection_id, "cancelled", None, None, None,
+                            0, None, Some("已取消文件选择；如远端 rz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                        );
+                        transfer = None;
+                        probe.suppress_until_cancel();
+                        continue;
+                    };
+                    match prepare_zmodem_files(paths).await {
+                        Ok((files, total)) => {
+                            active.file_count = files.len() as u32;
+                            active.total = total;
+                            active.files = files;
+                            active.awaiting_selection = false;
+                            active.last_activity = Instant::now();
+                            finish_filter.begin_transfer();
+                            if let Err(error) = start_next_zmodem_file(active) {
+                                emit_zmodem_status(
+                                    app_handle, session_id, detection_id, "failed", None, None,
+                                    Some(active.file_count), 0, Some(total), Some(error.message),
+                                );
+                                finish_filter.finish_transfer();
+                                transfer = None;
+                                probe.suppress_until_cancel();
+                                continue;
+                            }
+                            emit_zmodem_status(
+                                app_handle, session_id, detection_id.clone(), "transferring",
+                                active.current.as_ref().map(|file| file.name.clone()),
+                                Some(1), Some(active.file_count), 0, Some(total), None,
+                            );
+                        }
+                        Err(error) => {
+                            emit_zmodem_status(
+                                app_handle, session_id, detection_id, "failed", None, None,
+                                None, 0, None, Some(error.message),
+                            );
+                            transfer = None;
+                            probe.suppress_until_cancel();
+                        }
+                    }
+                }
+                Some(SessionCommand::CancelZmodem { detection_id }) => {
+                    let Some(active) = transfer.as_mut().filter(|active| active.detection_id == detection_id) else {
+                        continue;
+                    };
+                    if active.awaiting_selection {
+                        emit_zmodem_status(
+                            app_handle, session_id, detection_id, "cancelled", None, None, None,
+                            0, None, Some("已取消文件选择；如远端 rz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                        );
+                        transfer = None;
+                        probe.suppress_until_cancel();
+                    } else {
+                        active.cancel_requested = true;
+                        active.sender.abort();
+                    }
+                }
                 Some(SessionCommand::Resize(new_size)) => {
-                    let _ = writer
-                        .window_change(new_size.cols.into(), new_size.rows.into(), 0, 0)
-                        .await;
+                    let _ = writer.window_change(new_size.cols.into(), new_size.rows.into(), 0, 0).await;
                     *size = new_size;
                 }
                 Some(SessionCommand::Close) | None => {
+                    if let Some(mut active) = transfer.take() {
+                        if active.awaiting_selection {
+                            emit_zmodem_status(
+                                app_handle,
+                                session_id,
+                                active.detection_id,
+                                "cancelled",
+                                None,
+                                None,
+                                None,
+                                0,
+                                None,
+                                Some("SSH 终端已关闭，文件选择请求已取消。".to_string()),
+                            );
+                        } else {
+                            active.cancel_requested = true;
+                            active.sender.abort();
+                            let _ = pump_zmodem_transfer(
+                                app_handle,
+                                session_id,
+                                &mut active,
+                                &mut writer,
+                            )
+                            .await;
+                        }
+                    }
                     let _ = writer.close().await;
                     break ConnOutcome::Closed;
                 }
                 Some(SessionCommand::CancelReconnect) => {}
+            },
+            event = read_rx.recv() => match event {
+                Some(SshReadEvent::ExtendedData(data)) => {
+                    let filtered = finish_filter.feed(&data);
+                    let text = decode_with_carry(&mut utf8_carry, &filtered);
+                    sink.push(&text);
+                }
+                Some(SshReadEvent::Data(data)) => {
+                    if let Some(active) = transfer.as_mut() {
+                        active.last_activity = Instant::now();
+                        if active.awaiting_selection {
+                            if active.buffered_wire.len().saturating_add(data.len()) <= MAX_ZMODEM_BUFFERED_BYTES {
+                                active.buffered_wire.extend_from_slice(&data);
+                            } else {
+                                let detection_id = active.detection_id.clone();
+                                emit_zmodem_status(
+                                    app_handle, session_id, detection_id, "failed", None, None,
+                                    None, 0, None,
+                                    Some("远端响应过多，请中断 rz 后重试。".to_string()),
+                                );
+                                finish_filter.finish_transfer();
+                                transfer = None;
+                                probe.suppress_until_cancel();
+                            }
+                        } else if active.buffered_wire.len().saturating_add(data.len())
+                            <= MAX_ZMODEM_BUFFERED_BYTES
+                        {
+                            // `submit_wire` can stop mid-packet when the
+                            // sender needs to write a response or read a file.
+                            // Keep raw bytes queued until the state machine is
+                            // ready to consume them; never discard the suffix.
+                            active.buffered_wire.extend_from_slice(&data);
+                        } else {
+                            let detection_id = active.detection_id.clone();
+                            emit_zmodem_status(
+                                app_handle,
+                                session_id,
+                                detection_id,
+                                "failed",
+                                None,
+                                None,
+                                Some(active.file_count),
+                                active.completed_bytes,
+                                Some(active.total),
+                                Some("远端协议数据积压过多，已停止传输。".to_string()),
+                            );
+                            finish_filter.finish_transfer();
+                            transfer = None;
+                            probe.suppress_until_cancel();
+                        }
+                    } else {
+                        let filtered = finish_filter.feed(&data);
+                        let probed = probe.feed(&filtered);
+                        if !probed.text.is_empty() {
+                            let text = decode_with_carry(&mut utf8_carry, &probed.text);
+                            sink.push(&text);
+                        }
+                        if let Some(detection) = probed.detection {
+                            if !utf8_carry.is_empty() {
+                                let invalid_tail = String::from_utf8_lossy(&utf8_carry).into_owned();
+                                utf8_carry.clear();
+                                sink.push(&invalid_tail);
+                            }
+                            let active = ActiveZmodem::pending(detection);
+                            let detection_id = active.detection_id.clone();
+                            emit_zmodem_status(
+                                app_handle, session_id, detection_id.clone(), "awaitingSelection",
+                                None, None, None, 0, None, None,
+                            );
+                            let _ = app_handle.emit(
+                                ZMODEM_PROMPT_EVENT,
+                                TerminalTransferPromptEvent {
+                                    session_id: session_id.to_string(),
+                                    detection_id,
+                                },
+                            );
+                            transfer = Some(active);
+                        }
+                    }
+                }
+                None => break ConnOutcome::Dropped,
             },
             result = &mut drop_rx => {
                 break match result {
@@ -628,17 +973,359 @@ async fn connect_and_run(
                     _ => ConnOutcome::Dropped,
                 };
             }
+            _ = tokio::time::sleep(flush_wait) => {
+                sink.flush();
+            }
+            _ = async {
+                if let Some(wait) = timer_wait {
+                    tokio::time::sleep(wait).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                if let Some(active) = transfer.as_mut() {
+                    let detection_id = active.detection_id.clone();
+                    let message = if active.awaiting_selection {
+                        "文件选择超时，已取消本次请求。"
+                    } else {
+                        active.cancel_requested = true;
+                        active.sender.abort();
+                        "传输无响应，已取消本次传输。"
+                    };
+                    if active.awaiting_selection {
+                        emit_zmodem_status(
+                            app_handle, session_id, detection_id, "cancelled", None, None,
+                            None, 0, None, Some(message.to_string()),
+                        );
+                        transfer = None;
+                        probe.suppress_until_cancel();
+                    } else {
+                        // The next loop iteration writes the protocol cancel
+                        // sequence and receives the sender's Aborted event.
+                        active.last_activity = Instant::now();
+                    }
+                }
+            }
         }
     };
 
-    // Aborting can land mid-burst, and the status event emitted after this must
-    // not overtake output that already reached us.
+    if let Some(active) = transfer.as_ref() {
+        let cancelled = active.cancel_requested;
+        emit_zmodem_status(
+            app_handle,
+            session_id,
+            active.detection_id.clone(),
+            if cancelled { "cancelled" } else { "failed" },
+            active.current.as_ref().map(|file| file.name.clone()),
+            active.current.as_ref().map(|_| active.completed_files + 1),
+            (active.file_count > 0).then_some(active.file_count),
+            active
+                .completed_bytes
+                .saturating_add(active.current.as_ref().map_or(0, |file| file.transferred)),
+            (active.file_count > 0).then_some(active.total),
+            Some(if cancelled {
+                "SSH 终端已关闭，文件传输未完成。".to_string()
+            } else {
+                "SSH 连接中断，文件传输未完成。".to_string()
+            }),
+        );
+    }
+
+    // Restore any held, incomplete probe bytes before flushing the final text
+    // burst. A valid transfer header is never included in this buffer.
+    let tail = probe.finish();
+    if !tail.is_empty() {
+        sink.push(&decode_with_carry(&mut utf8_carry, &tail));
+    }
+    let tail = finish_filter.finish();
+    if !tail.is_empty() {
+        sink.push(&decode_with_carry(&mut utf8_carry, &tail));
+    }
     read_task.abort();
     sink.flush();
-    if matches!(outcome, ConnOutcome::Dropped) {
+    if matches!(&outcome, ConnOutcome::Dropped) {
         transport.invalidate().await;
     }
     Ok(outcome)
+}
+
+async fn prepare_zmodem_files(paths: Vec<String>) -> AppResult<(VecDeque<ZmodemFile>, u64)> {
+    if paths.is_empty() || paths.len() > MAX_ZMODEM_FILES {
+        return Err(AppError::new(
+            "zmodem_file_selection_invalid",
+            "请选择 1 到 64 个文件。",
+        ));
+    }
+
+    let mut files = VecDeque::with_capacity(paths.len());
+    let mut total = 0_u64;
+    for path in paths {
+        let path = PathBuf::from(path);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| {
+                !name.is_empty()
+                    && name.len() <= 256
+                    && !name.contains(['/', '\\', '\0'])
+                    && !name.chars().any(char::is_control)
+                    && !matches!(*name, "." | "..")
+            })
+            .ok_or_else(|| {
+                AppError::new("zmodem_file_name_invalid", "文件名无法用于 ZMODEM 传输。")
+            })?
+            .to_string();
+        let file = File::open(&path)
+            .await
+            .map_err(|error| AppError::new("zmodem_file_open_error", error.to_string()))?;
+        let metadata = file
+            .metadata()
+            .await
+            .map_err(|error| AppError::new("zmodem_file_open_error", error.to_string()))?;
+        if !metadata.is_file() || metadata.len() > u64::from(u32::MAX) {
+            return Err(AppError::new(
+                "zmodem_file_size_unsupported",
+                "ZMODEM 首版只支持普通文件，且单个文件不能超过 4 GiB。",
+            ));
+        }
+        total = total.checked_add(metadata.len()).ok_or_else(|| {
+            AppError::new(
+                "zmodem_file_size_unsupported",
+                "所选文件总大小超出支持范围。",
+            )
+        })?;
+        files.push_back(ZmodemFile {
+            name,
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            file,
+            transferred: 0,
+        });
+    }
+    Ok((files, total))
+}
+
+fn start_next_zmodem_file(transfer: &mut ActiveZmodem) -> AppResult<()> {
+    let Some(file) = transfer.files.pop_front() else {
+        transfer
+            .sender
+            .finish()
+            .map_err(|error| AppError::new("zmodem_protocol_error", error.to_string()))?;
+        transfer.current = None;
+        return Ok(());
+    };
+    let size = u32::try_from(file.size)
+        .map_err(|error| AppError::new("zmodem_file_size_unsupported", error.to_string()))?;
+    let mut info = ZmodemFileInfo::new(file.name.as_bytes(), Some(Position::new(size)));
+    if let Some(modified) = file.modified
+        && let Ok(seconds) = modified.duration_since(UNIX_EPOCH)
+        && let Ok(seconds) = u32::try_from(seconds.as_secs())
+    {
+        info = info.with_modified(seconds);
+    }
+    transfer
+        .sender
+        .start_file(info)
+        .map_err(|error| AppError::new("zmodem_protocol_error", error.to_string()))?;
+    transfer.current = Some(file);
+    Ok(())
+}
+
+async fn pump_zmodem_transfer(
+    app_handle: &AppHandle,
+    session_id: &str,
+    transfer: &mut ActiveZmodem,
+    writer: &mut russh::ChannelWriteHalf<client::Msg>,
+) -> AppResult<TransferPump> {
+    loop {
+        match transfer.sender.poll() {
+            ZmodemAction::WriteWire(bytes) => {
+                let bytes = bytes.to_vec();
+                let written = bytes.len();
+                writer.data_bytes(bytes).await.map_err(ssh_error)?;
+                transfer.sender.wire_written(written);
+                transfer.last_activity = Instant::now();
+            }
+            ZmodemAction::ReadFile { offset, max_len } => {
+                let file = transfer.current.as_mut().ok_or_else(|| {
+                    AppError::new("zmodem_protocol_error", "ZMODEM 请求了未选择的文件。")
+                })?;
+                let metadata =
+                    file.file.metadata().await.map_err(|error| {
+                        AppError::new("zmodem_file_read_error", error.to_string())
+                    })?;
+                if metadata.len() != file.size
+                    || file
+                        .modified
+                        .is_some_and(|modified| metadata.modified().ok() != Some(modified))
+                {
+                    return Err(AppError::new(
+                        "zmodem_file_changed",
+                        format!("文件在传输过程中发生变化：{}", file.name),
+                    ));
+                }
+                let offset = u64::from(offset.get());
+                if offset > file.size {
+                    return Err(AppError::new(
+                        "zmodem_protocol_error",
+                        "远端请求的文件偏移超出文件大小。",
+                    ));
+                }
+                file.file
+                    .seek(std::io::SeekFrom::Start(offset))
+                    .await
+                    .map_err(|error| AppError::new("zmodem_file_read_error", error.to_string()))?;
+                let mut bytes = vec![0; max_len.min(16 * 1024)];
+                let read =
+                    file.file.read(&mut bytes).await.map_err(|error| {
+                        AppError::new("zmodem_file_read_error", error.to_string())
+                    })?;
+                if read == 0 && offset < file.size {
+                    return Err(AppError::new(
+                        "zmodem_file_read_error",
+                        format!("读取文件时意外到达末尾：{}", file.name),
+                    ));
+                }
+                bytes.truncate(read);
+                if read > 0 {
+                    transfer.sender.submit_file(&bytes).map_err(|error| {
+                        AppError::new("zmodem_protocol_error", error.to_string())
+                    })?;
+                    file.transferred = file.transferred.max(offset.saturating_add(read as u64));
+                    transfer.last_activity = Instant::now();
+                    if transfer.last_progress_event.elapsed() >= Duration::from_millis(100)
+                        || file.transferred == file.size
+                    {
+                        transfer.last_progress_event = Instant::now();
+                        emit_zmodem_status(
+                            app_handle,
+                            session_id,
+                            transfer.detection_id.clone(),
+                            "transferring",
+                            Some(file.name.clone()),
+                            Some(transfer.completed_files + 1),
+                            Some(transfer.file_count),
+                            transfer.completed_bytes.saturating_add(file.transferred),
+                            Some(transfer.total),
+                            None,
+                        );
+                    }
+                }
+            }
+            ZmodemAction::Event(ZmodemEvent::FileCompleted) => {
+                if let Some(file) = transfer.current.take() {
+                    if file.transferred < file.size {
+                        transfer.files_without_sent_data += 1;
+                    }
+                    transfer.completed_bytes =
+                        transfer.completed_bytes.saturating_add(file.transferred);
+                }
+                transfer.completed_files += 1;
+                start_next_zmodem_file(transfer)?;
+            }
+            ZmodemAction::Event(ZmodemEvent::SessionCompleted) => {
+                let writer = &*writer;
+                flush_sender_output(&mut transfer.sender, |bytes| async move {
+                    writer.data_bytes(bytes).await.map_err(ssh_error)
+                })
+                .await?;
+                emit_zmodem_status(
+                    app_handle,
+                    session_id,
+                    transfer.detection_id.clone(),
+                    "completed",
+                    None,
+                    Some(transfer.file_count),
+                    Some(transfer.file_count),
+                    transfer.completed_bytes,
+                    Some(transfer.total),
+                    (transfer.files_without_sent_data > 0).then(|| {
+                        format!(
+                            "有 {} 个文件没有发送数据；远端可能跳过了文件，或目标已完整存在。",
+                            transfer.files_without_sent_data
+                        )
+                    }),
+                );
+                return Ok(TransferPump::Completed);
+            }
+            ZmodemAction::Event(ZmodemEvent::Aborted) => {
+                transfer.cancel_requested = true;
+                emit_zmodem_status(
+                    app_handle,
+                    session_id,
+                    transfer.detection_id.clone(),
+                    "cancelled",
+                    None,
+                    Some(transfer.completed_files),
+                    Some(transfer.file_count),
+                    transfer.completed_bytes.saturating_add(
+                        transfer.current.as_ref().map_or(0, |file| file.transferred),
+                    ),
+                    Some(transfer.total),
+                    Some("文件传输已取消；远端可能保留部分文件。".to_string()),
+                );
+                return Ok(TransferPump::Completed);
+            }
+            ZmodemAction::Event(_) => {}
+            ZmodemAction::Idle => {
+                if !transfer.buffered_wire.is_empty() {
+                    let consumed = transfer
+                        .sender
+                        .submit_wire(&transfer.buffered_wire)
+                        .map_err(|error| {
+                            AppError::new("zmodem_protocol_error", error.to_string())
+                        })?;
+                    if consumed > 0 {
+                        transfer.buffered_wire.drain(..consumed);
+                        transfer.last_activity = Instant::now();
+                        continue;
+                    }
+                }
+                return Ok(TransferPump::Idle);
+            }
+            ZmodemAction::WriteFile(_) => {
+                return Err(AppError::new(
+                    "zmodem_protocol_error",
+                    "ZMODEM 上传状态机返回了接收文件操作。",
+                ));
+            }
+            _ => {
+                return Err(AppError::new(
+                    "zmodem_protocol_error",
+                    "ZMODEM 返回了不支持的操作。",
+                ));
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_zmodem_status(
+    app_handle: &AppHandle,
+    session_id: &str,
+    detection_id: String,
+    state: &str,
+    file_name: Option<String>,
+    file_index: Option<u32>,
+    file_count: Option<u32>,
+    transferred: u64,
+    total: Option<u64>,
+    message: Option<String>,
+) {
+    let _ = app_handle.emit(
+        ZMODEM_STATUS_EVENT,
+        TerminalTransferStatusEvent {
+            session_id: session_id.to_string(),
+            detection_id,
+            state: state.to_string(),
+            file_name,
+            file_index,
+            file_count,
+            transferred,
+            total,
+            message,
+        },
+    );
 }
 
 fn run_local_session(
@@ -720,6 +1407,7 @@ fn run_local_session(
                     .and_then(|_| writer.flush())
                     .map_err(local_terminal_error)?;
             }
+            SessionCommand::ZmodemResponse { .. } | SessionCommand::CancelZmodem { .. } => {}
             SessionCommand::Resize(size) => {
                 pair.master
                     .resize(pty_size(&size))
@@ -764,6 +1452,8 @@ fn wait_for_initial_local_resize(
                 break;
             }
             Ok(SessionCommand::Input(data)) => pending_input.push(data),
+            Ok(SessionCommand::ZmodemResponse { .. }) | Ok(SessionCommand::CancelZmodem { .. }) => {
+            }
             Ok(SessionCommand::Close) => return None,
             Ok(SessionCommand::CancelReconnect) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => return None,

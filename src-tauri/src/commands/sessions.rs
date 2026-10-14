@@ -66,6 +66,29 @@ pub fn write_ssh_session(
 }
 
 #[tauri::command]
+pub fn respond_zmodem_prompt(
+    state: State<'_, AppState>,
+    session_id: String,
+    detection_id: String,
+    paths: Option<Vec<String>>,
+) -> AppResult<()> {
+    state
+        .sessions
+        .respond_zmodem_prompt(&session_id, detection_id, paths)
+}
+
+#[tauri::command]
+pub fn cancel_zmodem_transfer(
+    state: State<'_, AppState>,
+    session_id: String,
+    detection_id: String,
+) -> AppResult<()> {
+    state
+        .sessions
+        .cancel_zmodem_transfer(&session_id, detection_id)
+}
+
+#[tauri::command]
 pub fn resize_ssh_session(
     state: State<'_, AppState>,
     request: ResizeSshSessionRequest,

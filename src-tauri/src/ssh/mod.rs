@@ -5,6 +5,7 @@ pub mod command;
 pub mod connection_pool;
 pub mod host_keys;
 pub mod session_manager;
+pub(crate) mod zmodem;
 
 pub use auth_prompts::{SSH_AUTH_PROMPT_EVENT, SshAuthPromptManager};
 pub use command::{CommandOutput, run_ssh_command};

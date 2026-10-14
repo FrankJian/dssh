@@ -8,12 +8,15 @@ export interface WorkspaceTabItem {
   id: string;
   kind: WorkspaceTabKind;
   title: string;
+  /** The user-editable name, without display-only decorations such as the SFTP prefix. */
+  renameValue: string;
   active: boolean;
 }
 
 interface WorkspaceTabStripProps {
   tabs: WorkspaceTabItem[];
   onSelect: (tab: WorkspaceTabItem) => void;
+  onRename: (tab: WorkspaceTabItem, name: string) => void;
   onClose: (tab: WorkspaceTabItem) => void;
   /** Move the whole terminal window (including its panes) or SFTP tab to a native window. */
   onDetach?: (tab: WorkspaceTabItem) => void;
@@ -67,12 +70,28 @@ function TabTitle({ value }: { value: string }) {
 export function WorkspaceTabStrip({
   tabs,
   onSelect,
+  onRename,
   onClose,
   onDetach,
   onReorder,
 }: WorkspaceTabStripProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  function beginRename(tab: WorkspaceTabItem) {
+    setEditingTabId(tab.id);
+    setRenameValue(tab.renameValue);
+  }
+
+  function commitRename(tab: WorkspaceTabItem) {
+    const name = renameValue.trim();
+    if (name && name !== tab.renameValue) {
+      onRename(tab, name);
+    }
+    setEditingTabId(null);
+  }
 
   return (
     <div className="tab-strip" role="tablist" aria-label="工作区标签">
@@ -84,9 +103,15 @@ export function WorkspaceTabStrip({
           } ${draggedId === tab.id ? "is-dragging" : ""}`
             .replace(/\s+/g, " ")
             .trim()}
-          draggable={Boolean(onReorder)}
+          draggable={Boolean(onReorder) && editingTabId !== tab.id}
           key={tab.id}
-          onClick={() => onSelect(tab)}
+          onClick={() => {
+            if (tab.active) {
+              beginRename(tab);
+            } else {
+              onSelect(tab);
+            }
+          }}
           onDragStart={(event) => {
             setDraggedId(tab.id);
             event.dataTransfer.effectAllowed = "move";
@@ -125,14 +150,41 @@ export function WorkspaceTabStrip({
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              onSelect(tab);
+              if (tab.active) {
+                beginRename(tab);
+              } else {
+                onSelect(tab);
+              }
             }
           }}
           role="tab"
           tabIndex={0}
         >
           <Icon name={KIND_ICON[tab.kind]} height="14" width="14" />
-          <TabTitle value={tab.title} />
+          {editingTabId === tab.id ? (
+            <input
+              aria-label="标签名称"
+              autoFocus
+              className="tab__rename"
+              onBlur={() => commitRename(tab)}
+              onChange={(event) => setRenameValue(event.currentTarget.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitRename(tab);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setEditingTabId(null);
+                }
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              value={renameValue}
+            />
+          ) : (
+            <TabTitle value={tab.title} />
+          )}
           <span
             aria-label="关闭"
             className="tab__action tab__close"

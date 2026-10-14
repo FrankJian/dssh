@@ -46,6 +46,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
@@ -337,6 +338,8 @@ function MainApp() {
     reconnectSession,
     resizeSession,
     sessions,
+    terminalTransfers,
+    cancelTerminalTransfer,
     setActiveSessionId,
     startLocalSession,
     startSession,
@@ -351,6 +354,7 @@ function MainApp() {
     closeSftpTab,
     closeSftpTabsForProfile,
     updateSftpTabPaths,
+    renameSftpTab,
     focusSftpTab,
     focusTerminal,
     tabOrder,
@@ -1226,12 +1230,14 @@ function MainApp() {
         id: session.id,
         kind: session.kind === "ssh" ? ("ssh" as const) : ("local" as const),
         title: terminalTabTitle(session),
+        renameValue: terminalName(session),
         active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
       })),
     ...sftpTabs.filter((tab) => !detachedSftpProfileIds.has(tab.profileId)).map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
       title: `SFTP · ${tab.title}`,
+      renameValue: tab.title,
       active: isSftpActive && tab.id === activeSftpId,
     })),
   ];
@@ -1268,6 +1274,14 @@ function MainApp() {
       }
     } else {
       setActiveSessionId(tab.id);
+    }
+  }
+
+  function handleRenameTab(tab: WorkspaceTabItem, name: string) {
+    if (tab.kind === "sftp") {
+      renameSftpTab(tab.id, name);
+    } else {
+      handleRenameTerminal(tab.id, name);
     }
   }
 
@@ -1865,6 +1879,7 @@ function MainApp() {
               <WorkspaceTabStrip
                 tabs={workspaceTabs}
                 onSelect={handleSelectTab}
+                onRename={handleRenameTab}
                 onClose={handleCloseTab}
                 onDetach={(tab) => void handleDetachTab(tab)}
                 onReorder={(draggedId, targetId) =>
@@ -2067,6 +2082,7 @@ function MainApp() {
         </button>
       ) : null}
       <ToastHost />
+      <TerminalTransferNotice transfers={terminalTransfers} onCancel={cancelTerminalTransfer} />
     </div>
   );
 }

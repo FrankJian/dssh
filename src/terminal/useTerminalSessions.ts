@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
-import { pruneTerminals } from "./terminalRegistry";
+import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
+import { open } from "@tauri-apps/plugin-dialog";
+import { toast } from "../ui/ToastHost";
 import {
+  cancelZmodemTransfer,
   closeSshSession,
   cancelReconnect as cancelReconnectCommand,
   listSshSessions,
   onTerminalOutput,
   onTerminalStatus,
+  onTerminalTransferPrompt,
+  onTerminalTransferStatus,
   readSshSessionOutput,
+  respondZmodemPrompt,
   resizeSshSession,
   startLocalSession as startLocalSessionCommand,
   startSshSession,
   writeSshSession,
+  type TerminalTransferStatusEvent,
 } from "../services/sshSessionService";
 
 export type TerminalOutputListener = (data: string) => void;
@@ -66,6 +73,8 @@ export function useTerminalSessions() {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
+  const [terminalTransfers, setTerminalTransfers] = useState<TerminalTransferStatusEvent[]>([]);
+  const pendingZmodemPromptsRef = useRef(new Set<string>());
 
   // Mirror of `sessions` so async callbacks (e.g. reconnect) can read the
   // latest list without becoming stale or churning their identity.
@@ -215,6 +224,43 @@ export function useTerminalSessions() {
     };
   }, [pushOutput]);
 
+  useEffect(() => {
+    const promptPromise = onTerminalTransferPrompt((event) => {
+      if (!hasTerminalInstance(event.sessionId) || pendingZmodemPromptsRef.current.has(event.detectionId)) {
+        return;
+      }
+      pendingZmodemPromptsRef.current.add(event.detectionId);
+      void (async () => {
+        try {
+          const picked = await open({ multiple: true, title: "选择要通过 rz 上传的文件" });
+          const paths = picked === null ? null : Array.isArray(picked) ? picked : [picked];
+          await respondZmodemPrompt(event.sessionId, event.detectionId, paths);
+        } catch (error) {
+          await respondZmodemPrompt(event.sessionId, event.detectionId, null).catch(() => undefined);
+          toast(error instanceof Error ? error.message : "无法打开文件选择器。", "error");
+        } finally {
+          pendingZmodemPromptsRef.current.delete(event.detectionId);
+        }
+      })();
+    });
+    const statusPromise = onTerminalTransferStatus((event) => {
+      if (!hasTerminalInstance(event.sessionId)) return;
+      setTerminalTransfers((current) => {
+        const next = current.filter((item) => item.detectionId !== event.detectionId);
+        return [...next, event];
+      });
+      if (["completed", "cancelled", "failed"].includes(event.state)) {
+        window.setTimeout(() => {
+          setTerminalTransfers((current) => current.filter((item) => item.detectionId !== event.detectionId));
+        }, 5000);
+      }
+    });
+    return () => {
+      void promptPromise.then((unlisten) => unlisten());
+      void statusPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions],
@@ -264,6 +310,16 @@ export function useTerminalSessions() {
   const cancelReconnect = useCallback((sessionId: string) => {
     void cancelReconnectCommand(sessionId).catch(() => {
       // Session may have already settled; ignore.
+    });
+  }, []);
+
+  const cancelTerminalTransfer = useCallback((transfer: TerminalTransferStatusEvent) => {
+    if (transfer.state === "awaitingSelection") {
+      void respondZmodemPrompt(transfer.sessionId, transfer.detectionId, null).catch(() => undefined);
+      return;
+    }
+    void cancelZmodemTransfer(transfer.sessionId, transfer.detectionId).catch((error: unknown) => {
+      toast(error instanceof Error ? error.message : "无法取消文件传输。", "error");
     });
   }, []);
 
@@ -320,6 +376,8 @@ export function useTerminalSessions() {
     reconnectSession,
     resizeSession,
     sessions,
+    terminalTransfers,
+    cancelTerminalTransfer,
     setActiveSessionId,
     startLocalSession,
     startSession,

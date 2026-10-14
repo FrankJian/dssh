@@ -62,6 +62,13 @@
 - 在现有 Toast 之上提供通知历史与未读状态。
 - 将仍在使用的 `window.alert` / `window.confirm` 统一为应用内确认组件；破坏性操作必须保持显式、阻塞式确认。
 
+### 6. 终端 ZMODEM 与 JumpServer 文件传输
+
+- 终端 `rz` 上传首版已接入：Rust 侧原始字节探测/分流、原生多文件选择、分块发送、进度与取消。
+  仍需用真实 SSH `rz`/`lrzsz` 做互操作与 Windows/macOS 验收；实现细节和边界见
+  [功能规格](features/zmodem-jumpserver-transfer.md)。
+- JumpServer SFTP 虚拟路径诊断与指定资产终端上传入口、`sz` 下载尚未实现；上传到暂存目录后自动搬运不进入首版。
+
 ## P3：可选演进
 
 

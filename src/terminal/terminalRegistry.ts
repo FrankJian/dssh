@@ -128,6 +128,10 @@ export function serializeTerminal(sessionId: string): TerminalSnapshot | null {
   return instances.get(sessionId)?.handle.serialize() ?? null;
 }
 
+export function hasTerminalInstance(sessionId: string): boolean {
+  return instances.has(sessionId);
+}
+
 export function acquireTerminal(setup: TerminalSetup): TerminalHandle {
   const key = setup.sessionId ?? WELCOME_KEY;
   const existing = instances.get(key);

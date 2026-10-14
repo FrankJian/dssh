@@ -189,6 +189,8 @@ Tauri 载荷统一 **camelCase**；改命令 / 事件时同步 Rust serde DTO �
 
 ## 7. 已规划功能规格
 
+- [终端 ZMODEM 与 JumpServer 文件传输](features/zmodem-jumpserver-transfer.md)：`rz` 上传的二进制链路、
+  首版 `rz` 上传已接入，真实环境兼容性待验证；JumpServer SFTP 路径诊断与指定资产终端上传方案尚未实现。
 - [终端吞吐、生命周期与显示保真](features/terminal-performance.md)：终端数据通路、xterm 实例生命周期与
   显示保真的优化规格，含性能基线与指标门槛。尚未实施。
 - [Graphite Glass 主题](features/graphite-glass-theme.md)：默认的冷黑、冰蓝与应用内 chrome / 浮层玻璃材质，已实现；终端、Monaco 与滚动内容区保持不模糊。
