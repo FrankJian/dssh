@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import { isAppShortcut, matchesShortcut, matchesWheelShortcut } from "../app/shortcuts";
 import type { TerminalSize, TerminalSnapshot } from "../models";
 import {
@@ -19,7 +19,8 @@ import {
   type RightClickAction,
 } from "../settings/settings";
 import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
-import { terminalTheme } from "./terminalTheme";
+import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
+import { toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 import "@xterm/xterm/css/xterm.css";
 
@@ -69,7 +70,6 @@ export interface TerminalHandle {
    *  races a remount elsewhere cannot pull the terminal out of its new home. */
   detach(container: HTMLElement): void;
   focus(): void;
-  applyTransparentTheme(): void;
   /** Capture the rendered state before moving a workspace to another window. */
   serialize(): TerminalSnapshot | null;
 }
@@ -78,11 +78,6 @@ export interface TerminalHandle {
 const WELCOME_KEY = "\u0000welcome";
 
 const welcomeOutput = ["\x1b[1;34mdssh 终端\x1b[0m", "", "请选择左侧 SSH 配置并连接。", ""];
-
-const transparentTerminalTheme: ITheme = {
-  ...terminalTheme,
-  background: "rgba(0, 0, 0, 0)",
-};
 
 /**
  * Windows local shells run behind ConPTY, which rewrites the screen on resize
@@ -112,6 +107,13 @@ interface RegistryEntry {
 }
 
 const instances = new Map<string, RegistryEntry>();
+
+subscribeTerminalThemeStore(() => {
+  const colors = getActiveTerminalColors();
+  for (const entry of instances.values()) {
+    entry.handle.terminal.options.theme = toXtermTheme(colors, entry.transparent);
+  }
+});
 
 // Detached native windows have a separate JS runtime, so their xterm instance
 // cannot return with them. The parent consumes this screen state once rather
@@ -209,7 +211,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // CSS owns the terminal background layer so wallpaper and opacity work
     // consistently with both the DOM and WebGL renderers. xterm only paints
     // text/cursor/selection over that layer while transparency is enabled.
-    theme: transparent ? transparentTerminalTheme : terminalTheme,
+    theme: toXtermTheme(getActiveTerminalColors(), transparent),
     windowsPty: isLocalShell ? windowsPtyOptions : undefined,
   });
 
@@ -614,9 +616,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       attach,
       detach,
       focus: () => terminal.focus(),
-      applyTransparentTheme: () => {
-        terminal.options.theme = transparentTerminalTheme;
-      },
       serialize: () => {
         if (!opened) {
           return null;

@@ -1735,11 +1735,18 @@ async fn authenticate_keyboard_interactive<H: client::Handler>(
                 let answers = if prompts.is_empty() {
                     Vec::new()
                 } else {
-                    auth_prompts
-                        .request(
-                            &profile.host,
-                            profile.port,
-                            &profile.username,
+                    tokio::select! {
+                        // A challenge belongs to this exact transport. Stop
+                        // waiting as soon as it closes, so a reconnect cannot
+                        // leave a stale dialog in front of the new challenge.
+                        _ = &mut *handle => {
+                            return Err(AppError::new(
+                                "auth_connection_closed",
+                                "SSH 连接已在等待验证码时断开。",
+                            ));
+                        }
+                        answers = auth_prompts.request(
+                            profile,
                             name,
                             instructions,
                             prompts
@@ -1749,8 +1756,8 @@ async fn authenticate_keyboard_interactive<H: client::Handler>(
                                     echo: prompt.echo,
                                 })
                                 .collect(),
-                        )
-                        .await?
+                        ) => answers?,
+                    }
                 };
                 response = handle
                     .authenticate_keyboard_interactive_respond(answers)

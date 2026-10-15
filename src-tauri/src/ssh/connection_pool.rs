@@ -332,6 +332,7 @@ impl SshConnectionPool {
         };
 
         if should_connect {
+            self.inner.auth_prompts.begin_profile_attempt(&profile.id);
             return self.connect_entry(key, entry, profile, owner).await;
         }
 

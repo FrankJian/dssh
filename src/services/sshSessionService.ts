@@ -112,6 +112,7 @@ export interface SshAuthPromptField {
 
 export interface SshAuthPromptEvent {
   promptId: string;
+  profileId: string;
   host: string;
   port: number;
   username: string;
@@ -144,6 +145,10 @@ export function onHostKeyChanged(handler: (event: HostKeyChangedEvent) => void) 
 
 export function onSshAuthPrompt(handler: (event: SshAuthPromptEvent) => void) {
   return listen<SshAuthPromptEvent>("ssh://auth-prompt", (event) => handler(event.payload));
+}
+
+export function onSshAuthPromptClosed(handler: (event: { promptId: string }) => void) {
+  return listen<{ promptId: string }>("ssh://auth-prompt-closed", (event) => handler(event.payload));
 }
 
 export function onSshTransportStatus(handler: (event: SshTransportStatusEvent) => void) {

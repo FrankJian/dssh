@@ -11,6 +11,7 @@ import {
   onHostKeyChanged,
   onHostKeyPrompt,
   onSshAuthPrompt,
+  onSshAuthPromptClosed,
   onSshTransportStatus,
   respondHostKeyPrompt,
   respondSshAuthPrompt,
@@ -189,6 +190,7 @@ function MainApp() {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
   const [sshAuthPrompts, setSshAuthPrompts] = useState<SshAuthPromptEvent[]>([]);
+  const cancelledAuthProfiles = useRef(new Set<string>());
   const [startupUpdate, setStartupUpdate] = useState<Update | null>(null);
   const reconnectingProfiles = useRef(new Set<string>());
   const [zenMode, setZenMode] = useState<boolean>(
@@ -222,13 +224,21 @@ function MainApp() {
   // Keyboard-interactive challenges are typically OTP/MFA prompts. Queue them
   // because independent profiles may begin connecting at the same time.
   useEffect(() => {
+    const closedPromise = onSshAuthPromptClosed((event) => {
+      setSshAuthPrompts((current) => current.filter((item) => item.promptId !== event.promptId));
+    });
     const promptPromise = onSshAuthPrompt((event) => {
+      if (cancelledAuthProfiles.current.has(event.profileId)) {
+        void respondSshAuthPrompt(event.promptId, null).catch(() => undefined);
+        return;
+      }
       setSshAuthPrompts((current) =>
         current.some((item) => item.promptId === event.promptId) ? current : [...current, event],
       );
     });
     return () => {
       void promptPromise.then((unlisten) => unlisten());
+      void closedPromise.then((unlisten) => unlisten());
     };
   }, []);
   const aiConfig = useAiConfig();
@@ -820,6 +830,9 @@ function MainApp() {
   // own detailed reconnect status.
   useEffect(() => {
     const statusPromise = onSshTransportStatus((event) => {
+      if (event.state === "connecting") {
+        cancelledAuthProfiles.current.delete(event.profileId);
+      }
       if (event.state === "reconnecting") {
         if (!reconnectingProfiles.current.has(event.profileId)) {
           reconnectingProfiles.current.add(event.profileId);
@@ -846,8 +859,18 @@ function MainApp() {
   }
 
   async function resolveSshAuthPrompt(promptId: string, responses: string[] | null) {
+    const prompt = sshAuthPrompts.find((item) => item.promptId === promptId);
+    if (!prompt) return;
+    if (responses === null) {
+      cancelledAuthProfiles.current.add(prompt.profileId);
+      setSshAuthPrompts((current) =>
+        current.filter((item) => item.profileId !== prompt.profileId),
+      );
+    }
     await respondSshAuthPrompt(promptId, responses);
-    setSshAuthPrompts((current) => current.filter((item) => item.promptId !== promptId));
+    if (responses !== null) {
+      setSshAuthPrompts((current) => current.filter((item) => item.promptId !== promptId));
+    }
   }
 
   function openCreateProfile() {

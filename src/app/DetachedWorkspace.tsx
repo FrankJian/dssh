@@ -11,6 +11,8 @@ import { serializeTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTheme } from "../theme/useTheme";
+import { readImageDataUrl } from "../services/configService";
+import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
 import { Icon } from "../ui/Icon";
 import { toast, ToastHost } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
@@ -101,11 +103,49 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const terminal = useTerminalSessions();
   const panes = usePaneLayout();
   const settings = useTerminalSettings();
+  const [terminalBgDataUrl, setTerminalBgDataUrl] = useState<string | null>(null);
+  const terminalWallpaperGlassSupported = supportsTerminalWallpaperGlass();
+  const hasTerminalWallpaper = Boolean(terminalBgDataUrl)
+    && settings.terminalBgGlassEnabled
+    && terminalWallpaperGlassSupported;
   const appliedInitialLayout = useRef(false);
   const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
   const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
   const sessionCountRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!settings.terminalBgImage) {
+      setTerminalBgDataUrl(null);
+      return;
+    }
+    void readImageDataUrl(settings.terminalBgImage)
+      .then((url) => {
+        if (!cancelled) setTerminalBgDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setTerminalBgDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.terminalBgImage]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty(
+      "--terminal-bg-image",
+      terminalBgDataUrl ? `url("${terminalBgDataUrl}")` : "none",
+    );
+    root.style.setProperty(
+      "--terminal-surface",
+      settings.terminalBgOpacity >= 100
+        ? "var(--terminal-bg)"
+        : `rgb(var(--terminal-bg-rgb) / ${settings.terminalBgOpacity}%)`,
+    );
+    root.style.setProperty("--terminal-wallpaper-blur", `${settings.terminalBgGlassBlur}px`);
+  }, [settings.terminalBgGlassBlur, settings.terminalBgOpacity, terminalBgDataUrl]);
 
   useEffect(() => {
     localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
@@ -305,7 +345,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       getBacklog={terminal.getBacklog}
       gpuAcceleration={settings.gpuAcceleration}
       backgroundAlpha={settings.terminalBgOpacity / 100}
-      hasWallpaper={false}
+      hasWallpaper={hasTerminalWallpaper}
       rightClick={settings.rightClick}
       hasProfiles={profilesState.profiles.length > 0}
       onCancelReconnect={() => { if (activeSession) terminal.cancelReconnect(activeSession.id); }}
@@ -391,7 +431,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
             rightClick={settings.rightClick}
             gpuAcceleration={settings.gpuAcceleration}
             backgroundAlpha={settings.terminalBgOpacity / 100}
-            hasWallpaper={false}
+            hasWallpaper={hasTerminalWallpaper}
             onFontSizeChange={settings.setFontSize}
           />
         ) : terminalSurface}

@@ -144,15 +144,6 @@ export function TerminalView({
     };
   }, [currentSessionId, isLocalShell, transparent]);
 
-  // Opacity is drawn by the CSS surface, but xterm's WebGL canvas retains its
-  // prior theme across Fast Refresh. Reapply the transparent theme whenever the
-  // slider changes so the text area and its padded edge always share one layer.
-  useEffect(() => {
-    if (transparent) {
-      handleRef.current?.handle.applyTransparentTheme();
-    }
-  }, [backgroundAlpha, transparent]);
-
   return (
     <div
       className="terminal-view"

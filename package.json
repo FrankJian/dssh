@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:terminal-themes": "node --experimental-strip-types --test src/terminal/themes/terminalThemes.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

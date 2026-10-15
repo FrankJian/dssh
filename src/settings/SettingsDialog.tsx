@@ -6,6 +6,7 @@ import { AboutSection } from "./AboutSection";
 import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
+import { TerminalColorSettings } from "./TerminalColorSettings";
 import {
   exportProfilesEncrypted,
   exportProfilesYaml,
@@ -232,6 +233,10 @@ export function SettingsDialog({
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [isDraggingWindow, setIsDraggingWindow] = useState(false);
   const windowRef = useRef<HTMLElement>(null);
+  const terminalDraftGuardRef = useRef<() => boolean>(() => true);
+  const requestClose = useCallback(() => {
+    if (terminalDraftGuardRef.current()) onClose();
+  }, [onClose]);
   const fontOptions = useMemo(
     () => buildFontOptions(systemFontFamilies, [fontFamily, editorSettings.fontFamily]),
     [editorSettings.fontFamily, fontFamily, systemFontFamilies],
@@ -240,12 +245,12 @@ export function SettingsDialog({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        onClose();
+        requestClose();
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [requestClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -449,7 +454,7 @@ export function SettingsDialog({
           <button
             aria-label="关闭设置"
             className="icon-button"
-            onClick={onClose}
+            onClick={requestClose}
             type="button"
           >
             <Icon name="close" height="16" width="16" />
@@ -463,7 +468,9 @@ export function SettingsDialog({
                 aria-current={category === item.id}
                 className={`settings-nav__item ${category === item.id ? "is-active" : ""}`.trim()}
                 key={item.id}
-                onClick={() => setCategory(item.id)}
+                onClick={() => {
+                  if (terminalDraftGuardRef.current()) setCategory(item.id);
+                }}
                 type="button"
               >
                 <Icon name={item.icon} height="16" width="16" />
@@ -534,7 +541,12 @@ export function SettingsDialog({
             ) : null}
 
             {category === "terminal" ? (
-              <section className="settings-section" aria-label="终端字体">
+              <section className="settings-section" aria-label="终端设置">
+                <TerminalColorSettings
+                  fontFamily={fontFamily}
+                  fontSize={fontSize}
+                  onCloseGuardChange={(guard) => { terminalDraftGuardRef.current = guard; }}
+                />
                 <div className="settings-section__head">
                   <h3>字体大小</h3>
                   <p>终端内的字号快捷键和鼠标滚轮组合可在“快捷键”设置中修改。</p>
