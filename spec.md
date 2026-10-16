@@ -137,6 +137,7 @@ Duo SSH 是面向开发与运维的**跨平台（Windows / macOS）SSH 管理器
 密码或私钥认证后，如果服务器要求继续使用 `keyboard-interactive`，共享 transport 的认证流程会发出 `ssh://auth-prompt`，由应用内弹窗展示服务器返回的名称、说明和一个或多个问题，再通过 `respond_ssh_auth_prompt` 提交本轮答案：
 
 - 支持 OTP、验证码及多轮 keyboard-interactive challenge，并遵守服务器为每个输入指定的 `echo` 属性。
+- 验证码错误且服务器仍允许 `keyboard-interactive` 时，保留当前认证流程并允许重新输入；默认最多验证 3 次，弹窗会提示剩余次数，达到上限后结束本次连接。
 - 多个连接同时认证时按请求排队展示；单次提示 180 秒超时，用户可显式取消。
 - 本轮答案只在前端输入状态和 Rust 握手内短暂存在，不写入 SSH profile、数据库或日志。
 - 认证发生在共享连接池建立 transport 时，因此终端、SFTP、端口转发、主机工具与 AI exec 共用同一套 MFA 语义；重连需要重新完成服务器要求的认证，取消后不再自动重复提示。

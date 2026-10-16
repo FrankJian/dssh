@@ -118,6 +118,7 @@ export interface SshAuthPromptEvent {
   username: string;
   name: string;
   instructions: string;
+  retryMessage?: string;
   prompts: SshAuthPromptField[];
 }
 

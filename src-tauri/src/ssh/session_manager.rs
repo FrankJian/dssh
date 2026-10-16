@@ -74,6 +74,8 @@ const MAX_ZMODEM_BUFFERED_BYTES: usize = 1024 * 1024;
 const MAX_ZMODEM_FILES: usize = 64;
 const ZMODEM_PROMPT_EVENT: &str = "terminal://zmodem-prompt";
 const ZMODEM_STATUS_EVENT: &str = "terminal://zmodem-status";
+const MAX_KEYBOARD_INTERACTIVE_CHALLENGE_ROUNDS: usize = 8;
+const MAX_OTP_ATTEMPTS: usize = 3;
 
 #[derive(Clone)]
 pub struct SessionManager {
@@ -1711,16 +1713,42 @@ async fn authenticate_keyboard_interactive<H: client::Handler>(
     profile: &SshProfile,
     auth_prompts: &SshAuthPromptManager,
 ) -> AppResult<()> {
-    const MAX_CHALLENGE_ROUNDS: usize = 8;
-
+    // Servers may reject an OTP with an authentication failure, then invite a
+    // new keyboard-interactive attempt. Give the user a bounded number of
+    // complete attempts instead of treating the first mistyped code as a
+    // terminal connection failure.
     let mut response = handle
         .authenticate_keyboard_interactive_start(profile.username.clone(), None::<String>)
         .await
         .map_err(ssh_error)?;
+    let mut failed_code_attempts = 0;
+    let mut retry_message = None;
 
-    for _ in 0..MAX_CHALLENGE_ROUNDS {
+    for _ in 0..MAX_KEYBOARD_INTERACTIVE_CHALLENGE_ROUNDS {
         match response {
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods, ..
+            } if remaining_methods.contains(&MethodKind::KeyboardInteractive) => {
+                failed_code_attempts += 1;
+                if let Some(remaining_attempts) = remaining_otp_attempts(failed_code_attempts) {
+                    retry_message = Some(format!(
+                        "验证码不正确，请重新输入。还可尝试 {remaining_attempts} 次。"
+                    ));
+                    response = handle
+                        .authenticate_keyboard_interactive_start(
+                            profile.username.clone(),
+                            None::<String>,
+                        )
+                        .await
+                        .map_err(ssh_error)?;
+                } else {
+                    return Err(AppError::new(
+                        "auth_error",
+                        "SSH 多因子认证连续失败 3 次，连接已结束。",
+                    ));
+                }
+            }
             KeyboardInteractiveAuthResponse::Failure { .. } => {
                 return Err(AppError::new(
                     "auth_error",
@@ -1749,6 +1777,7 @@ async fn authenticate_keyboard_interactive<H: client::Handler>(
                             profile,
                             name,
                             instructions,
+                            retry_message.take(),
                             prompts
                                 .into_iter()
                                 .map(|prompt| SshAuthPrompt {
@@ -1771,6 +1800,12 @@ async fn authenticate_keyboard_interactive<H: client::Handler>(
         "auth_error",
         "SSH 服务器请求了过多轮多因子认证。",
     ))
+}
+
+fn remaining_otp_attempts(failed_attempts: usize) -> Option<usize> {
+    MAX_OTP_ATTEMPTS
+        .checked_sub(failed_attempts)
+        .filter(|remaining| *remaining > 0)
 }
 
 #[derive(Default)]
@@ -2149,7 +2184,7 @@ mod tests {
     use super::{
         OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
         SessionCommand, input_requests_clean_exit, login_shell_args, normalize_input,
-        resolve_remote_forward_target, wait_for_initial_local_resize,
+        remaining_otp_attempts, resolve_remote_forward_target, wait_for_initial_local_resize,
     };
     use crate::models::terminal::TerminalSize;
 
@@ -2256,6 +2291,13 @@ mod tests {
         let mut pending = String::new();
         assert!(!input_requests_clean_exit(&mut pending, "echo exit\r"));
         assert!(!input_requests_clean_exit(&mut pending, "exitless\r"));
+    }
+
+    #[test]
+    fn otp_allows_two_retries_after_the_first_two_rejections() {
+        assert_eq!(remaining_otp_attempts(1), Some(2));
+        assert_eq!(remaining_otp_attempts(2), Some(1));
+        assert_eq!(remaining_otp_attempts(3), None);
     }
 
     #[test]

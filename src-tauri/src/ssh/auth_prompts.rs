@@ -44,6 +44,8 @@ struct SshAuthPromptEvent {
     username: String,
     name: String,
     instructions: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_message: Option<String>,
     prompts: Vec<SshAuthPromptField>,
 }
 
@@ -129,6 +131,7 @@ impl SshAuthPromptManager {
         profile: &SshProfile,
         name: String,
         instructions: String,
+        retry_message: Option<String>,
         prompts: Vec<SshAuthPrompt>,
     ) -> AppResult<Vec<String>> {
         if prompts.len() > MAX_PROMPTS_PER_ROUND {
@@ -174,6 +177,7 @@ impl SshAuthPromptManager {
             username: profile.username.clone(),
             name,
             instructions,
+            retry_message,
             prompts: prompts
                 .into_iter()
                 .map(|prompt| SshAuthPromptField {

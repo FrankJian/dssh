@@ -58,6 +58,9 @@ export function SshAuthPrompt({ prompt, onCancel, onSubmit }: SshAuthPromptProps
             {prompt.instructions.trim() ? (
               <p className="ssh-auth-dialog__instructions">{prompt.instructions}</p>
             ) : null}
+            {prompt.retryMessage ? (
+              <div className="ssh-auth-dialog__error" role="alert">{prompt.retryMessage}</div>
+            ) : null}
             <div className="ssh-auth-dialog__fields">
               {prompt.prompts.map((field, index) => (
                 <label className="ssh-auth-dialog__field" key={`${field.prompt}-${index}`}>
