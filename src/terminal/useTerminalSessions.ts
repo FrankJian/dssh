@@ -29,6 +29,15 @@ const initialSize: TerminalSize = {
   rows: 30,
 };
 
+const RECONNECT_ON_INPUT_STATUSES = new Set<TerminalSession["status"]>([
+  "disconnected",
+  "failed",
+]);
+
+function shouldReconnectOnInput(session: TerminalSession | undefined): boolean {
+  return session?.kind === "ssh" && RECONNECT_ON_INPUT_STATUSES.has(session.status);
+}
+
 /**
  * Retained output for one session, kept as the chunks we received instead of
  * one growing string. Appending is O(1) and trimming drops whole chunks, so a
@@ -75,6 +84,7 @@ export function useTerminalSessions() {
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
   const [terminalTransfers, setTerminalTransfers] = useState<TerminalTransferStatusEvent[]>([]);
   const pendingZmodemPromptsRef = useRef(new Set<string>());
+  const manualReconnectsRef = useRef(new Set<string>());
 
   // Mirror of `sessions` so async callbacks (e.g. reconnect) can read the
   // latest list without becoming stale or churning their identity.
@@ -216,6 +226,10 @@ export function useTerminalSessions() {
           event.status === "reconnecting" ? "33" : event.status === "connected" ? "32" : "31";
         pushOutput(event.sessionId, `\r\n\x1b[${color}m${event.message}\x1b[0m\r\n`);
       }
+      const session = sessionsRef.current.find((item) => item.id === event.sessionId);
+      if (session && shouldReconnectOnInput({ ...session, status: event.status })) {
+        pushOutput(event.sessionId, "\r\n按任意键重新连接。\r\n");
+      }
     });
 
     return () => {
@@ -278,31 +292,42 @@ export function useTerminalSessions() {
 
   const reconnectSession = useCallback(
     async (sessionId: string) => {
+      if (manualReconnectsRef.current.has(sessionId)) {
+        return;
+      }
       const target = buffersRef.current;
       const existing = sessionsRef.current.find((session) => session.id === sessionId);
       if (!existing) {
         return;
       }
 
-      const fresh =
-        existing.kind === "ssh"
-          ? await startSshSession({ profileId: existing.profileId, size: initialSize })
-          : await startLocalSessionCommand({ size: initialSize });
-
+      manualReconnectsRef.current.add(sessionId);
       try {
-        await closeSshSession(sessionId);
-      } catch {
-        // Old session may already be gone; ignore.
-      }
+        const fresh =
+          existing.kind === "ssh"
+            ? await startSshSession({ profileId: existing.profileId, size: initialSize })
+            : await startLocalSessionCommand({ size: initialSize });
 
-      target.delete(sessionId);
-      listenersRef.current.delete(sessionId);
-      setSessions((currentSessions) =>
-        currentSessions.map((session) => (session.id === sessionId ? fresh : session)),
-      );
-      setActiveSessionId((currentActiveId) =>
-        currentActiveId === sessionId ? fresh.id : currentActiveId,
-      );
+        try {
+          await closeSshSession(sessionId);
+        } catch {
+          // Old session may already be gone; ignore.
+        }
+
+        target.delete(sessionId);
+        listenersRef.current.delete(sessionId);
+        sessionsRef.current = sessionsRef.current.map((session) =>
+          session.id === sessionId ? fresh : session,
+        );
+        setSessions((currentSessions) =>
+          currentSessions.map((session) => (session.id === sessionId ? fresh : session)),
+        );
+        setActiveSessionId((currentActiveId) =>
+          currentActiveId === sessionId ? fresh.id : currentActiveId,
+        );
+      } finally {
+        manualReconnectsRef.current.delete(sessionId);
+      }
     },
     [],
   );
@@ -342,8 +367,18 @@ export function useTerminalSessions() {
   // is seeded from the backend's global session list while the window only
   // shows the sessions in its own descriptor.
   const writeToSession = useCallback(async (sessionId: string, data: string) => {
+    const session = sessionsRef.current.find((item) => item.id === sessionId);
+    if (!session) {
+      // The terminal view can emit one last input event while React swaps the
+      // disconnected session for its freshly connected replacement.
+      return;
+    }
+    if (shouldReconnectOnInput(session)) {
+      await reconnectSession(sessionId);
+      return;
+    }
     await writeSshSession({ data, sessionId });
-  }, []);
+  }, [reconnectSession]);
 
   const resizeSession = useCallback(async (sessionId: string, size: TerminalSize) => {
     await resizeSshSession({ sessionId, size });

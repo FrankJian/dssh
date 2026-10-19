@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::{
     error::{AppError, AppResult},
+    models::app_lock::StoredAppLockSettings,
     models::s3::{
         CreateS3ProfileRequest, S3Bookmark, S3Credentials, S3Profile, UpdateS3ProfileRequest,
     },
@@ -24,6 +25,7 @@ const S3_BOOKMARKS_MIGRATION: &str = include_str!("../../migrations/003_s3_bookm
 const AI_CHAT_HISTORY_MIGRATION: &str = include_str!("../../migrations/004_ai_chat_history.sql");
 const SSH_PROXY_MIGRATION: &str = include_str!("../../migrations/005_ssh_proxies.sql");
 const DROP_KUBERNETES_MIGRATION: &str = include_str!("../../migrations/006_drop_kubernetes.sql");
+const APP_LOCK_MIGRATION: &str = include_str!("../../migrations/007_app_lock.sql");
 const MAX_AI_CHAT_HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -481,6 +483,7 @@ impl ProfileRepository {
         connection.execute_batch(AI_CHAT_HISTORY_MIGRATION)?;
         connection.execute_batch(SSH_PROXY_MIGRATION)?;
         connection.execute_batch(DROP_KUBERNETES_MIGRATION)?;
+        connection.execute_batch(APP_LOCK_MIGRATION)?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS app_secrets (
                 key TEXT PRIMARY KEY,
@@ -489,6 +492,43 @@ impl ProfileRepository {
             );",
         )?;
         ensure_columns(&connection)?;
+        Ok(())
+    }
+
+    pub fn get_app_lock_settings(&self) -> AppResult<StoredAppLockSettings> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT enabled, auto_lock_enabled, timeout_minutes, password_hash
+             FROM app_lock_settings WHERE id = 1",
+                [],
+                |row| {
+                    Ok(StoredAppLockSettings {
+                        enabled: row.get::<_, i64>(0)? != 0,
+                        auto_lock_enabled: row.get::<_, i64>(1)? != 0,
+                        timeout_minutes: row.get::<_, u16>(2)?,
+                        password_hash: row.get(3)?,
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn save_app_lock_settings(&self, settings: &StoredAppLockSettings) -> AppResult<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "UPDATE app_lock_settings
+             SET enabled = ?1, auto_lock_enabled = ?2, timeout_minutes = ?3,
+                 password_hash = ?4, updated_at = ?5
+             WHERE id = 1",
+            params![
+                bool_to_i64(settings.enabled),
+                bool_to_i64(settings.auto_lock_enabled),
+                settings.timeout_minutes,
+                settings.password_hash,
+                timestamp(),
+            ],
+        )?;
         Ok(())
     }
 

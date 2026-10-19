@@ -19,10 +19,13 @@ import { WindowControls } from "../ui/WindowControls";
 import { isMacOS } from "../platform";
 import { discardDetachedWorkspace, updateDetachedTerminalWorkspace } from "../services/workspaceService";
 import { DetachedCloseDialog } from "./DetachedCloseDialog";
+import { AppLockScreen } from "./AppLockScreen";
+import { useAppLock } from "./useAppLock";
 import {
   formatShortcut,
   getShortcutBinding,
   isFocusModeExitShortcut,
+  isLockAppShortcut,
   isTerminalFullscreenShortcut,
 } from "./shortcuts";
 
@@ -72,6 +75,17 @@ function DetachedTitlebar({
 function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
   const profileId = workspace.sftp?.profileId ?? null;
   const currentWindow = getCurrentWindow();
+  const appLock = useAppLock();
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isLockAppShortcut(event) || !appLock.status?.settings.enabled || appLock.status.locked) return;
+      event.preventDefault();
+      void appLock.lock();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [appLock.lock, appLock.status?.locked, appLock.status?.settings.enabled]);
 
   function closeSftpWorkspace() {
     void discardDetachedWorkspace(workspace.label)
@@ -92,6 +106,7 @@ function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
         <FileBrowser disableContextMenu profileId={profileId} />
       </main>
       <ToastHost />
+      {appLock.status?.locked ? <AppLockScreen onUnlock={appLock.unlock} /> : null}
     </div>
   );
 }
@@ -103,6 +118,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const terminal = useTerminalSessions();
   const panes = usePaneLayout();
   const settings = useTerminalSettings();
+  const appLock = useAppLock();
   const [terminalBgDataUrl, setTerminalBgDataUrl] = useState<string | null>(null);
   const terminalWallpaperGlassSupported = supportsTerminalWallpaperGlass();
   const hasTerminalWallpaper = Boolean(terminalBgDataUrl)
@@ -185,7 +201,10 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTerminalFullscreenShortcut(event)) {
+      if (isLockAppShortcut(event) && appLock.status?.settings.enabled && !appLock.status.locked) {
+        event.preventDefault();
+        void appLock.lock();
+      } else if (isTerminalFullscreenShortcut(event)) {
         event.preventDefault();
         toggleTerminalFullscreen();
       } else if (isFocusModeExitShortcut(event) && terminalFullscreenPaneId) {
@@ -195,7 +214,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [terminalFullscreenPaneId, toggleTerminalFullscreen]);
+  }, [appLock.lock, appLock.status?.locked, appLock.status?.settings.enabled, terminalFullscreenPaneId, toggleTerminalFullscreen]);
 
   useEffect(() => {
     setTerminalFullscreenPaneId((current) =>
@@ -462,6 +481,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         />
       ) : null}
       <ToastHost />
+      {appLock.status?.locked ? <AppLockScreen onUnlock={appLock.unlock} /> : null}
     </div>
   );
 }

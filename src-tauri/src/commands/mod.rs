@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod app;
+pub mod app_lock;
 pub mod config;
 pub mod forwarding;
 pub mod hosttools;

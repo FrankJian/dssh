@@ -16,6 +16,8 @@ use crate::{
     workspace::DetachedWorkspaceManager,
 };
 
+pub mod lock;
+
 #[derive(Clone)]
 pub struct AppState {
     pub profiles: ProfileRepository,
@@ -29,6 +31,7 @@ pub struct AppState {
     pub ssh_diagnostics: Arc<SshConnectionDiagnostics>,
     pub ssh_pool: SshConnectionPool,
     pub detached_workspaces: DetachedWorkspaceManager,
+    pub app_lock: lock::AppLockManager,
 }
 
 impl AppState {
@@ -55,11 +58,12 @@ impl AppState {
         );
         ssh_pool.start_idle_reaper();
 
+        let profiles =
+            ProfileRepository::initialize(&app_data_dir, storage_config.database_file_name)?;
+        let app_lock = lock::AppLockManager::initialize(profiles.clone(), app_handle.clone())?;
+
         Ok(Self {
-            profiles: ProfileRepository::initialize(
-                &app_data_dir,
-                storage_config.database_file_name,
-            )?,
+            profiles,
             sessions: SessionManager::new(ssh_pool.clone()),
             sftp: SftpManager::new(ssh_pool.clone()),
             s3: S3Manager::default(),
@@ -70,6 +74,7 @@ impl AppState {
             ssh_diagnostics,
             ssh_pool,
             detached_workspaces: DetachedWorkspaceManager::default(),
+            app_lock,
         })
     }
 }

@@ -8,6 +8,7 @@ import { isMacOS } from "../platform";
  */
 export type ShortcutId =
   | "commandPalette"
+  | "lockApp"
   | "toggleTerminalFullscreen"
   | "exitFocusMode"
   | "increaseTerminalFont"
@@ -48,6 +49,14 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     description: "快速搜索和执行应用操作。",
     input: "key",
     defaultBinding: { alt: false, key: "k", primary: true, shift: false },
+  },
+  {
+    id: "lockApp",
+    category: "全局",
+    label: "立即锁定应用",
+    description: "锁屏已启用时立即锁定应用。",
+    input: "key",
+    defaultBinding: { alt: false, key: "l", primary: true, shift: true },
   },
   {
     id: "toggleTerminalFullscreen",
@@ -289,6 +298,11 @@ export function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
   return matchesShortcut(event, "commandPalette");
 }
 
+/** Locks the app immediately (⌘⇧L / Ctrl+Shift+L by default). */
+export function isLockAppShortcut(event: KeyboardEvent): boolean {
+  return matchesShortcut(event, "lockApp");
+}
+
 /** Focuses the current terminal pane (⌘⇧↵ / Ctrl+Shift+Enter by default). */
 export function isTerminalFullscreenShortcut(event: KeyboardEvent): boolean {
   return matchesShortcut(event, "toggleTerminalFullscreen");
@@ -304,6 +318,7 @@ export function isFocusModeExitShortcut(event: KeyboardEvent): boolean {
  */
 export function isAppShortcut(event: KeyboardEvent): boolean {
   return isCommandPaletteShortcut(event) ||
+    isLockAppShortcut(event) ||
     isTerminalFullscreenShortcut(event) ||
     isFocusModeExitShortcut(event);
 }

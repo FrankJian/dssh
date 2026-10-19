@@ -7,6 +7,8 @@ import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
+import { AppLockSettings } from "./AppLockSettings";
+import type { AppLockStatus, UpdateAppLockSettingsRequest } from "../services/appLockService";
 import {
   exportProfilesEncrypted,
   exportProfilesYaml,
@@ -50,10 +52,12 @@ import {
   systemFontFamilyValue,
 } from "./settings";
 
-export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "s3" | "ai" | "config" | "about";
+export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "security" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
   aiConfig: AiConfig;
+  appLockStatus: AppLockStatus | null;
+  onAppLockSettingsChange: (request: UpdateAppLockSettingsRequest) => Promise<void>;
   initialCategory?: SettingsCategory;
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
@@ -99,12 +103,13 @@ interface SettingsDialogProps {
 const categories: Array<{
   id: SettingsCategory;
   label: string;
-  icon: "sun" | "monitor" | "fileCode" | "command" | "bucket" | "file" | "bot" | "info";
+  icon: "sun" | "monitor" | "fileCode" | "command" | "shield" | "bucket" | "file" | "bot" | "info";
 }> = [
   { icon: "sun", id: "appearance", label: "外观" },
   { icon: "monitor", id: "terminal", label: "终端" },
   { icon: "fileCode", id: "editor", label: "文件编辑器" },
   { icon: "command", id: "shortcuts", label: "快捷键" },
+  { icon: "shield", id: "security", label: "安全与锁屏" },
   { icon: "bucket", id: "s3", label: "对象存储" },
   { icon: "bot", id: "ai", label: "AI" },
   { icon: "file", id: "config", label: "配置文件" },
@@ -167,6 +172,7 @@ function buildFontOptions(systemFamilies: readonly string[], currentValues: read
 
 export function SettingsDialog({
   aiConfig,
+  appLockStatus,
   copyOnSelect,
   editorSettings,
   fontFamily,
@@ -177,6 +183,7 @@ export function SettingsDialog({
   initialCategory,
   onClose,
   onCopyOnSelectChange,
+  onAppLockSettingsChange,
   onFontFamilyChange,
   onFontSizeChange,
   onLetterSpacingChange,
@@ -908,6 +915,10 @@ export function SettingsDialog({
             ) : null}
 
             {category === "shortcuts" ? <ShortcutSettingsSection /> : null}
+
+            {category === "security" ? (
+              <AppLockSettings status={appLockStatus} onSave={onAppLockSettingsChange} />
+            ) : null}
 
             {s3NavigationEnabled && category === "s3" ? (
               <section className="settings-section" aria-label="对象存储传输">

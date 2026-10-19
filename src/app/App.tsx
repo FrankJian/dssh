@@ -70,12 +70,15 @@ import {
   getShortcutBinding,
   isCommandPaletteShortcut,
   isFocusModeExitShortcut,
+  isLockAppShortcut,
   isTerminalFullscreenShortcut,
 } from "./shortcuts";
 import { useWorkspace } from "./useWorkspace";
 import { UpdateNotification } from "./UpdateNotification";
 import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
 import { DetachedWorkspaceWindow } from "./DetachedWorkspace";
+import { AppLockScreen } from "./AppLockScreen";
+import { useAppLock } from "./useAppLock";
 import { WorkspaceTabStrip, type WorkspaceTabItem } from "./WorkspaceTabStrip";
 import type { ProfileDraft, ProfileEditorMode } from "../ssh/profileTypes";
 import type { DetachedWorkspace } from "../models";
@@ -115,6 +118,7 @@ const AI_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "terminal",
   "editor",
   "shortcuts",
+  "security",
   "s3",
   "ai",
   "config",
@@ -291,6 +295,7 @@ function MainApp() {
   }, [activeActivity, navigationIcons]);
 
   const { setThemeMode, themeMode } = useTheme();
+  const appLock = useAppLock();
   const {
     copyOnSelect,
     fontFamily,
@@ -1218,12 +1223,14 @@ function MainApp() {
     }
   }, [activePaneLayout, activeSessionId, focusTerminal, terminalFullscreenPaneId]);
 
-  // ⌘K / Ctrl+K toggles the command palette; ⌘⇧↵ / Ctrl+Shift+Enter focuses
-  // the current terminal pane. The configurable exit binding restores that
-  // pane first, then zen mode.
+  // Application-level shortcuts must be handled here so focused terminals do
+  // not send their keypresses to the remote shell.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (isCommandPaletteShortcut(event)) {
+      if (isLockAppShortcut(event) && appLock.status?.settings.enabled && !appLock.status.locked) {
+        event.preventDefault();
+        void appLock.lock();
+      } else if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
         setIsPaletteOpen((open) => !open);
       } else if (isTerminalFullscreenShortcut(event)) {
@@ -1238,7 +1245,7 @@ function MainApp() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [terminalFullscreenPaneId, toggleTerminalFullscreen, zenMode]);
+  }, [appLock.lock, appLock.status?.locked, appLock.status?.settings.enabled, terminalFullscreenPaneId, toggleTerminalFullscreen, zenMode]);
 
   // Every pane tree has one terminal-window tab. Child panes never appear as
   // independent tabs, even while another terminal window is active.
@@ -1876,6 +1883,17 @@ function MainApp() {
           <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
             {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
             <div className="titlebar__drag" data-tauri-drag-region />
+            {appLock.status?.settings.enabled ? (
+              <button
+                aria-label="锁定应用"
+                className="titlebar__lock"
+                onClick={() => void appLock.lock()}
+                title={`立即锁定（${formatShortcut(getShortcutBinding("lockApp"))}）`}
+                type="button"
+              >
+                <Icon height="16" name="lock" width="16" />
+              </button>
+            ) : null}
             {/* macOS shows the native traffic-light controls, so we only render
                 our own minimize/maximize/close buttons on Windows and Linux. */}
             {isMacOS ? null : <WindowControls />}
@@ -2014,6 +2032,7 @@ function MainApp() {
       {isSettingsOpen ? (
         <SettingsDialog
           aiConfig={aiConfig}
+          appLockStatus={appLock.status}
           editorSettings={editorSettings}
           initialCategory={settingsCategory}
           copyOnSelect={copyOnSelect}
@@ -2023,6 +2042,7 @@ function MainApp() {
           lineHeight={lineHeight}
           gpuAcceleration={gpuAcceleration}
           onClose={() => setIsSettingsOpen(false)}
+          onAppLockSettingsChange={appLock.updateSettings}
           onCopyOnSelectChange={setCopyOnSelect}
           onFontFamilyChange={setFontFamily}
           onFontSizeChange={setFontSize}
@@ -2064,6 +2084,7 @@ function MainApp() {
       {startupUpdate ? (
         <UpdateNotification update={startupUpdate} onDismiss={dismissStartupUpdate} />
       ) : null}
+      {appLock.status?.locked ? <AppLockScreen onUnlock={appLock.unlock} /> : null}
       {isPaletteOpen ? (
         <CommandPalette items={buildPaletteItems()} onClose={() => setIsPaletteOpen(false)} />
       ) : null}
