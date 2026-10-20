@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use zmodem2::{Action, FileInfo, Position, Sender};
+use zmodem2::{Action, FileInfo, Position, Receiver, Sender};
 
 /// zmodem2 reports SessionCompleted before exposing the queued final `OO`.
 /// The caller must flush those bytes successfully before releasing the PTY
@@ -29,6 +29,15 @@ pub(crate) struct ZmodemDetection {
 pub(crate) struct ProbeOutput {
     pub text: Vec<u8>,
     pub detection: Option<ZmodemDetection>,
+}
+
+pub(crate) struct ZmodemDownloadDetection {
+    pub trailing: Vec<u8>,
+}
+
+pub(crate) struct DownloadProbeOutput {
+    pub text: Vec<u8>,
+    pub detection: Option<ZmodemDownloadDetection>,
 }
 
 /// Briefly filters a late copy of the receiver's final ZFIN frame after the
@@ -300,6 +309,74 @@ impl ZmodemProbe {
     }
 }
 
+/// Finds the sender's initial ZRQINIT frame used by `sz`. Detection never
+/// writes a response: the caller waits for the user to choose a local
+/// destination before constructing a live receiver.
+#[derive(Default)]
+pub(crate) struct ZmodemDownloadProbe {
+    pending: Vec<u8>,
+    suppressed: bool,
+}
+
+impl ZmodemDownloadProbe {
+    pub fn feed(&mut self, input: &[u8]) -> DownloadProbeOutput {
+        if self.suppressed {
+            return DownloadProbeOutput {
+                text: input.to_vec(),
+                detection: None,
+            };
+        }
+        self.pending.extend_from_slice(input);
+        let mut visible = Vec::new();
+
+        loop {
+            let Some(start) = find_zrqinit_marker(&self.pending) else {
+                let safe_len = self
+                    .pending
+                    .len()
+                    .saturating_sub(longest_zrqinit_marker_prefix(&self.pending));
+                visible.extend(self.pending.drain(..safe_len));
+                break;
+            };
+            if start > 0 {
+                visible.extend(self.pending.drain(..start));
+            }
+
+            match validate_zrqinit(&self.pending) {
+                Ok(Some(header_len)) => {
+                    let trailing = self.pending.split_off(header_len);
+                    self.pending.clear();
+                    return DownloadProbeOutput {
+                        text: visible,
+                        detection: Some(ZmodemDownloadDetection { trailing }),
+                    };
+                }
+                Ok(None) if self.pending.len() <= MAX_CANDIDATE_BYTES => break,
+                Ok(None) | Err(()) => visible.push(self.pending.remove(0)),
+            }
+        }
+
+        DownloadProbeOutput {
+            text: visible,
+            detection: None,
+        }
+    }
+
+    pub fn suppress_until_cancel(&mut self) {
+        self.pending.clear();
+        self.suppressed = true;
+    }
+
+    pub fn rearm(&mut self) {
+        self.suppressed = false;
+        self.pending.clear();
+    }
+
+    pub fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
 fn validate_zrinit(bytes: &[u8]) -> Result<Option<(Sender, usize)>, ()> {
     for header_len in 1..=bytes.len().min(MAX_CANDIDATE_BYTES) {
         let mut candidate = primed_sender()?;
@@ -337,6 +414,30 @@ fn primed_sender() -> Result<Sender, ()> {
     Ok(sender)
 }
 
+fn validate_zrqinit(bytes: &[u8]) -> Result<Option<usize>, ()> {
+    for header_len in 1..=bytes.len().min(MAX_CANDIDATE_BYTES) {
+        let mut receiver = primed_receiver()?;
+        let consumed = receiver.submit_wire(&bytes[..header_len]).map_err(|_| ())?;
+        if consumed != header_len {
+            continue;
+        }
+        if matches!(receiver.poll(), Action::WriteWire(_)) {
+            return Ok(Some(header_len));
+        }
+    }
+    Ok(None)
+}
+
+fn primed_receiver() -> Result<Receiver, ()> {
+    let mut receiver = Receiver::with_flow_control(0, true).map_err(|_| ())?;
+    let initial_wire_len = match receiver.poll() {
+        Action::WriteWire(wire) => wire.len(),
+        _ => return Err(()),
+    };
+    receiver.wire_written(initial_wire_len);
+    Ok(receiver)
+}
+
 fn find_zrinit_marker(bytes: &[u8]) -> Option<usize> {
     (0..bytes.len()).find(|&start| {
         let rest = &bytes[start..];
@@ -372,9 +473,40 @@ fn longest_marker_prefix(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
+fn find_zrqinit_marker(bytes: &[u8]) -> Option<usize> {
+    (0..bytes.len()).find(|&start| {
+        let rest = &bytes[start..];
+        marker_matches(rest, b"**\x18B00")
+            || marker_matches(rest, b"*\x18B00")
+            || marker_matches(rest, b"**\x18C\x00")
+            || marker_matches(rest, b"*\x18C\x00")
+            || marker_matches(rest, b"**\x18A\x00")
+            || marker_matches(rest, b"*\x18A\x00")
+    })
+}
+
+fn longest_zrqinit_marker_prefix(bytes: &[u8]) -> usize {
+    (1..=bytes.len().min(MAX_MARKER_BYTES))
+        .rev()
+        .find(|&length| {
+            let suffix = &bytes[bytes.len() - length..];
+            [
+                b"**\x18B00".as_slice(),
+                b"*\x18B00",
+                b"**\x18C\x00",
+                b"*\x18C\x00",
+                b"**\x18A\x00",
+                b"*\x18A\x00",
+            ]
+            .iter()
+            .any(|marker| marker.starts_with(suffix))
+        })
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ZmodemFinishFilter, flush_sender_output, primed_sender};
+    use super::{ZmodemDownloadProbe, ZmodemFinishFilter, flush_sender_output, primed_sender};
     use zmodem2::{Action, Event, Receiver};
 
     const ZFIN: &[u8] = b"**\x18B0800000000022d\r\n";
@@ -512,6 +644,24 @@ mod tests {
             filter.feed(b"**\x18B080000000000000\r\n"),
             b"**\x18B080000000000000\r\n"
         );
+    }
+
+    #[test]
+    fn download_probe_detects_a_sender_handshake_across_packet_boundaries() {
+        let mut sender = zmodem2::Sender::new().unwrap();
+        let handshake = match sender.poll() {
+            Action::WriteWire(bytes) => bytes.to_vec(),
+            other => panic!("unexpected sender action: {other:?}"),
+        };
+        for split in 0..handshake.len() {
+            let mut probe = ZmodemDownloadProbe::default();
+            let first = probe.feed(&handshake[..split]);
+            let second = probe.feed(&handshake[split..]);
+            assert!(
+                first.detection.is_some() || second.detection.is_some(),
+                "sender handshake should be detected",
+            );
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
+import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
 import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../ui/ToastHost";
@@ -83,8 +84,14 @@ export function useTerminalSessions() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
   const [terminalTransfers, setTerminalTransfers] = useState<TerminalTransferStatusEvent[]>([]);
+  const [commandActivity, setCommandActivity] = useState<ReadonlySet<string>>(() => new Set());
   const pendingZmodemPromptsRef = useRef(new Set<string>());
   const manualReconnectsRef = useRef(new Set<string>());
+  const activityTrackersRef = useRef(new Map<string, TerminalCommandActivityTracker>());
+  // A local PTY can become ready before `start_local_session` resolves in the
+  // WebView. Keep that early event so adding the returned session cannot put
+  // the sidebar permanently in the "connecting" state.
+  const latestSessionStatusesRef = useRef(new Map<string, TerminalSession["status"]>());
 
   // Mirror of `sessions` so async callbacks (e.g. reconnect) can read the
   // latest list without becoming stale or churning their identity.
@@ -98,10 +105,44 @@ export function useTerminalSessions() {
   const buffersRef = useRef<Map<string, SessionBacklog>>(new Map());
   const listenersRef = useRef<Map<string, Set<TerminalOutputListener>>>(new Map());
 
+  const updateCommandActivity = useCallback((sessionId: string, activity: CommandActivity | null) => {
+    if (activity === null) {
+      return;
+    }
+    setCommandActivity((current) => {
+      const running = activity === "running";
+      if (current.has(sessionId) === running) {
+        return current;
+      }
+      const next = new Set(current);
+      if (running) {
+        next.add(sessionId);
+      } else {
+        next.delete(sessionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const trackerForSession = useCallback((sessionId: string) => {
+    let tracker = activityTrackersRef.current.get(sessionId);
+    if (!tracker) {
+      tracker = new TerminalCommandActivityTracker();
+      activityTrackersRef.current.set(sessionId, tracker);
+    }
+    return tracker;
+  }, []);
+
+  const withLatestStatus = useCallback((session: TerminalSession): TerminalSession => {
+    const status = latestSessionStatusesRef.current.get(session.id);
+    return status ? { ...session, status } : session;
+  }, []);
+
   const pushOutput = useCallback((sessionId: string, data: string) => {
     if (!data) {
       return;
     }
+    updateCommandActivity(sessionId, trackerForSession(sessionId).observeOutput(data));
 
     let backlog = buffersRef.current.get(sessionId);
     if (!backlog) {
@@ -116,7 +157,7 @@ export function useTerminalSessions() {
         listener(data);
       }
     }
-  }, []);
+  }, [trackerForSession, updateCommandActivity]);
 
   const getBacklog = useCallback((sessionId: string) => {
     const backlog = buffersRef.current.get(sessionId);
@@ -154,13 +195,14 @@ export function useTerminalSessions() {
   );
 
   const startLocalSession = useCallback(async () => {
-    const session = await startLocalSessionCommand({
+    const startedSession = await startLocalSessionCommand({
       size: initialSize,
     });
+    const session = withLatestStatus(startedSession);
     setSessions((currentSessions) => [...currentSessions, session]);
     setActiveSessionId(session.id);
     return session;
-  }, []);
+  }, [withLatestStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -215,11 +257,15 @@ export function useTerminalSessions() {
       pushOutput(event.sessionId, event.data);
     });
     const statusPromise = onTerminalStatus((event) => {
+      latestSessionStatusesRef.current.set(event.sessionId, event.status);
       setSessions((currentSessions) =>
         currentSessions.map((session) =>
           session.id === event.sessionId ? { ...session, status: event.status } : session,
         ),
       );
+      if (event.status !== "connected") {
+        updateCommandActivity(event.sessionId, "idle");
+      }
       if (event.message) {
         // Reconnect notices read as yellow, connected as green, failures as red.
         const color =
@@ -236,7 +282,7 @@ export function useTerminalSessions() {
       void outputPromise.then((unlisten) => unlisten());
       void statusPromise.then((unlisten) => unlisten());
     };
-  }, [pushOutput]);
+  }, [pushOutput, updateCommandActivity]);
 
   useEffect(() => {
     const promptPromise = onTerminalTransferPrompt((event) => {
@@ -246,7 +292,9 @@ export function useTerminalSessions() {
       pendingZmodemPromptsRef.current.add(event.detectionId);
       void (async () => {
         try {
-          const picked = await open({ multiple: true, title: "选择要通过 rz 上传的文件" });
+          const picked = event.direction === "upload"
+            ? await open({ multiple: true, title: "选择要通过 rz 上传的文件" })
+            : await open({ directory: true, multiple: false, title: "选择通过 sz 保存文件的文件夹" });
           const paths = picked === null ? null : Array.isArray(picked) ? picked : [picked];
           await respondZmodemPrompt(event.sessionId, event.detectionId, paths);
         } catch (error) {
@@ -281,14 +329,15 @@ export function useTerminalSessions() {
   );
 
   const startSession = useCallback(async (profile: SshProfile) => {
-    const session = await startSshSession({
+    const startedSession = await startSshSession({
       profileId: profile.id,
       size: initialSize,
     });
+    const session = withLatestStatus(startedSession);
     setSessions((currentSessions) => [...currentSessions, session]);
     setActiveSessionId(session.id);
     return session;
-  }, []);
+  }, [withLatestStatus]);
 
   const reconnectSession = useCallback(
     async (sessionId: string) => {
@@ -303,10 +352,11 @@ export function useTerminalSessions() {
 
       manualReconnectsRef.current.add(sessionId);
       try {
-        const fresh =
+        const freshSession =
           existing.kind === "ssh"
             ? await startSshSession({ profileId: existing.profileId, size: initialSize })
             : await startLocalSessionCommand({ size: initialSize });
+        const fresh = withLatestStatus(freshSession);
 
         try {
           await closeSshSession(sessionId);
@@ -316,6 +366,14 @@ export function useTerminalSessions() {
 
         target.delete(sessionId);
         listenersRef.current.delete(sessionId);
+        activityTrackersRef.current.delete(sessionId);
+        latestSessionStatusesRef.current.delete(sessionId);
+        setCommandActivity((current) => {
+          if (!current.has(sessionId)) return current;
+          const next = new Set(current);
+          next.delete(sessionId);
+          return next;
+        });
         sessionsRef.current = sessionsRef.current.map((session) =>
           session.id === sessionId ? fresh : session,
         );
@@ -329,7 +387,7 @@ export function useTerminalSessions() {
         manualReconnectsRef.current.delete(sessionId);
       }
     },
-    [],
+    [withLatestStatus],
   );
 
   const cancelReconnect = useCallback((sessionId: string) => {
@@ -354,12 +412,13 @@ export function useTerminalSessions() {
         return;
       }
 
+      updateCommandActivity(activeSessionId, trackerForSession(activeSessionId).observeInput(data));
       await writeSshSession({
         data,
         sessionId: activeSessionId,
       });
     },
-    [activeSessionId],
+    [activeSessionId, trackerForSession, updateCommandActivity],
   );
 
   // Per-session I/O. Terminal surfaces target the session they render rather
@@ -377,8 +436,9 @@ export function useTerminalSessions() {
       await reconnectSession(sessionId);
       return;
     }
+    updateCommandActivity(sessionId, trackerForSession(sessionId).observeInput(data));
     await writeSshSession({ data, sessionId });
-  }, [reconnectSession]);
+  }, [reconnectSession, trackerForSession, updateCommandActivity]);
 
   const resizeSession = useCallback(async (sessionId: string, size: TerminalSize) => {
     await resizeSshSession({ sessionId, size });
@@ -392,6 +452,14 @@ export function useTerminalSessions() {
     }
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);
+    activityTrackersRef.current.delete(sessionId);
+    latestSessionStatusesRef.current.delete(sessionId);
+    setCommandActivity((current) => {
+      if (!current.has(sessionId)) return current;
+      const next = new Set(current);
+      next.delete(sessionId);
+      return next;
+    });
     setSessions((currentSessions) => {
       const nextSessions = currentSessions.filter((session) => session.id !== sessionId);
       setActiveSessionId((currentActiveId) =>
@@ -413,6 +481,7 @@ export function useTerminalSessions() {
     sessions,
     terminalTransfers,
     cancelTerminalTransfer,
+    commandActivity,
     setActiveSessionId,
     startLocalSession,
     startSession,

@@ -348,6 +348,7 @@ function MainApp() {
     activeSession,
     activeSessionId,
     cancelReconnect,
+    commandActivity,
     closeSession,
     getBacklog,
     reconnectSession,
@@ -1262,6 +1263,10 @@ function MainApp() {
         title: terminalTabTitle(session),
         renameValue: terminalName(session),
         active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
+        running: (panes.findLayout(session.id)
+          ? paneSessionIds(panes.findLayout(session.id))
+          : [session.id]
+        ).some((paneId) => commandActivity.has(paneId)),
       })),
     ...sftpTabs.filter((tab) => !detachedSftpProfileIds.has(tab.profileId)).map((tab) => ({
       id: tab.id,

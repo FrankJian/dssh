@@ -81,6 +81,7 @@ pub struct TerminalStatusEvent {
 pub struct TerminalTransferPromptEvent {
     pub session_id: String,
     pub detection_id: String,
+    pub direction: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,6 +89,7 @@ pub struct TerminalTransferPromptEvent {
 pub struct TerminalTransferStatusEvent {
     pub session_id: String,
     pub detection_id: String,
+    pub direction: String,
     pub state: String,
     pub file_name: Option<String>,
     pub file_index: Option<u32>,

@@ -4508,6 +4508,39 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--accent);
 }
 
+.tab__kind-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.tab__kind-icon.is-running {
+  color: var(--accent);
+  animation: tab-activity-pulse 1.35s ease-in-out infinite;
+}
+
+.tab__kind-icon.is-running > svg {
+  stroke-width: 2.35;
+}
+
+@keyframes tab-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab__kind-icon.is-running {
+    animation: none;
+  }
+}
+
 .tab__index {
   min-width: 15px;
   height: 15px;

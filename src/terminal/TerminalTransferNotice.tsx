@@ -16,11 +16,11 @@ export function TerminalTransferNotice({ transfers, onCancel }: TerminalTransfer
           ? Math.min(100, Math.round((transfer.transferred / transfer.total) * 100))
           : 0;
         const title = transfer.state === "awaitingSelection"
-          ? "等待选择上传文件"
+          ? transfer.direction === "download" ? "等待选择保存目录" : "等待选择上传文件"
           : transfer.state === "transferring"
-            ? "正在通过 rz 上传"
+            ? transfer.direction === "download" ? "正在通过 sz 下载" : "正在通过 rz 上传"
             : transfer.state === "completed"
-              ? (transfer.message ? "传输结束（有文件未发送数据）" : "文件传输完成")
+              ? (transfer.message ? "传输结束（含提示）" : "文件传输完成")
               : transfer.state === "cancelled"
                 ? "文件传输已取消"
                 : "文件传输失败";

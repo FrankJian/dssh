@@ -11,6 +11,8 @@ export interface WorkspaceTabItem {
   /** The user-editable name, without display-only decorations such as the SFTP prefix. */
   renameValue: string;
   active: boolean;
+  /** True when one of this terminal tab's panes is executing a command. */
+  running?: boolean;
 }
 
 interface WorkspaceTabStripProps {
@@ -97,6 +99,7 @@ export function WorkspaceTabStrip({
     <div className="tab-strip" role="tablist" aria-label="工作区标签">
       {tabs.map((tab) => (
         <div
+          aria-label={tab.running ? `${tab.title}，命令正在运行` : tab.title}
           aria-selected={tab.active}
           className={`tab ${tab.active ? "is-active" : ""} ${
             dropTargetId === tab.id ? "is-drop-target" : ""
@@ -160,7 +163,12 @@ export function WorkspaceTabStrip({
           role="tab"
           tabIndex={0}
         >
-          <Icon name={KIND_ICON[tab.kind]} height="14" width="14" />
+          <span
+            className={`tab__kind-icon${tab.running ? " is-running" : ""}`}
+            title={tab.running ? "命令正在运行" : undefined}
+          >
+            <Icon name={KIND_ICON[tab.kind]} height="14" width="14" />
+          </span>
           {editingTabId === tab.id ? (
             <input
               aria-label="标签名称"

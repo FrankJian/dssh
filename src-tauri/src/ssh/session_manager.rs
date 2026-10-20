@@ -20,7 +20,7 @@ use russh::{
 };
 use tauri::{AppHandle, Emitter};
 use tokio::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::TcpStream,
     sync::{Mutex as AsyncMutex, mpsc, oneshot},
@@ -37,12 +37,15 @@ use crate::{
     },
     ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
     ssh::host_keys::HostKeyVerifier,
-    ssh::zmodem::{ZmodemDetection, ZmodemFinishFilter, ZmodemProbe, flush_sender_output},
+    ssh::zmodem::{
+        ZmodemDetection, ZmodemDownloadDetection, ZmodemDownloadProbe, ZmodemFinishFilter,
+        ZmodemProbe, flush_sender_output,
+    },
     ssh::{ChannelOwner, SshConnectionPool},
 };
 use zmodem2::{
     Action as ZmodemAction, Event as ZmodemEvent, FileInfo as ZmodemFileInfo, Position,
-    Sender as ZmodemSender,
+    Receiver as ZmodemReceiver, Sender as ZmodemSender,
 };
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
@@ -612,6 +615,54 @@ impl ActiveZmodem {
     }
 }
 
+struct ZmodemDownloadFile {
+    name: String,
+    size: u64,
+    file: File,
+    transferred: u64,
+}
+
+struct ActiveZmodemDownload {
+    detection_id: String,
+    receiver: Option<ZmodemReceiver>,
+    awaiting_selection: bool,
+    destination_dir: Option<PathBuf>,
+    buffered_wire: Vec<u8>,
+    current: Option<ZmodemDownloadFile>,
+    file_count: u32,
+    completed_files: u32,
+    skipped_files: u32,
+    total: u64,
+    completed_bytes: u64,
+    last_activity: Instant,
+    selection_deadline: Instant,
+    cancel_requested: bool,
+    last_progress_event: Instant,
+}
+
+impl ActiveZmodemDownload {
+    fn pending(detection: ZmodemDownloadDetection) -> Self {
+        let now = Instant::now();
+        Self {
+            detection_id: create_session_id(),
+            receiver: None,
+            awaiting_selection: true,
+            destination_dir: None,
+            buffered_wire: detection.trailing,
+            current: None,
+            file_count: 0,
+            completed_files: 0,
+            skipped_files: 0,
+            total: 0,
+            completed_bytes: 0,
+            last_activity: now,
+            selection_deadline: now + ZMODEM_PROMPT_TIMEOUT,
+            cancel_requested: false,
+            last_progress_event: now,
+        }
+    }
+}
+
 enum TransferPump {
     Idle,
     Completed,
@@ -694,8 +745,10 @@ async fn connect_and_run(
     let sink = OutputSink::new(app_handle.clone(), session_id.to_string(), output.clone());
     let mut utf8_carry = Vec::new();
     let mut probe = ZmodemProbe::default();
+    let mut download_probe = ZmodemDownloadProbe::default();
     let mut finish_filter = ZmodemFinishFilter::default();
     let mut transfer: Option<ActiveZmodem> = None;
+    let mut download: Option<ActiveZmodemDownload> = None;
     let mut pending_command = String::new();
     let mut close_requested = false;
     let outcome = loop {
@@ -717,6 +770,7 @@ async fn connect_and_run(
                     finish_filter.finish_transfer();
                     if completed.cancel_requested {
                         probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
                     }
                     if !completed.cancel_requested && !completed.buffered_wire.is_empty() {
                         let filtered = finish_filter.feed(&completed.buffered_wire);
@@ -744,6 +798,61 @@ async fn connect_and_run(
                     finish_filter.finish_transfer();
                     transfer = None;
                     probe.suppress_until_cancel();
+                    download_probe.suppress_until_cancel();
+                    if error.code == "ssh_error" {
+                        break ConnOutcome::Dropped;
+                    }
+                }
+            }
+        }
+
+        if download
+            .as_ref()
+            .is_some_and(|active| !active.awaiting_selection)
+        {
+            let result = pump_zmodem_download(
+                app_handle,
+                session_id,
+                download.as_mut().expect("active download was checked"),
+                &mut writer,
+            )
+            .await;
+            match result {
+                Ok(TransferPump::Idle) => {}
+                Ok(TransferPump::Completed) => {
+                    let completed = download.take().expect("completed download exists");
+                    finish_filter.finish_transfer();
+                    if completed.cancel_requested {
+                        probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
+                    }
+                    if !completed.cancel_requested && !completed.buffered_wire.is_empty() {
+                        let filtered = finish_filter.feed(&completed.buffered_wire);
+                        let tail = decode_with_carry(&mut utf8_carry, &filtered);
+                        sink.push(&tail);
+                    }
+                }
+                Err(error) => {
+                    let detection_id = download
+                        .as_ref()
+                        .map(|active| active.detection_id.clone())
+                        .unwrap_or_default();
+                    emit_zmodem_download_status(
+                        app_handle,
+                        session_id,
+                        detection_id,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        0,
+                        None,
+                        Some(error.message),
+                    );
+                    finish_filter.finish_transfer();
+                    download = None;
+                    probe.suppress_until_cancel();
+                    download_probe.suppress_until_cancel();
                     if error.code == "ssh_error" {
                         break ConnOutcome::Dropped;
                     }
@@ -756,15 +865,28 @@ async fn connect_and_run(
         } else {
             Duration::from_secs(3600)
         };
-        let timer_wait = transfer.as_ref().map(|active| {
-            if active.awaiting_selection {
-                active
-                    .selection_deadline
-                    .saturating_duration_since(Instant::now())
-            } else {
-                ZMODEM_IDLE_TIMEOUT.saturating_sub(active.last_activity.elapsed())
-            }
-        });
+        let timer_wait = transfer
+            .as_ref()
+            .map(|active| {
+                if active.awaiting_selection {
+                    active
+                        .selection_deadline
+                        .saturating_duration_since(Instant::now())
+                } else {
+                    ZMODEM_IDLE_TIMEOUT.saturating_sub(active.last_activity.elapsed())
+                }
+            })
+            .or_else(|| {
+                download.as_ref().map(|active| {
+                    if active.awaiting_selection {
+                        active
+                            .selection_deadline
+                            .saturating_duration_since(Instant::now())
+                    } else {
+                        ZMODEM_IDLE_TIMEOUT.saturating_sub(active.last_activity.elapsed())
+                    }
+                })
+            });
 
         tokio::select! {
             command = rx.recv() => match command {
@@ -778,8 +900,20 @@ async fn connect_and_run(
                         // reaches a terminal state; do not interleave keystrokes.
                         continue;
                     }
+                    if let Some(active) = download.as_mut() {
+                        if !active.awaiting_selection && data.contains('\u{3}') {
+                            active.cancel_requested = true;
+                            if let Some(receiver) = active.receiver.as_mut() {
+                                let _ = receiver.abort();
+                            }
+                        }
+                        // The remote file protocol owns the channel until it
+                        // reaches a terminal state; do not interleave keystrokes.
+                        continue;
+                    }
                     if data.contains('\u{3}') {
                         probe.rearm();
+                        download_probe.rearm();
                     }
                     close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
@@ -787,6 +921,55 @@ async fn connect_and_run(
                     }
                 }
                 Some(SessionCommand::ZmodemResponse { detection_id, paths }) => {
+                    if let Some(active) = download.as_mut().filter(|active| {
+                        active.awaiting_selection && active.detection_id == detection_id
+                    }) {
+                        let Some(paths) = paths.filter(|paths| paths.len() == 1) else {
+                            emit_zmodem_download_status(
+                                app_handle, session_id, detection_id, "cancelled", None, None, None,
+                                0, None, Some("已取消保存位置选择；如远端 sz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                            );
+                            download = None;
+                            probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
+                            continue;
+                        };
+                        match prepare_zmodem_download_directory(paths).await {
+                            Ok(destination_dir) => match ZmodemReceiver::with_flow_control(0, true) {
+                                Ok(mut receiver) => {
+                                    receiver.set_manual_file_accept(true);
+                                    active.receiver = Some(receiver);
+                                    active.destination_dir = Some(destination_dir);
+                                    active.awaiting_selection = false;
+                                    active.last_activity = Instant::now();
+                                    finish_filter.begin_transfer();
+                                    emit_zmodem_download_status(
+                                        app_handle, session_id, detection_id, "transferring", None,
+                                        None, None, 0, None, None,
+                                    );
+                                }
+                                Err(error) => {
+                                    emit_zmodem_download_status(
+                                        app_handle, session_id, detection_id, "failed", None, None,
+                                        None, 0, None, Some(error.to_string()),
+                                    );
+                                    download = None;
+                                    probe.suppress_until_cancel();
+                                    download_probe.suppress_until_cancel();
+                                }
+                            },
+                            Err(error) => {
+                                emit_zmodem_download_status(
+                                    app_handle, session_id, detection_id, "failed", None, None,
+                                    None, 0, None, Some(error.message),
+                                );
+                                download = None;
+                                probe.suppress_until_cancel();
+                                download_probe.suppress_until_cancel();
+                            }
+                        }
+                        continue;
+                    }
                     let Some(active) = transfer.as_mut().filter(|active| {
                         active.awaiting_selection && active.detection_id == detection_id
                     }) else {
@@ -836,6 +1019,23 @@ async fn connect_and_run(
                     }
                 }
                 Some(SessionCommand::CancelZmodem { detection_id }) => {
+                    if let Some(active) = download.as_mut().filter(|active| active.detection_id == detection_id) {
+                        if active.awaiting_selection {
+                            emit_zmodem_download_status(
+                                app_handle, session_id, detection_id, "cancelled", None, None, None,
+                                0, None, Some("已取消保存位置选择；如远端 sz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                            );
+                            download = None;
+                            probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
+                        } else {
+                            active.cancel_requested = true;
+                            if let Some(receiver) = active.receiver.as_mut() {
+                                let _ = receiver.abort();
+                            }
+                        }
+                        continue;
+                    }
                     let Some(active) = transfer.as_mut().filter(|active| active.detection_id == detection_id) else {
                         continue;
                     };
@@ -874,6 +1074,34 @@ async fn connect_and_run(
                             active.cancel_requested = true;
                             active.sender.abort();
                             let _ = pump_zmodem_transfer(
+                                app_handle,
+                                session_id,
+                                &mut active,
+                                &mut writer,
+                            )
+                            .await;
+                        }
+                    }
+                    if let Some(mut active) = download.take() {
+                        if active.awaiting_selection {
+                            emit_zmodem_download_status(
+                                app_handle,
+                                session_id,
+                                active.detection_id,
+                                "cancelled",
+                                None,
+                                None,
+                                None,
+                                0,
+                                None,
+                                Some("SSH 终端已关闭，保存位置选择已取消。".to_string()),
+                            );
+                        } else {
+                            active.cancel_requested = true;
+                            if let Some(receiver) = active.receiver.as_mut() {
+                                let _ = receiver.abort();
+                            }
+                            let _ = pump_zmodem_download(
                                 app_handle,
                                 session_id,
                                 &mut active,
@@ -936,9 +1164,35 @@ async fn connect_and_run(
                             transfer = None;
                             probe.suppress_until_cancel();
                         }
+                    } else if let Some(active) = download.as_mut() {
+                        active.last_activity = Instant::now();
+                        if active.buffered_wire.len().saturating_add(data.len()) <= MAX_ZMODEM_BUFFERED_BYTES {
+                            active.buffered_wire.extend_from_slice(&data);
+                        } else {
+                            let detection_id = active.detection_id.clone();
+                            emit_zmodem_download_status(
+                                app_handle,
+                                session_id,
+                                detection_id,
+                                "failed",
+                                active.current.as_ref().map(|file| file.name.clone()),
+                                active.current.as_ref().map(|_| active.completed_files + 1),
+                                (active.file_count > 0).then_some(active.file_count),
+                                active.completed_bytes.saturating_add(
+                                    active.current.as_ref().map_or(0, |file| file.transferred),
+                                ),
+                                (active.file_count > 0).then_some(active.total),
+                                Some("远端协议数据积压过多，已停止传输。".to_string()),
+                            );
+                            finish_filter.finish_transfer();
+                            download = None;
+                            probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
+                        }
                     } else {
                         let filtered = finish_filter.feed(&data);
-                        let probed = probe.feed(&filtered);
+                        let download_probed = download_probe.feed(&filtered);
+                        let probed = probe.feed(&download_probed.text);
                         if !probed.text.is_empty() {
                             let text = decode_with_carry(&mut utf8_carry, &probed.text);
                             sink.push(&text);
@@ -960,9 +1214,31 @@ async fn connect_and_run(
                                 TerminalTransferPromptEvent {
                                     session_id: session_id.to_string(),
                                     detection_id,
+                                    direction: "upload".to_string(),
                                 },
                             );
                             transfer = Some(active);
+                        } else if let Some(detection) = download_probed.detection {
+                            if !utf8_carry.is_empty() {
+                                let invalid_tail = String::from_utf8_lossy(&utf8_carry).into_owned();
+                                utf8_carry.clear();
+                                sink.push(&invalid_tail);
+                            }
+                            let active = ActiveZmodemDownload::pending(detection);
+                            let detection_id = active.detection_id.clone();
+                            emit_zmodem_download_status(
+                                app_handle, session_id, detection_id.clone(), "awaitingSelection",
+                                None, None, None, 0, None, None,
+                            );
+                            let _ = app_handle.emit(
+                                ZMODEM_PROMPT_EVENT,
+                                TerminalTransferPromptEvent {
+                                    session_id: session_id.to_string(),
+                                    detection_id,
+                                    direction: "download".to_string(),
+                                },
+                            );
+                            download = Some(active);
                         }
                     }
                 }
@@ -1006,6 +1282,30 @@ async fn connect_and_run(
                         // sequence and receives the sender's Aborted event.
                         active.last_activity = Instant::now();
                     }
+                } else if let Some(active) = download.as_mut() {
+                    let detection_id = active.detection_id.clone();
+                    let message = if active.awaiting_selection {
+                        "保存位置选择超时，已取消本次请求。"
+                    } else {
+                        active.cancel_requested = true;
+                        if let Some(receiver) = active.receiver.as_mut() {
+                            let _ = receiver.abort();
+                        }
+                        "传输无响应，已取消本次下载。"
+                    };
+                    if active.awaiting_selection {
+                        emit_zmodem_download_status(
+                            app_handle, session_id, detection_id, "cancelled", None, None,
+                            None, 0, None, Some(message.to_string()),
+                        );
+                        download = None;
+                        probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
+                    } else {
+                        // The next loop iteration sends the protocol cancel
+                        // sequence and receives the sender's Aborted event.
+                        active.last_activity = Instant::now();
+                    }
                 }
             }
         }
@@ -1032,10 +1332,35 @@ async fn connect_and_run(
             }),
         );
     }
+    if let Some(active) = download.as_ref() {
+        let cancelled = active.cancel_requested;
+        emit_zmodem_download_status(
+            app_handle,
+            session_id,
+            active.detection_id.clone(),
+            if cancelled { "cancelled" } else { "failed" },
+            active.current.as_ref().map(|file| file.name.clone()),
+            active.current.as_ref().map(|_| active.completed_files + 1),
+            (active.file_count > 0).then_some(active.file_count),
+            active
+                .completed_bytes
+                .saturating_add(active.current.as_ref().map_or(0, |file| file.transferred)),
+            (active.file_count > 0).then_some(active.total),
+            Some(if cancelled {
+                "SSH 终端已关闭，文件下载未完成。".to_string()
+            } else {
+                "SSH 连接中断，文件下载未完成。".to_string()
+            }),
+        );
+    }
 
     // Restore any held, incomplete probe bytes before flushing the final text
     // burst. A valid transfer header is never included in this buffer.
     let tail = probe.finish();
+    if !tail.is_empty() {
+        sink.push(&decode_with_carry(&mut utf8_carry, &tail));
+    }
+    let tail = download_probe.finish();
     if !tail.is_empty() {
         sink.push(&decode_with_carry(&mut utf8_carry, &tail));
     }
@@ -1105,6 +1430,79 @@ async fn prepare_zmodem_files(paths: Vec<String>) -> AppResult<(VecDeque<ZmodemF
         });
     }
     Ok((files, total))
+}
+
+async fn prepare_zmodem_download_directory(paths: Vec<String>) -> AppResult<PathBuf> {
+    let [path]: [String; 1] = paths.try_into().map_err(|_| {
+        AppError::new(
+            "zmodem_download_directory_invalid",
+            "请选择一个用于保存 sz 文件的目录。",
+        )
+    })?;
+    let path = PathBuf::from(path);
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| AppError::new("zmodem_download_directory_invalid", error.to_string()))?;
+    if !metadata.is_dir() {
+        return Err(AppError::new(
+            "zmodem_download_directory_invalid",
+            "请选择一个用于保存 sz 文件的目录。",
+        ));
+    }
+    Ok(path)
+}
+
+fn zmodem_download_file_name(name: &[u8]) -> AppResult<String> {
+    let name = std::str::from_utf8(name).map_err(|_| {
+        AppError::new(
+            "zmodem_download_file_name_invalid",
+            "远端文件名不是有效的 UTF-8。",
+        )
+    })?;
+    let base_name = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved_windows_name = matches!(
+        base_name.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    if name.is_empty()
+        || name.len() > 256
+        || name.contains(['/', '\\', ':', '\0'])
+        || name.chars().any(char::is_control)
+        || matches!(name, "." | "..")
+        || name.ends_with(['.', ' '])
+        || reserved_windows_name
+    {
+        return Err(AppError::new(
+            "zmodem_download_file_name_invalid",
+            "远端文件名不安全，已拒绝保存。",
+        ));
+    }
+    Ok(name.to_string())
 }
 
 fn start_next_zmodem_file(transfer: &mut ActiveZmodem) -> AppResult<()> {
@@ -1301,6 +1699,268 @@ async fn pump_zmodem_transfer(
     }
 }
 
+enum ZmodemDownloadAction {
+    WriteWire(Vec<u8>),
+    WriteFile(Vec<u8>),
+    FileStarted { name: Vec<u8>, size: Option<u32> },
+    FileCompleted,
+    SessionCompleted,
+    Aborted,
+    Idle,
+    Unsupported,
+}
+
+async fn pump_zmodem_download(
+    app_handle: &AppHandle,
+    session_id: &str,
+    transfer: &mut ActiveZmodemDownload,
+    writer: &mut russh::ChannelWriteHalf<client::Msg>,
+) -> AppResult<TransferPump> {
+    loop {
+        let action = {
+            let receiver = transfer.receiver.as_mut().ok_or_else(|| {
+                AppError::new("zmodem_protocol_error", "ZMODEM 下载接收器尚未初始化。")
+            })?;
+            match receiver.poll() {
+                ZmodemAction::WriteWire(bytes) => ZmodemDownloadAction::WriteWire(bytes.to_vec()),
+                ZmodemAction::WriteFile(bytes) => ZmodemDownloadAction::WriteFile(bytes.to_vec()),
+                ZmodemAction::Event(ZmodemEvent::FileStarted(info)) => {
+                    ZmodemDownloadAction::FileStarted {
+                        name: info.name.to_vec(),
+                        size: info.size.map(Position::get),
+                    }
+                }
+                ZmodemAction::Event(ZmodemEvent::FileCompleted) => {
+                    ZmodemDownloadAction::FileCompleted
+                }
+                ZmodemAction::Event(ZmodemEvent::SessionCompleted) => {
+                    ZmodemDownloadAction::SessionCompleted
+                }
+                ZmodemAction::Event(ZmodemEvent::Aborted) => ZmodemDownloadAction::Aborted,
+                ZmodemAction::Event(_) => ZmodemDownloadAction::Unsupported,
+                ZmodemAction::Idle => ZmodemDownloadAction::Idle,
+                _ => ZmodemDownloadAction::Unsupported,
+            }
+        };
+
+        match action {
+            ZmodemDownloadAction::WriteWire(bytes) => {
+                let written = bytes.len();
+                writer.data_bytes(bytes).await.map_err(ssh_error)?;
+                transfer
+                    .receiver
+                    .as_mut()
+                    .expect("receiver exists while downloading")
+                    .wire_written(written);
+                transfer.last_activity = Instant::now();
+            }
+            ZmodemDownloadAction::WriteFile(bytes) => {
+                let file = transfer.current.as_mut().ok_or_else(|| {
+                    AppError::new("zmodem_protocol_error", "ZMODEM 未声明当前下载文件。")
+                })?;
+                let next = file
+                    .transferred
+                    .checked_add(bytes.len() as u64)
+                    .ok_or_else(|| {
+                        AppError::new("zmodem_file_size_unsupported", "下载文件大小超出支持范围。")
+                    })?;
+                if next > file.size {
+                    return Err(AppError::new(
+                        "zmodem_protocol_error",
+                        "远端发送的数据超过声明的文件大小。",
+                    ));
+                }
+                file.file
+                    .write_all(&bytes)
+                    .await
+                    .map_err(|error| AppError::new("zmodem_file_write_error", error.to_string()))?;
+                file.transferred = next;
+                transfer
+                    .receiver
+                    .as_mut()
+                    .expect("receiver exists while downloading")
+                    .file_written(bytes.len())
+                    .map_err(|error| AppError::new("zmodem_protocol_error", error.to_string()))?;
+                transfer.last_activity = Instant::now();
+                if transfer.last_progress_event.elapsed() >= Duration::from_millis(100)
+                    || file.transferred == file.size
+                {
+                    transfer.last_progress_event = Instant::now();
+                    emit_zmodem_download_status(
+                        app_handle,
+                        session_id,
+                        transfer.detection_id.clone(),
+                        "transferring",
+                        Some(file.name.clone()),
+                        Some(transfer.completed_files + 1),
+                        Some(transfer.file_count),
+                        transfer.completed_bytes.saturating_add(file.transferred),
+                        Some(transfer.total),
+                        None,
+                    );
+                }
+            }
+            ZmodemDownloadAction::FileStarted { name, size } => {
+                let name = zmodem_download_file_name(&name)?;
+                let size = u64::from(size.ok_or_else(|| {
+                    AppError::new(
+                        "zmodem_file_size_unsupported",
+                        "远端未提供下载文件大小，无法安全保存。",
+                    )
+                })?);
+                let destination_dir = transfer.destination_dir.as_ref().ok_or_else(|| {
+                    AppError::new("zmodem_protocol_error", "未选择 sz 文件保存目录。")
+                })?;
+                transfer.file_count += 1;
+                transfer.total = transfer.total.checked_add(size).ok_or_else(|| {
+                    AppError::new(
+                        "zmodem_file_size_unsupported",
+                        "下载文件总大小超出支持范围。",
+                    )
+                })?;
+                let destination = destination_dir.join(&name);
+                match OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&destination)
+                    .await
+                {
+                    Ok(file) => {
+                        transfer
+                            .receiver
+                            .as_mut()
+                            .expect("receiver exists while downloading")
+                            .accept_file_at(0)
+                            .map_err(|error| {
+                                AppError::new("zmodem_protocol_error", error.to_string())
+                            })?;
+                        transfer.current = Some(ZmodemDownloadFile {
+                            name: name.clone(),
+                            size,
+                            file,
+                            transferred: 0,
+                        });
+                        emit_zmodem_download_status(
+                            app_handle,
+                            session_id,
+                            transfer.detection_id.clone(),
+                            "transferring",
+                            Some(name),
+                            Some(transfer.completed_files + 1),
+                            Some(transfer.file_count),
+                            transfer.completed_bytes,
+                            Some(transfer.total),
+                            None,
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        transfer
+                            .receiver
+                            .as_mut()
+                            .expect("receiver exists while downloading")
+                            .skip_file()
+                            .map_err(|protocol_error| {
+                                AppError::new("zmodem_protocol_error", protocol_error.to_string())
+                            })?;
+                        transfer.skipped_files += 1;
+                        emit_zmodem_download_status(
+                            app_handle,
+                            session_id,
+                            transfer.detection_id.clone(),
+                            "transferring",
+                            Some(name),
+                            Some(transfer.file_count),
+                            Some(transfer.file_count),
+                            transfer.completed_bytes,
+                            Some(transfer.total),
+                            Some("本地已有同名文件，已跳过。".to_string()),
+                        );
+                    }
+                    Err(error) => {
+                        return Err(AppError::new("zmodem_file_write_error", error.to_string()));
+                    }
+                }
+                transfer.last_activity = Instant::now();
+            }
+            ZmodemDownloadAction::FileCompleted => {
+                if let Some(file) = transfer.current.take() {
+                    if file.transferred != file.size {
+                        return Err(AppError::new(
+                            "zmodem_protocol_error",
+                            format!("下载文件大小不完整：{}", file.name),
+                        ));
+                    }
+                    transfer.completed_bytes =
+                        transfer.completed_bytes.saturating_add(file.transferred);
+                }
+                transfer.completed_files += 1;
+                transfer.last_activity = Instant::now();
+            }
+            ZmodemDownloadAction::SessionCompleted => {
+                emit_zmodem_download_status(
+                    app_handle,
+                    session_id,
+                    transfer.detection_id.clone(),
+                    "completed",
+                    None,
+                    Some(transfer.completed_files),
+                    Some(transfer.file_count),
+                    transfer.completed_bytes,
+                    Some(transfer.total),
+                    (transfer.skipped_files > 0)
+                        .then(|| format!("有 {} 个同名本地文件未覆盖。", transfer.skipped_files)),
+                );
+                return Ok(TransferPump::Completed);
+            }
+            ZmodemDownloadAction::Aborted => {
+                transfer.cancel_requested = true;
+                emit_zmodem_download_status(
+                    app_handle,
+                    session_id,
+                    transfer.detection_id.clone(),
+                    "cancelled",
+                    transfer.current.as_ref().map(|file| file.name.clone()),
+                    transfer
+                        .current
+                        .as_ref()
+                        .map(|_| transfer.completed_files + 1),
+                    Some(transfer.file_count),
+                    transfer.completed_bytes.saturating_add(
+                        transfer.current.as_ref().map_or(0, |file| file.transferred),
+                    ),
+                    Some(transfer.total),
+                    Some("文件下载已取消；本地可能保留部分文件。".to_string()),
+                );
+                return Ok(TransferPump::Completed);
+            }
+            ZmodemDownloadAction::Idle => {
+                if !transfer.buffered_wire.is_empty() {
+                    let consumed = transfer
+                        .receiver
+                        .as_mut()
+                        .expect("receiver exists while downloading")
+                        .submit_wire(&transfer.buffered_wire)
+                        .map_err(|error| {
+                            AppError::new("zmodem_protocol_error", error.to_string())
+                        })?;
+                    if consumed > 0 {
+                        transfer.buffered_wire.drain(..consumed);
+                        transfer.last_activity = Instant::now();
+                        continue;
+                    }
+                }
+                return Ok(TransferPump::Idle);
+            }
+            ZmodemDownloadAction::Unsupported => {
+                return Err(AppError::new(
+                    "zmodem_protocol_error",
+                    "ZMODEM 下载返回了不支持的操作。",
+                ));
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_zmodem_status(
     app_handle: &AppHandle,
@@ -1314,11 +1974,69 @@ fn emit_zmodem_status(
     total: Option<u64>,
     message: Option<String>,
 ) {
+    emit_zmodem_status_with_direction(
+        app_handle,
+        session_id,
+        detection_id,
+        "upload",
+        state,
+        file_name,
+        file_index,
+        file_count,
+        transferred,
+        total,
+        message,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_zmodem_download_status(
+    app_handle: &AppHandle,
+    session_id: &str,
+    detection_id: String,
+    state: &str,
+    file_name: Option<String>,
+    file_index: Option<u32>,
+    file_count: Option<u32>,
+    transferred: u64,
+    total: Option<u64>,
+    message: Option<String>,
+) {
+    emit_zmodem_status_with_direction(
+        app_handle,
+        session_id,
+        detection_id,
+        "download",
+        state,
+        file_name,
+        file_index,
+        file_count,
+        transferred,
+        total,
+        message,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_zmodem_status_with_direction(
+    app_handle: &AppHandle,
+    session_id: &str,
+    detection_id: String,
+    direction: &str,
+    state: &str,
+    file_name: Option<String>,
+    file_index: Option<u32>,
+    file_count: Option<u32>,
+    transferred: u64,
+    total: Option<u64>,
+    message: Option<String>,
+) {
     let _ = app_handle.emit(
         ZMODEM_STATUS_EVENT,
         TerminalTransferStatusEvent {
             session_id: session_id.to_string(),
             detection_id,
+            direction: direction.to_string(),
             state: state.to_string(),
             file_name,
             file_index,
@@ -2185,6 +2903,7 @@ mod tests {
         OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
         SessionCommand, input_requests_clean_exit, login_shell_args, normalize_input,
         remaining_otp_attempts, resolve_remote_forward_target, wait_for_initial_local_resize,
+        zmodem_download_file_name,
     };
     use crate::models::terminal::TerminalSize;
 
@@ -2298,6 +3017,25 @@ mod tests {
         assert_eq!(remaining_otp_attempts(1), Some(2));
         assert_eq!(remaining_otp_attempts(2), Some(1));
         assert_eq!(remaining_otp_attempts(3), None);
+    }
+
+    #[test]
+    fn zmodem_download_rejects_unsafe_remote_file_names() {
+        assert_eq!(
+            zmodem_download_file_name(b"release.tar.gz").unwrap(),
+            "release.tar.gz"
+        );
+        for unsafe_name in [
+            b"../secret".as_slice(),
+            b"C:boot.ini",
+            b"CON.txt",
+            b"name\n.txt",
+        ] {
+            assert!(
+                zmodem_download_file_name(unsafe_name).is_err(),
+                "{unsafe_name:?}"
+            );
+        }
     }
 
     #[test]

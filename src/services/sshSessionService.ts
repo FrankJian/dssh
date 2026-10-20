@@ -35,6 +35,7 @@ export interface TerminalStatusEvent {
 export interface TerminalTransferPromptEvent {
   sessionId: string;
   detectionId: string;
+  direction: "upload" | "download";
 }
 
 export interface TerminalTransferStatusEvent extends TerminalTransferPromptEvent {
