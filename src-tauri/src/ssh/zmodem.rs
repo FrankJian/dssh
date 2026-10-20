@@ -1,6 +1,14 @@
 use std::time::{Duration, Instant};
 use zmodem2::{Action, FileInfo, Position, Receiver, Sender};
 
+/// Standard ZMODEM abort: ten CAN bytes followed by ten backspaces. The peer
+/// needs five CAN bytes to exit; the backspaces avoid leaving visible control
+/// characters if it has already returned to a command interpreter.
+pub(crate) const ZMODEM_ABORT_SEQUENCE: [u8; 20] = [
+    0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+    0x08, 0x08, 0x08, 0x08,
+];
+
 /// zmodem2 reports SessionCompleted before exposing the queued final `OO`.
 /// The caller must flush those bytes successfully before releasing the PTY
 /// to terminal input or reporting completion to the UI.
@@ -506,8 +514,21 @@ fn longest_zrqinit_marker_prefix(bytes: &[u8]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{ZmodemDownloadProbe, ZmodemFinishFilter, flush_sender_output, primed_sender};
-    use zmodem2::{Action, Event, Receiver};
+    use super::{
+        ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter, flush_sender_output,
+        primed_sender,
+    };
+    use zmodem2::{Action, Event, Receiver, Sender};
+
+    #[test]
+    fn pending_selection_abort_matches_the_protocol_engine() {
+        let mut sender = Sender::new().expect("sender starts");
+        sender.abort();
+        match sender.poll() {
+            Action::WriteWire(bytes) => assert_eq!(bytes, ZMODEM_ABORT_SEQUENCE),
+            action => panic!("expected cancel bytes, got {action:?}"),
+        }
+    }
 
     const ZFIN: &[u8] = b"**\x18B0800000000022d\r\n";
 

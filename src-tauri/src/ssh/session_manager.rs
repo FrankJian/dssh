@@ -38,8 +38,8 @@ use crate::{
     ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
     ssh::host_keys::HostKeyVerifier,
     ssh::zmodem::{
-        ZmodemDetection, ZmodemDownloadDetection, ZmodemDownloadProbe, ZmodemFinishFilter,
-        ZmodemProbe, flush_sender_output,
+        ZMODEM_ABORT_SEQUENCE, ZmodemDetection, ZmodemDownloadDetection, ZmodemDownloadProbe,
+        ZmodemFinishFilter, ZmodemProbe, flush_sender_output,
     },
     ssh::{ChannelOwner, SshConnectionPool},
 };
@@ -668,6 +668,13 @@ enum TransferPump {
     Completed,
 }
 
+async fn abort_unconfirmed_zmodem(writer: &russh::ChannelWriteHalf<client::Msg>) -> AppResult<()> {
+    writer
+        .data_bytes(ZMODEM_ABORT_SEQUENCE.to_vec())
+        .await
+        .map_err(ssh_error)
+}
+
 /// Establish one SSH connection, attach a PTY + shell, and pump I/O until the
 /// user closes it, the remote shell exits cleanly, or the transport drops.
 /// The read side runs in its own task (keeping the decode loop intact); the
@@ -892,6 +899,19 @@ async fn connect_and_run(
             command = rx.recv() => match command {
                 Some(SessionCommand::Input(data)) => {
                     if let Some(active) = transfer.as_mut() {
+                        if active.awaiting_selection && data.contains('\u{3}') {
+                            let detection_id = active.detection_id.clone();
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
+                            emit_zmodem_status(
+                                app_handle, session_id, detection_id, "cancelled", None, None,
+                                None, 0, None, Some("已终止远端 rz。".to_string()),
+                            );
+                            transfer = None;
+                            probe.suppress_until_cancel();
+                            continue;
+                        }
                         if !active.awaiting_selection && data.contains('\u{3}') {
                             active.cancel_requested = true;
                             active.sender.abort();
@@ -901,6 +921,20 @@ async fn connect_and_run(
                         continue;
                     }
                     if let Some(active) = download.as_mut() {
+                        if active.awaiting_selection && data.contains('\u{3}') {
+                            let detection_id = active.detection_id.clone();
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
+                            emit_zmodem_download_status(
+                                app_handle, session_id, detection_id, "cancelled", None, None,
+                                None, 0, None, Some("已终止远端 sz。".to_string()),
+                            );
+                            download = None;
+                            probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
+                            continue;
+                        }
                         if !active.awaiting_selection && data.contains('\u{3}') {
                             active.cancel_requested = true;
                             if let Some(receiver) = active.receiver.as_mut() {
@@ -925,9 +959,12 @@ async fn connect_and_run(
                         active.awaiting_selection && active.detection_id == detection_id
                     }) {
                         let Some(paths) = paths.filter(|paths| paths.len() == 1) else {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
                             emit_zmodem_download_status(
                                 app_handle, session_id, detection_id, "cancelled", None, None, None,
-                                0, None, Some("已取消保存位置选择；如远端 sz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                                0, None, Some("已取消保存位置选择，并终止远端 sz。".to_string()),
                             );
                             download = None;
                             probe.suppress_until_cancel();
@@ -949,6 +986,9 @@ async fn connect_and_run(
                                     );
                                 }
                                 Err(error) => {
+                                    if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                        break ConnOutcome::Dropped;
+                                    }
                                     emit_zmodem_download_status(
                                         app_handle, session_id, detection_id, "failed", None, None,
                                         None, 0, None, Some(error.to_string()),
@@ -959,6 +999,9 @@ async fn connect_and_run(
                                 }
                             },
                             Err(error) => {
+                                if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                    break ConnOutcome::Dropped;
+                                }
                                 emit_zmodem_download_status(
                                     app_handle, session_id, detection_id, "failed", None, None,
                                     None, 0, None, Some(error.message),
@@ -976,9 +1019,12 @@ async fn connect_and_run(
                         continue;
                     };
                     let Some(paths) = paths.filter(|paths| !paths.is_empty()) else {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
                         emit_zmodem_status(
                             app_handle, session_id, detection_id, "cancelled", None, None, None,
-                            0, None, Some("已取消文件选择；如远端 rz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                            0, None, Some("已取消文件选择，并终止远端 rz。".to_string()),
                         );
                         transfer = None;
                         probe.suppress_until_cancel();
@@ -993,6 +1039,9 @@ async fn connect_and_run(
                             active.last_activity = Instant::now();
                             finish_filter.begin_transfer();
                             if let Err(error) = start_next_zmodem_file(active) {
+                                if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                    break ConnOutcome::Dropped;
+                                }
                                 emit_zmodem_status(
                                     app_handle, session_id, detection_id, "failed", None, None,
                                     Some(active.file_count), 0, Some(total), Some(error.message),
@@ -1009,6 +1058,9 @@ async fn connect_and_run(
                             );
                         }
                         Err(error) => {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
                             emit_zmodem_status(
                                 app_handle, session_id, detection_id, "failed", None, None,
                                 None, 0, None, Some(error.message),
@@ -1021,9 +1073,12 @@ async fn connect_and_run(
                 Some(SessionCommand::CancelZmodem { detection_id }) => {
                     if let Some(active) = download.as_mut().filter(|active| active.detection_id == detection_id) {
                         if active.awaiting_selection {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
                             emit_zmodem_download_status(
                                 app_handle, session_id, detection_id, "cancelled", None, None, None,
-                                0, None, Some("已取消保存位置选择；如远端 sz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                                0, None, Some("已取消保存位置选择，并终止远端 sz。".to_string()),
                             );
                             download = None;
                             probe.suppress_until_cancel();
@@ -1040,9 +1095,12 @@ async fn connect_and_run(
                         continue;
                     };
                     if active.awaiting_selection {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
                         emit_zmodem_status(
                             app_handle, session_id, detection_id, "cancelled", None, None, None,
-                            0, None, Some("已取消文件选择；如远端 rz 仍在等待，请按 Ctrl+C 退出。".to_string()),
+                            0, None, Some("已取消文件选择，并终止远端 rz。".to_string()),
                         );
                         transfer = None;
                         probe.suppress_until_cancel();
