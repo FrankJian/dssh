@@ -4535,12 +4535,6 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tab__kind-icon.is-running {
-    animation: none;
-  }
-}
-
 .tab__index {
   min-width: 15px;
   height: 15px;
