@@ -39,7 +39,7 @@ use crate::{
     ssh::host_keys::HostKeyVerifier,
     ssh::zmodem::{
         ZMODEM_ABORT_SEQUENCE, ZmodemDetection, ZmodemDownloadDetection, ZmodemDownloadProbe,
-        ZmodemFinishFilter, ZmodemProbe, flush_sender_output,
+        ZmodemFinishFilter, ZmodemProbe, flush_receiver_output, flush_sender_output,
     },
     ssh::{ChannelOwner, SshConnectionPool},
 };
@@ -1955,6 +1955,15 @@ async fn pump_zmodem_download(
                 transfer.last_activity = Instant::now();
             }
             ZmodemDownloadAction::SessionCompleted => {
+                let receiver = transfer
+                    .receiver
+                    .as_mut()
+                    .expect("receiver exists while downloading");
+                let writer = &*writer;
+                flush_receiver_output(receiver, |bytes| async move {
+                    writer.data_bytes(bytes).await.map_err(ssh_error)
+                })
+                .await?;
                 emit_zmodem_download_status(
                     app_handle,
                     session_id,

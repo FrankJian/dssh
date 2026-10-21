@@ -24,6 +24,22 @@ pub(crate) async fn flush_sender_output<E, F: std::future::Future<Output = Resul
     Ok(())
 }
 
+/// The receiver also emits SessionCompleted before exposing its queued ZFIN
+/// acknowledgement. A sender such as `sz` waits for that acknowledgement
+/// before it restores the shell, so it must be written before terminal input
+/// is released.
+pub(crate) async fn flush_receiver_output<E, F: std::future::Future<Output = Result<(), E>>>(
+    receiver: &mut Receiver,
+    mut write: impl FnMut(Vec<u8>) -> F,
+) -> Result<(), E> {
+    while let Action::WriteWire(bytes) = receiver.poll() {
+        let len = bytes.len();
+        write(bytes.to_vec()).await?;
+        receiver.wire_written(len);
+    }
+    Ok(())
+}
+
 const MAX_CANDIDATE_BYTES: usize = 32;
 const MAX_MARKER_BYTES: usize = 6;
 const FINISH_FRAME_GRACE: Duration = Duration::from_secs(2);
@@ -515,10 +531,10 @@ fn longest_zrqinit_marker_prefix(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter, flush_sender_output,
-        primed_sender,
+        ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter, flush_receiver_output,
+        flush_sender_output, primed_sender,
     };
-    use zmodem2::{Action, Event, Receiver, Sender};
+    use zmodem2::{Action, Event, FileInfo, Position, Receiver, Sender};
 
     #[test]
     fn pending_selection_abort_matches_the_protocol_engine() {
@@ -528,6 +544,95 @@ mod tests {
             Action::WriteWire(bytes) => assert_eq!(bytes, ZMODEM_ABORT_SEQUENCE),
             action => panic!("expected cancel bytes, got {action:?}"),
         }
+    }
+
+    #[test]
+    fn receiver_output_after_an_event_is_flushed() {
+        let mut sender = Sender::new().expect("sender starts");
+        let mut receiver = Receiver::with_flow_control(0, true).expect("receiver starts");
+        sender
+            .start_file(FileInfo::new(b"payload.bin", Some(Position::new(1))))
+            .expect("file starts");
+        sender.finish().expect("sender finishes after its file");
+
+        let mut downstream = Vec::new();
+        let mut upstream = Vec::new();
+        let mut receiver_completed = false;
+        for _ in 0..10_000 {
+            let mut progressed = false;
+            match sender.poll() {
+                Action::WriteWire(bytes) => {
+                    let len = bytes.len();
+                    downstream.extend_from_slice(bytes);
+                    sender.wire_written(len);
+                    progressed = true;
+                }
+                Action::ReadFile { .. } => {
+                    sender.submit_file(b"x").expect("file bytes submit");
+                    progressed = true;
+                }
+                Action::Event(_) => progressed = true,
+                Action::Idle if !upstream.is_empty() => {
+                    let consumed = sender
+                        .submit_wire(&upstream)
+                        .expect("sender consumes reply");
+                    upstream.drain(..consumed);
+                    progressed = true;
+                }
+                Action::Idle => {}
+                action => panic!("unexpected sender action: {action:?}"),
+            }
+
+            match receiver.poll() {
+                Action::WriteWire(bytes) => {
+                    let len = bytes.len();
+                    upstream.extend_from_slice(bytes);
+                    receiver.wire_written(len);
+                    progressed = true;
+                }
+                Action::WriteFile(bytes) => {
+                    let written_len = bytes.len();
+                    let _persisted = bytes.to_vec();
+                    receiver
+                        .file_written(written_len)
+                        .expect("file bytes persist");
+                    progressed = true;
+                }
+                Action::Event(Event::SessionCompleted) => {
+                    receiver_completed = true;
+                    break;
+                }
+                Action::Event(_) => progressed = true,
+                Action::Idle if !downstream.is_empty() => {
+                    let consumed = receiver
+                        .submit_wire(&downstream)
+                        .expect("receiver consumes sender bytes");
+                    downstream.drain(..consumed);
+                    progressed = true;
+                }
+                Action::Idle => {}
+                action => panic!("unexpected receiver action: {action:?}"),
+            }
+
+            assert!(progressed, "transfer stalled before session completion");
+        }
+        assert!(receiver_completed, "receiver never completed the session");
+
+        let mut written = Vec::new();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime starts")
+            .block_on(async {
+                flush_receiver_output(&mut receiver, |bytes| {
+                    written.extend_from_slice(&bytes);
+                    std::future::ready(Ok::<(), ()>(()))
+                })
+                .await
+            })
+            .expect("receiver control bytes flush");
+
+        assert!(written.starts_with(b"**\x18B08"));
+        assert!(matches!(receiver.poll(), Action::Idle));
     }
 
     const ZFIN: &[u8] = b"**\x18B0800000000022d\r\n";
