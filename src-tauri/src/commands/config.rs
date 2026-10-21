@@ -36,6 +36,14 @@ fn default_port() -> u16 {
     22
 }
 
+fn default_ssh_profile_icon() -> String {
+    "ssh".to_string()
+}
+
+fn is_default_ssh_profile_icon(icon: &String) -> bool {
+    icon == "ssh"
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ProfileEntry {
     name: String,
@@ -48,6 +56,11 @@ struct ProfileEntry {
     description: Option<String>,
     #[serde(default)]
     favorite: bool,
+    #[serde(
+        default = "default_ssh_profile_icon",
+        skip_serializing_if = "is_default_ssh_profile_icon"
+    )]
+    icon: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
 }
@@ -156,6 +169,7 @@ fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
         auth,
         description: profile.description.clone(),
         favorite: profile.favorite,
+        icon: profile.icon.clone(),
         tags: profile.tags.clone(),
     }
 }
@@ -235,6 +249,7 @@ fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
         proxy: None,
         description: entry.description,
         favorite: entry.favorite,
+        icon: entry.icon,
         tags: entry.tags,
     }
 }

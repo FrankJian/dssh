@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS ssh_profiles (
     passphrase_ref TEXT,
     description TEXT,
     favorite INTEGER NOT NULL DEFAULT 0,
+    icon TEXT NOT NULL DEFAULT 'ssh',
     tags TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

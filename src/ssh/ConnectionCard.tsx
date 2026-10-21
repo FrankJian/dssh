@@ -2,6 +2,7 @@ import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 import { connectionTypeLabel, connectionTypeForProfile } from "./connectionTypes";
+import { profileIconName } from "./profileIcons";
 
 interface ConnectionCardProps {
   profile: SshProfile;
@@ -28,7 +29,7 @@ export function ConnectionCard({
     <article className="conn-card" data-variant={variant} onDoubleClick={onConnect}>
       <div className="conn-card__head">
         <span className="conn-card__icon">
-          <Icon name="ssh" height="18" width="18" />
+          <Icon name={profileIconName(profile.icon)} height="18" width="18" />
         </span>
         <div className="conn-card__title">
           <span className="conn-card__name">{profile.name}</span>

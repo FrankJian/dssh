@@ -1,4 +1,4 @@
-import type { AuthMethod, SshProfile } from "../models";
+import type { AuthMethod, SshProfile, SshProfileIcon } from "../models";
 
 export type ProfileEditorMode = "create" | "edit";
 
@@ -22,6 +22,7 @@ export interface ProfileDraft {
   proxyPassword: string;
   description: string;
   favorite: boolean;
+  icon: SshProfileIcon;
   tags: string[];
 }
 
@@ -44,6 +45,7 @@ export function createEmptyProfileDraft(): ProfileDraft {
     proxyPassword: "",
     description: "",
     favorite: false,
+    icon: "ssh",
     tags: [],
   };
 }
@@ -67,6 +69,7 @@ export function profileToDraft(profile: SshProfile): ProfileDraft {
     proxyPassword: "",
     description: profile.description ?? "",
     favorite: profile.favorite,
+    icon: profile.icon ?? "ssh",
     tags: profile.tags ?? [],
   };
 }

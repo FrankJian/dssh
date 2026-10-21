@@ -1,6 +1,7 @@
 import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { profileIconName } from "./profileIcons";
 
 interface ProfileRowProps {
   isSelected: boolean;
@@ -30,6 +31,9 @@ export function ProfileRow({
         type="button"
       >
         <span className="profile-row__main">
+          <span className="profile-row__icon">
+            <Icon name={profileIconName(profile.icon)} height="15" width="15" />
+          </span>
           <span className="profile-row__name">{profile.name}</span>
         </span>
         <span className="profile-row__host">

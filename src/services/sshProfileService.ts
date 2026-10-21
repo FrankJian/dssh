@@ -1,4 +1,4 @@
-import type { AuthMethod, SshProfile, SshProxy } from "../models";
+import type { AuthMethod, SshProfile, SshProfileIcon, SshProxy } from "../models";
 import { invokeCommand } from "./tauri";
 
 export interface CreateSshProfileRequest {
@@ -10,6 +10,7 @@ export interface CreateSshProfileRequest {
   proxy?: SshProxy;
   description?: string;
   favorite: boolean;
+  icon: SshProfileIcon;
   tags: string[];
 }
 

@@ -4,7 +4,7 @@ export type {
   PortForward,
   StartPortForwardRequest,
 } from "./forwarding";
-export type { AuthMethod, SshProfile, SshProxy } from "./sshProfile";
+export type { AuthMethod, SshProfile, SshProfileIcon, SshProxy } from "./sshProfile";
 export type {
   S3Bucket,
   S3Bookmark,

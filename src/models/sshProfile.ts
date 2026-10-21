@@ -12,6 +12,16 @@ export type AuthMethod =
       passphraseRef?: string;
     };
 
+export type SshProfileIcon =
+  | "ssh"
+  | "server"
+  | "linux"
+  | "centos"
+  | "ubuntu"
+  | "windows"
+  | "terminal"
+  | "command";
+
 export interface SshProxy {
   proxyType: "socks5" | "http";
   host: string;
@@ -31,6 +41,7 @@ export interface SshProfile {
   proxy?: SshProxy;
   description?: string;
   favorite: boolean;
+  icon: SshProfileIcon;
   tags: string[];
   createdAt: string;
   updatedAt: string;

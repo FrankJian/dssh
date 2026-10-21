@@ -75,6 +75,7 @@ export function createProfileRequestFromDraft(draft: ProfileDraft): CreateSshPro
     proxy: buildProxy(draft),
     description: normalizeOptional(draft.description),
     favorite: draft.favorite,
+    icon: draft.icon,
     tags: normalizeTags(draft.tags),
   };
 }
@@ -93,6 +94,7 @@ export function updateProfileRequestFromDraft(
     proxy: buildProxy(draft),
     description: normalizeOptional(draft.description),
     favorite: draft.favorite,
+    icon: draft.icon,
     tags: normalizeTags(draft.tags),
   };
 }

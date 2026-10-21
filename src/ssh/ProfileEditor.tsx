@@ -18,6 +18,7 @@ import {
   type ProfileDraft,
   type ProfileEditorMode,
 } from "./profileTypes";
+import { SSH_PROFILE_ICON_OPTIONS } from "./profileIcons";
 
 interface ProfileEditorProps {
   mode: ProfileEditorMode;
@@ -150,6 +151,25 @@ export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: Pro
                 <small className="profile-form__hint">Telnet 与 SFTP 将在支持后开放创建。</small>
               </label>
             ) : null}
+
+            <fieldset className="profile-icon-picker">
+              <legend>连接图标</legend>
+              <div aria-label="连接图标" className="profile-icon-picker__options" role="group">
+                {SSH_PROFILE_ICON_OPTIONS.map((option) => (
+                  <button
+                    aria-pressed={draft.icon === option.id}
+                    className={`profile-icon-picker__option${draft.icon === option.id ? " is-selected" : ""}`}
+                    key={option.id}
+                    onClick={() => updateDraft("icon", option.id)}
+                    title={option.label}
+                    type="button"
+                  >
+                    <Icon name={option.icon} height="18" width="18" />
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
 
             <label className="field">
               <span>名称</span>

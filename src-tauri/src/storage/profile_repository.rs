@@ -15,7 +15,8 @@ use crate::{
         CreateS3ProfileRequest, S3Bookmark, S3Credentials, S3Profile, UpdateS3ProfileRequest,
     },
     models::ssh_profile::{
-        AuthMethod, CreateSshProfileRequest, SshProfile, SshProxy, UpdateSshProfileRequest,
+        AuthMethod, CreateSshProfileRequest, DEFAULT_SSH_PROFILE_ICON, SshProfile, SshProxy,
+        UpdateSshProfileRequest,
     },
 };
 
@@ -26,6 +27,8 @@ const AI_CHAT_HISTORY_MIGRATION: &str = include_str!("../../migrations/004_ai_ch
 const SSH_PROXY_MIGRATION: &str = include_str!("../../migrations/005_ssh_proxies.sql");
 const DROP_KUBERNETES_MIGRATION: &str = include_str!("../../migrations/006_drop_kubernetes.sql");
 const APP_LOCK_MIGRATION: &str = include_str!("../../migrations/007_app_lock.sql");
+const SSH_PROFILE_ICONS_MIGRATION: &str =
+    include_str!("../../migrations/008_ssh_profile_icons.sql");
 const MAX_AI_CHAT_HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -47,7 +50,7 @@ impl ProfileRepository {
         let mut statement = connection.prepare(
             "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
                     key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                    proxy_type, proxy_host, proxy_port, proxy_username, proxy_password
+                    proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon
              FROM ssh_profiles
              ORDER BY favorite DESC, name COLLATE NOCASE ASC",
         )?;
@@ -69,6 +72,7 @@ impl ProfileRepository {
             proxy: normalize_proxy(request.proxy)?,
             description: normalize_optional(request.description),
             favorite: request.favorite,
+            icon: normalize_profile_icon(request.icon)?,
             tags: normalize_tags(request.tags),
             created_at: now.clone(),
             updated_at: now,
@@ -99,6 +103,7 @@ impl ProfileRepository {
             proxy: merge_proxy(existing.proxy, request.proxy)?,
             description: normalize_optional(request.description),
             favorite: request.favorite,
+            icon: normalize_profile_icon(request.icon)?,
             tags: normalize_tags(request.tags),
             created_at: existing.created_at,
             updated_at: timestamp(),
@@ -140,7 +145,7 @@ impl ProfileRepository {
             .query_row(
                 "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
                         key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password
+                        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon
                  FROM ssh_profiles
                  WHERE id = ?1",
                 params![id],
@@ -484,6 +489,7 @@ impl ProfileRepository {
         connection.execute_batch(SSH_PROXY_MIGRATION)?;
         connection.execute_batch(DROP_KUBERNETES_MIGRATION)?;
         connection.execute_batch(APP_LOCK_MIGRATION)?;
+        connection.execute_batch(SSH_PROFILE_ICONS_MIGRATION)?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS app_secrets (
                 key TEXT PRIMARY KEY,
@@ -618,8 +624,8 @@ fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
         "INSERT INTO ssh_profiles (
             id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
             key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             profile.id,
             profile.name,
@@ -642,6 +648,7 @@ fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             proxy_fields.port,
             proxy_fields.username,
             proxy_fields.password,
+            profile.icon,
         ],
     )?;
     Ok(())
@@ -656,7 +663,7 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
              secret_ref = ?7, key_path = ?8, key_data = ?9, key_name = ?10,
              passphrase_ref = ?11, description = ?12, favorite = ?13, tags = ?14,
              updated_at = ?15, proxy_type = ?16, proxy_host = ?17, proxy_port = ?18,
-             proxy_username = ?19, proxy_password = ?20
+             proxy_username = ?19, proxy_password = ?20, icon = ?21
          WHERE id = ?1",
         params![
             profile.id,
@@ -679,6 +686,7 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             proxy_fields.port,
             proxy_fields.username,
             proxy_fields.password,
+            profile.icon,
         ],
     )?;
     Ok(())
@@ -697,6 +705,7 @@ fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
     let proxy_port: Option<u16> = row.get(18)?;
     let proxy_username: Option<String> = row.get(19)?;
     let proxy_password: Option<String> = row.get(20)?;
+    let icon: Option<String> = row.get(21)?;
 
     Ok(SshProfile {
         id: row.get(0)?,
@@ -722,6 +731,7 @@ fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
         }),
         description: row.get(11)?,
         favorite: row.get::<_, i64>(12)? != 0,
+        icon: normalize_stored_profile_icon(icon),
         tags: deserialize_tags(tags.as_deref()),
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
@@ -808,6 +818,10 @@ fn ensure_columns(connection: &Connection) -> AppResult<()> {
         (
             "proxy_password",
             "ALTER TABLE ssh_profiles ADD COLUMN proxy_password TEXT",
+        ),
+        (
+            "icon",
+            "ALTER TABLE ssh_profiles ADD COLUMN icon TEXT NOT NULL DEFAULT 'ssh'",
         ),
     ] {
         if !existing.contains(column) {
@@ -1045,7 +1059,38 @@ fn validate_profile(profile: &SshProfile) -> AppResult<()> {
         return Err(AppError::new("validation_error", "Username is required."));
     }
 
+    if !is_supported_profile_icon(&profile.icon) {
+        return Err(AppError::new(
+            "validation_error",
+            "Unsupported connection icon.",
+        ));
+    }
+
     Ok(())
+}
+
+fn normalize_profile_icon(icon: String) -> AppResult<String> {
+    let icon = icon.trim();
+    if is_supported_profile_icon(icon) {
+        Ok(icon.to_string())
+    } else {
+        Err(AppError::new(
+            "validation_error",
+            "Unsupported connection icon.",
+        ))
+    }
+}
+
+fn normalize_stored_profile_icon(icon: Option<String>) -> String {
+    icon.filter(|icon| is_supported_profile_icon(icon))
+        .unwrap_or_else(|| DEFAULT_SSH_PROFILE_ICON.to_string())
+}
+
+fn is_supported_profile_icon(icon: &str) -> bool {
+    matches!(
+        icon,
+        "ssh" | "server" | "linux" | "centos" | "ubuntu" | "windows" | "terminal" | "command"
+    )
 }
 
 fn validate_s3_request(
@@ -1177,6 +1222,49 @@ impl From<&AuthMethod> for AuthFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_profile_icon_is_persisted_and_rejects_unknown_icons() {
+        let directory =
+            std::env::temp_dir().join(format!("dssh-profile-icon-test-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let created = repository
+            .create_profile(CreateSshProfileRequest {
+                name: "Ubuntu host".to_string(),
+                host: "ubuntu.example.test".to_string(),
+                port: 22,
+                username: "root".to_string(),
+                auth_method: AuthMethod::Password { secret_ref: None },
+                proxy: None,
+                description: None,
+                favorite: false,
+                icon: "ubuntu".to_string(),
+                tags: Vec::new(),
+            })
+            .unwrap();
+
+        assert_eq!(created.icon, "ubuntu");
+        assert_eq!(
+            repository.get_profile(&created.id).unwrap().unwrap().icon,
+            "ubuntu"
+        );
+
+        let invalid = repository.create_profile(CreateSshProfileRequest {
+            name: "Unknown icon".to_string(),
+            host: "unknown.example.test".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            auth_method: AuthMethod::Password { secret_ref: None },
+            proxy: None,
+            description: None,
+            favorite: false,
+            icon: "unsupported".to_string(),
+            tags: Vec::new(),
+        });
+        assert!(invalid.is_err());
+
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn s3_profile_crud_keeps_secrets_out_of_profile_rows() {

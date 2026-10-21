@@ -33,6 +33,12 @@ fn default_tags() -> Vec<String> {
     Vec::new()
 }
 
+pub const DEFAULT_SSH_PROFILE_ICON: &str = "ssh";
+
+pub fn default_ssh_profile_icon() -> String {
+    DEFAULT_SSH_PROFILE_ICON.to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshProxy {
@@ -57,6 +63,8 @@ pub struct SshProfile {
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,
+    #[serde(default = "default_ssh_profile_icon")]
+    pub icon: String,
     #[serde(default = "default_tags")]
     pub tags: Vec<String>,
     pub created_at: String,
@@ -74,6 +82,8 @@ pub struct CreateSshProfileRequest {
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,
+    #[serde(default = "default_ssh_profile_icon")]
+    pub icon: String,
     #[serde(default = "default_tags")]
     pub tags: Vec<String>,
 }
@@ -90,6 +100,8 @@ pub struct UpdateSshProfileRequest {
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,
+    #[serde(default = "default_ssh_profile_icon")]
+    pub icon: String,
     #[serde(default = "default_tags")]
     pub tags: Vec<String>,
 }

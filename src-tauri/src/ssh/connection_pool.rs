@@ -876,6 +876,7 @@ mod tests {
             proxy: None,
             description: None,
             favorite: false,
+            icon: "ssh".to_string(),
             tags: Vec::new(),
             created_at: "1".to_string(),
             updated_at: "1".to_string(),

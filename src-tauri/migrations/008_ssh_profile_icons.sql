@@ -1,0 +1,2 @@
+-- The icon column is added idempotently by ProfileRepository::ensure_columns,
+-- matching the compatibility approach used for SSH proxy fields.

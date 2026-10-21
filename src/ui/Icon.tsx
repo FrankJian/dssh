@@ -16,6 +16,7 @@ export type IconName =
   | "code"
   | "command"
   | "connections"
+  | "centos"
   | "download"
   | "copy"
   | "database"
@@ -56,6 +57,7 @@ export type IconName =
   | "shield"
   | "settings"
   | "lock"
+  | "linux"
   | "splitH"
   | "splitV"
   | "ssh"
@@ -63,12 +65,15 @@ export type IconName =
   | "stop"
   | "sun"
   | "system"
+  | "server"
   | "terminalTool"
   | "tree"
   | "toolbox"
   | "trash"
   | "unplug"
   | "upload"
+  | "ubuntu"
+  | "windows"
   | "zap";
 
 interface IconProps extends SVGProps<SVGSVGElement> {
@@ -135,6 +140,40 @@ export function Icon({ name, ...props }: IconProps) {
         <>
           <rect height="14" rx="2.5" width="18" x="3" y="5" />
           <path d="M7 9h10M8 13h3M13 13h3" />
+        </>
+      ) : null}
+      {name === "server" ? (
+        <>
+          <rect height="6" rx="1.5" width="18" x="3" y="4" />
+          <rect height="6" rx="1.5" width="18" x="3" y="14" />
+          <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
+        </>
+      ) : null}
+      {name === "linux" ? (
+        <>
+          <path d="M8 10.5c0-3 1.8-5.5 4-5.5s4 2.5 4 5.5v3.2c0 3.5-1.8 6.3-4 6.3s-4-2.8-4-6.3v-3.2Z" />
+          <path d="M8.5 14 5 17.5M15.5 14l3.5 3.5M9 20l-2 1M15 20l2 1" />
+          <path d="M10.2 11.5h.01M13.8 11.5h.01M10.5 15.2h3" />
+        </>
+      ) : null}
+      {name === "centos" ? (
+        <>
+          <path d="m12 3 6.4 3.7v7.6L12 18l-6.4-3.7V6.7L12 3Z" />
+          <path d="M12 3v7m6.4-3.3L12 10 5.6 6.7M12 10v8M5.6 14.3 12 10l6.4 4.3" />
+        </>
+      ) : null}
+      {name === "ubuntu" ? (
+        <>
+          <circle cx="12" cy="12" r="5.2" />
+          <circle cx="12" cy="4.2" r="1.6" />
+          <circle cx="5.25" cy="15.9" r="1.6" />
+          <circle cx="18.75" cy="15.9" r="1.6" />
+          <path d="M10.4 7.1 11.1 5.8M7.6 14.7l-1.4.5M16.4 14.7l1.4.5" />
+        </>
+      ) : null}
+      {name === "windows" ? (
+        <>
+          <path d="m4 5.2 7-1v7H4v-6Zm9 5.9V3.9l7-1v8.2h-7Zm-9 2h7v7.7l-7-1v-6.7Zm9 0h7v8.2l-7-1v-7.2Z" />
         </>
       ) : null}
       {name === "sun" ? (
