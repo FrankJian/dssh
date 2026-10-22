@@ -4,6 +4,19 @@ type ParserState = "text" | "escape" | "csi" | "osc" | "oscEscape" | "charset";
 
 const MAX_LINE_LENGTH = 240;
 const MAX_OSC_LENGTH = 256;
+const INTERACTIVE_SHELLS = new Set([
+  "ash",
+  "bash",
+  "csh",
+  "dash",
+  "fish",
+  "ksh",
+  "pwsh",
+  "powershell",
+  "sh",
+  "tcsh",
+  "zsh",
+]);
 
 /**
  * Tracks command activity without modifying the bytes sent to xterm. OSC 133
@@ -14,12 +27,16 @@ export class TerminalCommandActivityTracker {
   private activity: CommandActivity = "idle";
   private parserState: ParserState = "text";
   private currentLine = "";
+  private inputLine = "";
   private promptBeforeCommand: string | null = null;
   private sawLineBreakSinceCommand = false;
+  private ignoreNextOscCommandStart = false;
   private osc = "";
 
   observeInput(data: string): CommandActivity | null {
     if (data.includes("\x03")) {
+      this.inputLine = "";
+      this.ignoreNextOscCommandStart = false;
       return this.setActivity("idle");
     }
 
@@ -28,8 +45,17 @@ export class TerminalCommandActivityTracker {
       // This also handles custom prompts that do not end in $, #, or %.
       this.promptBeforeCommand = this.currentLine || null;
     }
+    const submittedInteractiveShell = this.recordInput(data);
     if (data.includes("\r") || data.includes("\n")) {
       this.sawLineBreakSinceCommand = false;
+      if (submittedInteractiveShell) {
+        // A child shell owns the terminal interactively. It is not a
+        // background or long-running task for the tab indicator, and its
+        // parent shell's OSC 133;C marker must not turn the indicator back on.
+        this.ignoreNextOscCommandStart = true;
+        return this.setActivity("idle");
+      }
+      this.ignoreNextOscCommandStart = false;
       return this.setActivity("running");
     }
     return null;
@@ -104,7 +130,30 @@ export class TerminalCommandActivityTracker {
     const marker = /^133;([ABCD])(?:;|$)/.exec(this.osc)?.[1];
     this.osc = "";
     if (!marker || marker === "B") return null;
+    if (marker === "C" && this.ignoreNextOscCommandStart) {
+      this.ignoreNextOscCommandStart = false;
+      return null;
+    }
+    if (marker !== "C") this.ignoreNextOscCommandStart = false;
     return this.setActivity(marker === "C" ? "running" : "idle");
+  }
+
+  private recordInput(data: string): boolean {
+    let submittedInteractiveShell = false;
+    for (const char of data) {
+      if (char === "\r" || char === "\n") {
+        submittedInteractiveShell ||= isInteractiveShellInvocation(this.inputLine);
+        this.inputLine = "";
+      } else if (char === "\x7f" || char === "\b") {
+        this.inputLine = this.inputLine.slice(0, -1);
+      } else if (char >= " ") {
+        this.inputLine += char;
+        if (this.inputLine.length > MAX_LINE_LENGTH) {
+          this.inputLine = this.inputLine.slice(-MAX_LINE_LENGTH);
+        }
+      }
+    }
+    return submittedInteractiveShell;
   }
 
   private setActivity(next: CommandActivity): CommandActivity | null {
@@ -125,4 +174,26 @@ function looksLikeShellPrompt(line: string): boolean {
   return /[\w./~:@-][#$]$/.test(trimmed)
     || /[%❯➜]$/.test(trimmed)
     || /^PS\s+.+>$/.test(trimmed);
+}
+
+function isInteractiveShellInvocation(input: string): boolean {
+  const command = input.trim();
+  if (!command || /[|;&<>]/.test(command)) return false;
+
+  const words = command.split(/\s+/);
+  let index = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index += 1;
+  if (words[index] === "command" || words[index] === "exec") index += 1;
+
+  const executableParts = words[index]?.split("/");
+  const executable = executableParts?.[executableParts.length - 1]?.toLowerCase();
+  if (!executable || !INTERACTIVE_SHELLS.has(executable)) return false;
+
+  const argumentsAfterExecutable = words.slice(index + 1);
+  return !argumentsAfterExecutable.some((argument) =>
+    argument === "-c"
+      || argument === "--command"
+      || argument === "-Command"
+      || !argument.startsWith("-"),
+  );
 }

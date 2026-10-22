@@ -74,6 +74,7 @@ pub(crate) struct ZmodemFinishFilter {
     active_until: Option<Instant>,
     during_transfer: bool,
     trailer: HexTrailer,
+    awaiting_sender_oo: bool,
 }
 
 #[derive(Default)]
@@ -93,6 +94,7 @@ impl ZmodemFinishFilter {
         self.active_until = None;
         self.during_transfer = true;
         self.trailer = HexTrailer::None;
+        self.awaiting_sender_oo = false;
     }
 
     /// Keep filtering briefly after completion because PTYs may deliver a
@@ -103,6 +105,15 @@ impl ZmodemFinishFilter {
         // Sender consumes the final header only through its CRC. Its ZHEX
         // terminator is still in buffered_wire, possibly in the next packet.
         self.trailer = HexTrailer::Start;
+        self.awaiting_sender_oo = false;
+    }
+
+    /// A remote ZMODEM sender (`sz`) responds to the receiver's final ZFIN
+    /// acknowledgement with a bare `OO`. It is protocol framing, not shell
+    /// output, and can arrive separately from the final header or prompt.
+    pub fn finish_download_transfer(&mut self) {
+        self.finish_transfer();
+        self.awaiting_sender_oo = true;
     }
 
     pub fn feed(&mut self, input: &[u8]) -> Vec<u8> {
@@ -147,6 +158,24 @@ impl ZmodemFinishFilter {
                 }
                 _ => self.trailer = HexTrailer::None,
             }
+
+            if self.awaiting_sender_oo {
+                if first != b'O' {
+                    self.awaiting_sender_oo = false;
+                } else if self.pending.len() == 1 {
+                    // Keep one byte until the second `O` arrives, so a
+                    // packet boundary cannot leak half the final response.
+                    break;
+                } else if self.pending[1] == b'O' {
+                    self.pending.drain(..2);
+                    self.awaiting_sender_oo = false;
+                    continue;
+                } else {
+                    // This was ordinary shell output beginning with `O`, not
+                    // the exact ZMODEM finish acknowledgement.
+                    self.awaiting_sender_oo = false;
+                }
+            }
             let Some(start) = find_zfin_marker(&self.pending) else {
                 let safe_len = self
                     .pending
@@ -175,6 +204,7 @@ impl ZmodemFinishFilter {
         self.active_until = None;
         self.during_transfer = false;
         self.trailer = HexTrailer::None;
+        self.awaiting_sender_oo = false;
         std::mem::take(&mut self.pending)
     }
 }
@@ -675,6 +705,26 @@ mod tests {
         bytes.extend_from_slice(b"dive.");
 
         assert_eq!(filter.feed(&bytes), b"dive.");
+    }
+
+    #[test]
+    fn download_finish_filter_hides_final_oo_across_packet_boundaries() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_download_transfer();
+
+        // lrzsz leaves its ZFIN line ending first, then `sz` writes the final
+        // response without a line terminator. The shell prompt can follow in
+        // the same SSH packet or a later one.
+        assert_eq!(filter.feed(b"\r\x8aO"), b"\r\n");
+        assert_eq!(filter.feed(b"O\r\nuser@host:~$ "), b"\r\nuser@host:~$ ");
+    }
+
+    #[test]
+    fn download_finish_filter_preserves_non_protocol_o_output() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_download_transfer();
+
+        assert_eq!(filter.feed(b"Output complete\r\n"), b"Output complete\r\n");
     }
 
     #[test]

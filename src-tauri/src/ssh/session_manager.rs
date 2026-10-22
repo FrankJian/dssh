@@ -828,7 +828,11 @@ async fn connect_and_run(
                 Ok(TransferPump::Idle) => {}
                 Ok(TransferPump::Completed) => {
                     let completed = download.take().expect("completed download exists");
-                    finish_filter.finish_transfer();
+                    if completed.cancel_requested {
+                        finish_filter.finish_transfer();
+                    } else {
+                        finish_filter.finish_download_transfer();
+                    }
                     if completed.cancel_requested {
                         probe.suppress_until_cancel();
                         download_probe.suppress_until_cancel();
