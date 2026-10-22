@@ -44,6 +44,7 @@ const MAX_CANDIDATE_BYTES: usize = 32;
 const MAX_MARKER_BYTES: usize = 6;
 const FINISH_FRAME_GRACE: Duration = Duration::from_secs(2);
 const ZFIN_HEX_MARKERS: [&[u8]; 2] = [b"**\x18B08", b"*\x18B08"];
+const LRZSZ_DOWNLOAD_TRIGGER: &[u8] = b"rz\r";
 
 pub(crate) struct ZmodemDetection {
     pub sender: Sender,
@@ -385,15 +386,23 @@ impl ZmodemDownloadProbe {
 
         loop {
             let Some(start) = find_zrqinit_marker(&self.pending) else {
-                let safe_len = self
-                    .pending
-                    .len()
-                    .saturating_sub(longest_zrqinit_marker_prefix(&self.pending));
+                let safe_len = self.pending.len().saturating_sub(
+                    longest_zrqinit_marker_prefix(&self.pending)
+                        .max(longest_lrzsz_download_trigger_prefix(&self.pending)),
+                );
                 visible.extend(self.pending.drain(..safe_len));
                 break;
             };
             if start > 0 {
-                visible.extend(self.pending.drain(..start));
+                // lrzsz `sz` writes `rz\\r` immediately before ZRQINIT to
+                // trigger legacy terminal receivers. Keep it buffered across
+                // SSH packet boundaries and discard it only when a verified
+                // download handshake directly follows.
+                let trigger_len =
+                    usize::from(self.pending[..start].ends_with(LRZSZ_DOWNLOAD_TRIGGER))
+                        * LRZSZ_DOWNLOAD_TRIGGER.len();
+                visible.extend(self.pending.drain(..start - trigger_len));
+                self.pending.drain(..trigger_len);
             }
 
             match validate_zrqinit(&self.pending) {
@@ -555,6 +564,13 @@ fn longest_zrqinit_marker_prefix(bytes: &[u8]) -> usize {
             .iter()
             .any(|marker| marker.starts_with(suffix))
         })
+        .unwrap_or(0)
+}
+
+fn longest_lrzsz_download_trigger_prefix(bytes: &[u8]) -> usize {
+    (1..=bytes.len().min(LRZSZ_DOWNLOAD_TRIGGER.len()))
+        .rev()
+        .find(|&length| bytes[bytes.len() - length..] == LRZSZ_DOWNLOAD_TRIGGER[..length])
         .unwrap_or(0)
 }
 
@@ -838,6 +854,33 @@ mod tests {
                 "sender handshake should be detected",
             );
         }
+    }
+
+    #[test]
+    fn download_probe_hides_lrzsz_rz_trigger_before_zrqinit() {
+        let mut sender = Sender::new().unwrap();
+        let handshake = match sender.poll() {
+            Action::WriteWire(bytes) => bytes.to_vec(),
+            other => panic!("unexpected sender action: {other:?}"),
+        };
+        let mut probe = ZmodemDownloadProbe::default();
+
+        // lrzsz flushes this compatibility trigger before emitting the
+        // ZMODEM header, so it can arrive in a separate SSH packet.
+        assert!(probe.feed(b"rz\r").text.is_empty());
+        let output = probe.feed(&handshake);
+        assert!(output.detection.is_some());
+        assert!(output.text.is_empty());
+    }
+
+    #[test]
+    fn download_probe_preserves_rz_without_a_handshake() {
+        let mut probe = ZmodemDownloadProbe::default();
+        assert!(probe.feed(b"rz\r").text.is_empty());
+        assert_eq!(
+            probe.feed(b"not a transfer\r\n").text,
+            b"rz\rnot a transfer\r\n"
+        );
     }
 }
 
