@@ -89,6 +89,18 @@ pub fn cancel_zmodem_transfer(
 }
 
 #[tauri::command]
+pub fn respond_zmodem_conflict(
+    state: State<'_, AppState>,
+    session_id: String,
+    detection_id: String,
+    overwrite: bool,
+) -> AppResult<()> {
+    state
+        .sessions
+        .respond_zmodem_conflict(&session_id, detection_id, overwrite)
+}
+
+#[tauri::command]
 pub fn resize_ssh_session(
     state: State<'_, AppState>,
     request: ResizeSshSessionRequest,

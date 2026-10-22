@@ -86,6 +86,16 @@ pub struct TerminalTransferPromptEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TerminalTransferConflictEvent {
+    pub session_id: String,
+    pub detection_id: String,
+    pub file_name: String,
+    pub file_size: u64,
+    pub file_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalTransferStatusEvent {
     pub session_id: String,
     pub detection_id: String,

@@ -48,6 +48,7 @@ import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
+import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
 import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
@@ -355,7 +356,9 @@ function MainApp() {
     resizeSession,
     sessions,
     terminalTransfers,
+    terminalConflicts,
     cancelTerminalTransfer,
+    resolveTerminalConflict,
     setActiveSessionId,
     startLocalSession,
     startSession,
@@ -2131,7 +2134,16 @@ function MainApp() {
         </button>
       ) : null}
       <ToastHost />
-      <TerminalTransferNotice transfers={terminalTransfers} onCancel={cancelTerminalTransfer} />
+      {!appLock.status?.locked ? (
+        <TerminalTransferNotice transfers={terminalTransfers} onCancel={cancelTerminalTransfer} />
+      ) : null}
+      {!appLock.status?.locked && terminalConflicts[0] ? (
+        <TerminalTransferConflictDialog
+          conflict={terminalConflicts[0]}
+          key={`${terminalConflicts[0].sessionId}:${terminalConflicts[0].detectionId}:${terminalConflicts[0].fileIndex}`}
+          onResolve={resolveTerminalConflict}
+        />
+      ) : null}
     </div>
   );
 }

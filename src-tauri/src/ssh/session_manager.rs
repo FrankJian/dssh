@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -32,7 +32,8 @@ use crate::{
         ssh_profile::{AuthMethod, SshProfile, SshProxy},
         terminal::{
             SessionStatus, TerminalOutputEvent, TerminalSession, TerminalSessionKind, TerminalSize,
-            TerminalStatusEvent, TerminalTransferPromptEvent, TerminalTransferStatusEvent,
+            TerminalStatusEvent, TerminalTransferConflictEvent, TerminalTransferPromptEvent,
+            TerminalTransferStatusEvent,
         },
     },
     ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
@@ -73,9 +74,14 @@ const LOCAL_INITIAL_RESIZE_WAIT: Duration = Duration::from_millis(250);
 const LOCAL_INITIAL_RESIZE_POLL: Duration = Duration::from_millis(2);
 const ZMODEM_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 const ZMODEM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const ZMODEM_SHELL_RETURN_TIMEOUT: Duration = Duration::from_secs(5);
+const ZMODEM_SHELL_SETTLE: Duration = Duration::from_millis(300);
+const MAX_POST_TRANSFER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_ZMODEM_BUFFERED_BYTES: usize = 1024 * 1024;
 const MAX_ZMODEM_FILES: usize = 64;
 const ZMODEM_PROMPT_EVENT: &str = "terminal://zmodem-prompt";
+const ZMODEM_CONFLICT_EVENT: &str = "terminal://zmodem-conflict";
+static ZMODEM_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const ZMODEM_STATUS_EVENT: &str = "terminal://zmodem-status";
 const MAX_KEYBOARD_INTERACTIVE_CHALLENGE_ROUNDS: usize = 8;
 const MAX_OTP_ATTEMPTS: usize = 3;
@@ -112,6 +118,10 @@ enum SessionCommand {
     ZmodemResponse {
         detection_id: String,
         paths: Option<Vec<String>>,
+    },
+    ZmodemConflictResponse {
+        detection_id: String,
+        overwrite: bool,
     },
     CancelZmodem {
         detection_id: String,
@@ -388,6 +398,20 @@ impl SessionManager {
             .map_err(|error| AppError::new("terminal_transfer_error", error.to_string()))
     }
 
+    pub fn respond_zmodem_conflict(
+        &self,
+        session_id: &str,
+        detection_id: String,
+        overwrite: bool,
+    ) -> AppResult<()> {
+        let tx = self.session_tx(session_id)?;
+        tx.try_send(SessionCommand::ZmodemConflictResponse {
+            detection_id,
+            overwrite,
+        })
+        .map_err(|error| AppError::new("terminal_transfer_error", error.to_string()))
+    }
+
     pub fn resize_session(&self, session_id: &str, size: TerminalSize) -> AppResult<()> {
         let tx = self.session_tx(session_id)?;
         tx.try_send(SessionCommand::Resize(size))
@@ -544,6 +568,7 @@ async fn run_ssh_session(
                     Some(SessionCommand::Resize(new_size)) => size = new_size,
                     Some(SessionCommand::Input(_)) => {}
                     Some(SessionCommand::ZmodemResponse { .. })
+                    | Some(SessionCommand::ZmodemConflictResponse { .. })
                     | Some(SessionCommand::CancelZmodem { .. }) => {}
                 },
             }
@@ -620,6 +645,32 @@ struct ZmodemDownloadFile {
     size: u64,
     file: File,
     transferred: u64,
+    staged: Option<StagedZmodemOverwrite>,
+}
+
+struct StagedZmodemOverwrite {
+    path: Option<PathBuf>,
+    destination: PathBuf,
+    original_size: u64,
+    original_modified: Option<SystemTime>,
+    original_permissions: std::fs::Permissions,
+}
+
+impl Drop for StagedZmodemOverwrite {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+struct ZmodemPendingConflict {
+    name: String,
+    size: u64,
+    destination: PathBuf,
+    original_size: u64,
+    original_modified: Option<SystemTime>,
+    original_permissions: std::fs::Permissions,
 }
 
 struct ActiveZmodemDownload {
@@ -627,6 +678,7 @@ struct ActiveZmodemDownload {
     receiver: Option<ZmodemReceiver>,
     awaiting_selection: bool,
     destination_dir: Option<PathBuf>,
+    pending_conflict: Option<ZmodemPendingConflict>,
     buffered_wire: Vec<u8>,
     current: Option<ZmodemDownloadFile>,
     file_count: u32,
@@ -648,6 +700,7 @@ impl ActiveZmodemDownload {
             receiver: None,
             awaiting_selection: true,
             destination_dir: None,
+            pending_conflict: None,
             buffered_wire: detection.trailing,
             current: None,
             file_count: 0,
@@ -668,11 +721,86 @@ enum TransferPump {
     Completed,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ZmodemFinishKind {
+    Upload,
+    Download,
+}
+
+struct ZmodemInputGate {
+    kind: ZmodemFinishKind,
+    deadline: Instant,
+    release_at: Option<Instant>,
+    recovery_sent: bool,
+    queued_input: VecDeque<String>,
+    queued_bytes: usize,
+}
+
+impl ZmodemInputGate {
+    fn new(kind: ZmodemFinishKind) -> Self {
+        Self {
+            kind,
+            deadline: Instant::now() + ZMODEM_SHELL_RETURN_TIMEOUT,
+            release_at: None,
+            recovery_sent: false,
+            queued_input: VecDeque::new(),
+            queued_bytes: 0,
+        }
+    }
+
+    fn observe_output(&mut self, visible: &[u8], filter: &ZmodemFinishFilter) {
+        let peer_finished = self.kind == ZmodemFinishKind::Upload || !filter.awaiting_sender_oo();
+        if !peer_finished {
+            return;
+        }
+        if visible.iter().any(|byte| !byte.is_ascii_control()) && self.release_at.is_none() {
+            // `sz` writes OO just before restoring its PTY; `rz` can also
+            // print its final line before exiting. Give the shell a brief
+            // chance to regain the channel before replaying typed input.
+            self.release_at = Some(Instant::now() + ZMODEM_SHELL_SETTLE);
+        }
+    }
+
+    fn next_wait(&self) -> Duration {
+        self.release_at
+            .unwrap_or(self.deadline)
+            .saturating_duration_since(Instant::now())
+    }
+
+    fn ready(&self) -> bool {
+        self.release_at
+            .is_some_and(|instant| instant <= Instant::now())
+    }
+
+    fn queue(&mut self, data: String) -> bool {
+        if self.queued_bytes.saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
+            return false;
+        }
+        self.queued_bytes += data.len();
+        self.queued_input.push_back(data);
+        true
+    }
+}
+
 async fn abort_unconfirmed_zmodem(writer: &russh::ChannelWriteHalf<client::Msg>) -> AppResult<()> {
     writer
         .data_bytes(ZMODEM_ABORT_SEQUENCE.to_vec())
         .await
         .map_err(ssh_error)
+}
+
+fn rearm_zmodem_probes_for_input(
+    input: &str,
+    upload_probe: &mut ZmodemProbe,
+    download_probe: &mut ZmodemDownloadProbe,
+) {
+    if !input.is_empty() {
+        // A cancelled transfer may leave late protocol bytes on the PTY. The
+        // next deliberate keystroke starts a new interaction, so allow its
+        // rz/sz handshake to be detected without requiring an extra Ctrl+C.
+        upload_probe.rearm();
+        download_probe.rearm();
+    }
 }
 
 /// Establish one SSH connection, attach a PTY + shell, and pump I/O until the
@@ -756,9 +884,24 @@ async fn connect_and_run(
     let mut finish_filter = ZmodemFinishFilter::default();
     let mut transfer: Option<ActiveZmodem> = None;
     let mut download: Option<ActiveZmodemDownload> = None;
+    let mut input_gate: Option<ZmodemInputGate> = None;
     let mut pending_command = String::new();
     let mut close_requested = false;
-    let outcome = loop {
+    let outcome = 'connection: loop {
+        if input_gate.as_ref().is_some_and(ZmodemInputGate::ready) {
+            let mut gate = input_gate.take().expect("ready input gate exists");
+            while let Some(data) = gate.queued_input.pop_front() {
+                rearm_zmodem_probes_for_input(&data, &mut probe, &mut download_probe);
+                close_requested |= input_requests_clean_exit(&mut pending_command, &data);
+                if writer.data_bytes(normalize_input(&data)).await.is_err() {
+                    break 'connection if close_requested {
+                        ConnOutcome::Closed
+                    } else {
+                        ConnOutcome::Dropped
+                    };
+                }
+            }
+        }
         if transfer
             .as_ref()
             .is_some_and(|active| !active.awaiting_selection)
@@ -775,17 +918,25 @@ async fn connect_and_run(
                 Ok(TransferPump::Completed) => {
                     let completed = transfer.take().expect("completed transfer exists");
                     finish_filter.finish_transfer();
+                    input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                     if completed.cancel_requested {
                         probe.suppress_until_cancel();
                         download_probe.suppress_until_cancel();
                     }
                     if !completed.cancel_requested && !completed.buffered_wire.is_empty() {
                         let filtered = finish_filter.feed(&completed.buffered_wire);
+                        if let Some(gate) = input_gate.as_mut() {
+                            gate.observe_output(&filtered, &finish_filter);
+                        }
                         let tail = decode_with_carry(&mut utf8_carry, &filtered);
                         sink.push(&tail);
                     }
                 }
                 Err(error) => {
+                    if error.code != "ssh_error" && abort_unconfirmed_zmodem(&writer).await.is_err()
+                    {
+                        break ConnOutcome::Dropped;
+                    }
                     let detection_id = transfer
                         .as_ref()
                         .map(|active| active.detection_id.clone())
@@ -804,6 +955,7 @@ async fn connect_and_run(
                     );
                     finish_filter.finish_transfer();
                     transfer = None;
+                    input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                     probe.suppress_until_cancel();
                     download_probe.suppress_until_cancel();
                     if error.code == "ssh_error" {
@@ -815,7 +967,7 @@ async fn connect_and_run(
 
         if download
             .as_ref()
-            .is_some_and(|active| !active.awaiting_selection)
+            .is_some_and(|active| !active.awaiting_selection && active.pending_conflict.is_none())
         {
             let result = pump_zmodem_download(
                 app_handle,
@@ -830,8 +982,10 @@ async fn connect_and_run(
                     let completed = download.take().expect("completed download exists");
                     if completed.cancel_requested {
                         finish_filter.finish_transfer();
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                     } else {
                         finish_filter.finish_download_transfer();
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Download));
                     }
                     if completed.cancel_requested {
                         probe.suppress_until_cancel();
@@ -839,11 +993,18 @@ async fn connect_and_run(
                     }
                     if !completed.cancel_requested && !completed.buffered_wire.is_empty() {
                         let filtered = finish_filter.feed(&completed.buffered_wire);
+                        if let Some(gate) = input_gate.as_mut() {
+                            gate.observe_output(&filtered, &finish_filter);
+                        }
                         let tail = decode_with_carry(&mut utf8_carry, &filtered);
                         sink.push(&tail);
                     }
                 }
                 Err(error) => {
+                    if error.code != "ssh_error" && abort_unconfirmed_zmodem(&writer).await.is_err()
+                    {
+                        break ConnOutcome::Dropped;
+                    }
                     let detection_id = download
                         .as_ref()
                         .map(|active| active.detection_id.clone())
@@ -862,6 +1023,7 @@ async fn connect_and_run(
                     );
                     finish_filter.finish_transfer();
                     download = None;
+                    input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                     probe.suppress_until_cancel();
                     download_probe.suppress_until_cancel();
                     if error.code == "ssh_error" {
@@ -889,7 +1051,7 @@ async fn connect_and_run(
             })
             .or_else(|| {
                 download.as_ref().map(|active| {
-                    if active.awaiting_selection {
+                    if active.awaiting_selection || active.pending_conflict.is_some() {
                         active
                             .selection_deadline
                             .saturating_duration_since(Instant::now())
@@ -897,7 +1059,9 @@ async fn connect_and_run(
                         ZMODEM_IDLE_TIMEOUT.saturating_sub(active.last_activity.elapsed())
                     }
                 })
-            });
+            })
+            .or_else(|| input_gate.as_ref().map(ZmodemInputGate::next_wait))
+            .or_else(|| download_probe.trigger_flush_wait());
 
         tokio::select! {
             command = rx.recv() => match command {
@@ -913,7 +1077,9 @@ async fn connect_and_run(
                                 None, 0, None, Some("已终止远端 rz。".to_string()),
                             );
                             transfer = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
                             continue;
                         }
                         if !active.awaiting_selection && data.contains('\u{3}') {
@@ -935,12 +1101,14 @@ async fn connect_and_run(
                                 None, 0, None, Some("已终止远端 sz。".to_string()),
                             );
                             download = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
                             download_probe.suppress_until_cancel();
                             continue;
                         }
                         if !active.awaiting_selection && data.contains('\u{3}') {
                             active.cancel_requested = true;
+                            active.pending_conflict = None;
                             if let Some(receiver) = active.receiver.as_mut() {
                                 let _ = receiver.abort();
                             }
@@ -949,10 +1117,20 @@ async fn connect_and_run(
                         // reaches a terminal state; do not interleave keystrokes.
                         continue;
                     }
-                    if data.contains('\u{3}') {
-                        probe.rearm();
-                        download_probe.rearm();
+                    if let Some(gate) = input_gate.as_mut() {
+                        if data.contains('\u{3}') {
+                            gate.queued_input.clear();
+                            gate.queued_bytes = 0;
+                            if writer.data_bytes(vec![0x03]).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
+                            gate.release_at = Some(Instant::now() + ZMODEM_SHELL_SETTLE);
+                        } else if !gate.queue(data) {
+                            sink.push("\r\n输入过长，文件传输结束后待发送的内容已达到上限。\r\n");
+                        }
+                        continue;
                     }
+                    rearm_zmodem_probes_for_input(&data, &mut probe, &mut download_probe);
                     close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
                         break if close_requested { ConnOutcome::Closed } else { ConnOutcome::Dropped };
@@ -971,6 +1149,7 @@ async fn connect_and_run(
                                 0, None, Some("已取消保存位置选择，并终止远端 sz。".to_string()),
                             );
                             download = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
                             download_probe.suppress_until_cancel();
                             continue;
@@ -998,6 +1177,7 @@ async fn connect_and_run(
                                         None, 0, None, Some(error.to_string()),
                                     );
                                     download = None;
+                                    input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                                     probe.suppress_until_cancel();
                                     download_probe.suppress_until_cancel();
                                 }
@@ -1011,6 +1191,7 @@ async fn connect_and_run(
                                     None, 0, None, Some(error.message),
                                 );
                                 download = None;
+                                input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                                 probe.suppress_until_cancel();
                                 download_probe.suppress_until_cancel();
                             }
@@ -1031,7 +1212,9 @@ async fn connect_and_run(
                             0, None, Some("已取消文件选择，并终止远端 rz。".to_string()),
                         );
                         transfer = None;
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                         probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
                         continue;
                     };
                     match prepare_zmodem_files(paths).await {
@@ -1052,7 +1235,9 @@ async fn connect_and_run(
                                 );
                                 finish_filter.finish_transfer();
                                 transfer = None;
+                                input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                                 probe.suppress_until_cancel();
+                                download_probe.suppress_until_cancel();
                                 continue;
                             }
                             emit_zmodem_status(
@@ -1070,8 +1255,33 @@ async fn connect_and_run(
                                 None, 0, None, Some(error.message),
                             );
                             transfer = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
                         }
+                    }
+                }
+                Some(SessionCommand::ZmodemConflictResponse { detection_id, overwrite }) => {
+                    let Some(active) = download.as_mut().filter(|active| {
+                        active.detection_id == detection_id && active.pending_conflict.is_some()
+                    }) else {
+                        continue;
+                    };
+                    if let Err(error) = resolve_zmodem_download_conflict(
+                        app_handle, session_id, active, overwrite,
+                    ).await {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
+                        emit_zmodem_download_status(
+                            app_handle, session_id, detection_id, "failed", None, None, None,
+                            active.completed_bytes, Some(active.total), Some(error.message),
+                        );
+                        finish_filter.finish_transfer();
+                        download = None;
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
+                        probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
                     }
                 }
                 Some(SessionCommand::CancelZmodem { detection_id }) => {
@@ -1085,10 +1295,12 @@ async fn connect_and_run(
                                 0, None, Some("已取消保存位置选择，并终止远端 sz。".to_string()),
                             );
                             download = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
                             download_probe.suppress_until_cancel();
                         } else {
                             active.cancel_requested = true;
+                            active.pending_conflict = None;
                             if let Some(receiver) = active.receiver.as_mut() {
                                 let _ = receiver.abort();
                             }
@@ -1107,7 +1319,9 @@ async fn connect_and_run(
                             0, None, Some("已取消文件选择，并终止远端 rz。".to_string()),
                         );
                         transfer = None;
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                         probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
                     } else {
                         active.cancel_requested = true;
                         active.sender.abort();
@@ -1180,6 +1394,9 @@ async fn connect_and_run(
             event = read_rx.recv() => match event {
                 Some(SshReadEvent::ExtendedData(data)) => {
                     let filtered = finish_filter.feed(&data);
+                    if let Some(gate) = input_gate.as_mut() {
+                        gate.observe_output(&filtered, &finish_filter);
+                    }
                     let text = decode_with_carry(&mut utf8_carry, &filtered);
                     sink.push(&text);
                 }
@@ -1190,15 +1407,20 @@ async fn connect_and_run(
                             if active.buffered_wire.len().saturating_add(data.len()) <= MAX_ZMODEM_BUFFERED_BYTES {
                                 active.buffered_wire.extend_from_slice(&data);
                             } else {
+                                if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                    break ConnOutcome::Dropped;
+                                }
                                 let detection_id = active.detection_id.clone();
                                 emit_zmodem_status(
                                     app_handle, session_id, detection_id, "failed", None, None,
                                     None, 0, None,
-                                    Some("远端响应过多，请中断 rz 后重试。".to_string()),
+                                    Some("远端响应过多，已终止 rz 传输，请重试。".to_string()),
                                 );
                                 finish_filter.finish_transfer();
                                 transfer = None;
+                                input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                                 probe.suppress_until_cancel();
+                                download_probe.suppress_until_cancel();
                             }
                         } else if active.buffered_wire.len().saturating_add(data.len())
                             <= MAX_ZMODEM_BUFFERED_BYTES
@@ -1209,6 +1431,9 @@ async fn connect_and_run(
                             // ready to consume them; never discard the suffix.
                             active.buffered_wire.extend_from_slice(&data);
                         } else {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
                             let detection_id = active.detection_id.clone();
                             emit_zmodem_status(
                                 app_handle,
@@ -1224,13 +1449,18 @@ async fn connect_and_run(
                             );
                             finish_filter.finish_transfer();
                             transfer = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
                         }
                     } else if let Some(active) = download.as_mut() {
                         active.last_activity = Instant::now();
                         if active.buffered_wire.len().saturating_add(data.len()) <= MAX_ZMODEM_BUFFERED_BYTES {
                             active.buffered_wire.extend_from_slice(&data);
                         } else {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
                             let detection_id = active.detection_id.clone();
                             emit_zmodem_download_status(
                                 app_handle,
@@ -1248,11 +1478,15 @@ async fn connect_and_run(
                             );
                             finish_filter.finish_transfer();
                             download = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                             probe.suppress_until_cancel();
                             download_probe.suppress_until_cancel();
                         }
                     } else {
                         let filtered = finish_filter.feed(&data);
+                        if let Some(gate) = input_gate.as_mut() {
+                            gate.observe_output(&filtered, &finish_filter);
+                        }
                         let download_probed = download_probe.feed(&filtered);
                         let probed = probe.feed(&download_probed.text);
                         if !probed.text.is_empty() {
@@ -1333,40 +1567,93 @@ async fn connect_and_run(
                         "传输无响应，已取消本次传输。"
                     };
                     if active.awaiting_selection {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
                         emit_zmodem_status(
                             app_handle, session_id, detection_id, "cancelled", None, None,
                             None, 0, None, Some(message.to_string()),
                         );
                         transfer = None;
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                         probe.suppress_until_cancel();
+                        download_probe.suppress_until_cancel();
                     } else {
                         // The next loop iteration writes the protocol cancel
                         // sequence and receives the sender's Aborted event.
                         active.last_activity = Instant::now();
                     }
                 } else if let Some(active) = download.as_mut() {
+                    if active.pending_conflict.is_some() {
+                        let detection_id = active.detection_id.clone();
+                        if let Err(error) = resolve_zmodem_download_conflict(
+                            app_handle, session_id, active, false,
+                        ).await {
+                            if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                                break ConnOutcome::Dropped;
+                            }
+                            emit_zmodem_download_status(
+                                app_handle, session_id, detection_id, "failed", None, None,
+                                None, active.completed_bytes, Some(active.total),
+                                Some(error.message),
+                            );
+                            finish_filter.finish_transfer();
+                            download = None;
+                            input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
+                            probe.suppress_until_cancel();
+                            download_probe.suppress_until_cancel();
+                        }
+                        continue;
+                    }
                     let detection_id = active.detection_id.clone();
                     let message = if active.awaiting_selection {
                         "保存位置选择超时，已取消本次请求。"
                     } else {
                         active.cancel_requested = true;
+                        active.pending_conflict = None;
                         if let Some(receiver) = active.receiver.as_mut() {
                             let _ = receiver.abort();
                         }
                         "传输无响应，已取消本次下载。"
                     };
                     if active.awaiting_selection {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
                         emit_zmodem_download_status(
                             app_handle, session_id, detection_id, "cancelled", None, None,
                             None, 0, None, Some(message.to_string()),
                         );
                         download = None;
+                        input_gate = Some(ZmodemInputGate::new(ZmodemFinishKind::Upload));
                         probe.suppress_until_cancel();
                         download_probe.suppress_until_cancel();
                     } else {
                         // The next loop iteration sends the protocol cancel
                         // sequence and receives the sender's Aborted event.
                         active.last_activity = Instant::now();
+                    }
+                } else if let Some(gate) = input_gate.as_mut()
+                    && !gate.ready()
+                {
+                    if gate.kind == ZmodemFinishKind::Download
+                        && finish_filter.awaiting_sender_oo()
+                        && !gate.recovery_sent
+                    {
+                        if abort_unconfirmed_zmodem(&writer).await.is_err() {
+                            break ConnOutcome::Dropped;
+                        }
+                        gate.recovery_sent = true;
+                        gate.release_at = Some(Instant::now() + ZMODEM_SHELL_SETTLE);
+                    } else {
+                        gate.release_at = Some(Instant::now());
+                    }
+                } else {
+                    let text = download_probe.flush_stale_trigger();
+                    if !text.is_empty() {
+                        let visible = probe.feed(&text).text;
+                        let visible = decode_with_carry(&mut utf8_carry, &visible);
+                        sink.push(&visible);
                     }
                 }
             }
@@ -1512,6 +1799,80 @@ async fn prepare_zmodem_download_directory(paths: Vec<String>) -> AppResult<Path
         ));
     }
     Ok(path)
+}
+
+fn zmodem_stage_path(directory: &std::path::Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let sequence = ZMODEM_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    directory.join(format!(
+        ".dssh-zmodem-{}-{nanos}-{sequence}.part",
+        std::process::id()
+    ))
+}
+
+async fn stage_zmodem_overwrite(
+    conflict: &ZmodemPendingConflict,
+) -> AppResult<(File, StagedZmodemOverwrite)> {
+    let directory = conflict
+        .destination
+        .parent()
+        .ok_or_else(|| AppError::new("zmodem_file_write_error", "无法确定下载文件所在目录。"))?;
+    for _ in 0..8 {
+        let path = zmodem_stage_path(directory);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => {
+                return Ok((
+                    file,
+                    StagedZmodemOverwrite {
+                        path: Some(path),
+                        destination: conflict.destination.clone(),
+                        original_size: conflict.original_size,
+                        original_modified: conflict.original_modified,
+                        original_permissions: conflict.original_permissions.clone(),
+                    },
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(AppError::new("zmodem_file_write_error", error.to_string())),
+        }
+    }
+    Err(AppError::new(
+        "zmodem_file_write_error",
+        "无法创建下载临时文件，请重试。",
+    ))
+}
+
+async fn finish_staged_zmodem_overwrite(staged: &mut StagedZmodemOverwrite) -> AppResult<()> {
+    let metadata = tokio::fs::symlink_metadata(&staged.destination)
+        .await
+        .map_err(|error| AppError::new("zmodem_file_write_error", error.to_string()))?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() != staged.original_size
+        || metadata.modified().ok() != staged.original_modified
+    {
+        return Err(AppError::new(
+            "zmodem_file_changed",
+            "同名本地文件在下载过程中发生变化，已保留原文件。",
+        ));
+    }
+    let source = staged.path.as_ref().expect("staged download has a path");
+    tokio::fs::set_permissions(source, staged.original_permissions.clone())
+        .await
+        .map_err(|error| AppError::new("zmodem_file_write_error", error.to_string()))?;
+    tokio::fs::rename(source, &staged.destination)
+        .await
+        .map_err(|error| AppError::new("zmodem_file_write_error", error.to_string()))?;
+    staged.path = None;
+    Ok(())
 }
 
 fn zmodem_download_file_name(name: &[u8]) -> AppResult<String> {
@@ -1772,6 +2133,55 @@ enum ZmodemDownloadAction {
     Unsupported,
 }
 
+async fn resolve_zmodem_download_conflict(
+    app_handle: &AppHandle,
+    session_id: &str,
+    transfer: &mut ActiveZmodemDownload,
+    overwrite: bool,
+) -> AppResult<()> {
+    let conflict = transfer
+        .pending_conflict
+        .take()
+        .ok_or_else(|| AppError::new("zmodem_protocol_error", "没有等待处理的同名下载文件。"))?;
+    let receiver = transfer
+        .receiver
+        .as_mut()
+        .expect("receiver exists while resolving a download conflict");
+    if overwrite {
+        let (file, staged) = stage_zmodem_overwrite(&conflict).await?;
+        if let Err(error) = receiver.accept_file_at(0) {
+            drop(file);
+            return Err(AppError::new("zmodem_protocol_error", error.to_string()));
+        }
+        transfer.current = Some(ZmodemDownloadFile {
+            name: conflict.name.clone(),
+            size: conflict.size,
+            file,
+            transferred: 0,
+            staged: Some(staged),
+        });
+    } else {
+        receiver
+            .skip_file()
+            .map_err(|error| AppError::new("zmodem_protocol_error", error.to_string()))?;
+        transfer.skipped_files += 1;
+    }
+    transfer.last_activity = Instant::now();
+    emit_zmodem_download_status(
+        app_handle,
+        session_id,
+        transfer.detection_id.clone(),
+        "transferring",
+        Some(conflict.name),
+        Some(transfer.completed_files + 1),
+        Some(transfer.file_count),
+        transfer.completed_bytes,
+        Some(transfer.total),
+        (!overwrite).then(|| "本地已有同名文件，已跳过。".to_string()),
+    );
+    Ok(())
+}
+
 async fn pump_zmodem_download(
     app_handle: &AppHandle,
     session_id: &str,
@@ -1901,6 +2311,7 @@ async fn pump_zmodem_download(
                             size,
                             file,
                             transferred: 0,
+                            staged: None,
                         });
                         emit_zmodem_download_status(
                             app_handle,
@@ -1916,27 +2327,69 @@ async fn pump_zmodem_download(
                         );
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        transfer
-                            .receiver
-                            .as_mut()
-                            .expect("receiver exists while downloading")
-                            .skip_file()
-                            .map_err(|protocol_error| {
-                                AppError::new("zmodem_protocol_error", protocol_error.to_string())
-                            })?;
-                        transfer.skipped_files += 1;
+                        let metadata =
+                            tokio::fs::symlink_metadata(&destination)
+                                .await
+                                .map_err(|error| {
+                                    AppError::new("zmodem_file_write_error", error.to_string())
+                                })?;
+                        if !metadata.is_file() || metadata.file_type().is_symlink() {
+                            transfer
+                                .receiver
+                                .as_mut()
+                                .expect("receiver exists while downloading")
+                                .skip_file()
+                                .map_err(|error| {
+                                    AppError::new("zmodem_protocol_error", error.to_string())
+                                })?;
+                            transfer.skipped_files += 1;
+                            emit_zmodem_download_status(
+                                app_handle,
+                                session_id,
+                                transfer.detection_id.clone(),
+                                "transferring",
+                                Some(name),
+                                Some(transfer.completed_files + 1),
+                                Some(transfer.file_count),
+                                transfer.completed_bytes,
+                                Some(transfer.total),
+                                Some("本地同名路径不是普通文件，已安全跳过。".to_string()),
+                            );
+                            transfer.last_activity = Instant::now();
+                            continue;
+                        }
+                        transfer.pending_conflict = Some(ZmodemPendingConflict {
+                            name: name.clone(),
+                            size,
+                            destination,
+                            original_size: metadata.len(),
+                            original_modified: metadata.modified().ok(),
+                            original_permissions: metadata.permissions(),
+                        });
+                        transfer.selection_deadline = Instant::now() + ZMODEM_PROMPT_TIMEOUT;
                         emit_zmodem_download_status(
                             app_handle,
                             session_id,
                             transfer.detection_id.clone(),
-                            "transferring",
-                            Some(name),
-                            Some(transfer.file_count),
+                            "awaitingConflict",
+                            Some(name.clone()),
+                            Some(transfer.completed_files + 1),
                             Some(transfer.file_count),
                             transfer.completed_bytes,
                             Some(transfer.total),
-                            Some("本地已有同名文件，已跳过。".to_string()),
+                            Some("本地已有同名文件，请选择覆盖或跳过。".to_string()),
                         );
+                        let _ = app_handle.emit(
+                            ZMODEM_CONFLICT_EVENT,
+                            TerminalTransferConflictEvent {
+                                session_id: session_id.to_string(),
+                                detection_id: transfer.detection_id.clone(),
+                                file_name: name,
+                                file_size: size,
+                                file_index: transfer.file_count,
+                            },
+                        );
+                        return Ok(TransferPump::Idle);
                     }
                     Err(error) => {
                         return Err(AppError::new("zmodem_file_write_error", error.to_string()));
@@ -1945,12 +2398,20 @@ async fn pump_zmodem_download(
                 transfer.last_activity = Instant::now();
             }
             ZmodemDownloadAction::FileCompleted => {
-                if let Some(file) = transfer.current.take() {
+                if let Some(mut file) = transfer.current.take() {
                     if file.transferred != file.size {
                         return Err(AppError::new(
                             "zmodem_protocol_error",
                             format!("下载文件大小不完整：{}", file.name),
                         ));
+                    }
+                    if let Some(mut staged) = file.staged.take() {
+                        let sync_result = file.file.sync_all().await;
+                        drop(file.file);
+                        sync_result.map_err(|error| {
+                            AppError::new("zmodem_file_write_error", error.to_string())
+                        })?;
+                        finish_staged_zmodem_overwrite(&mut staged).await?;
                     }
                     transfer.completed_bytes =
                         transfer.completed_bytes.saturating_add(file.transferred);
@@ -2198,7 +2659,9 @@ fn run_local_session(
                     .and_then(|_| writer.flush())
                     .map_err(local_terminal_error)?;
             }
-            SessionCommand::ZmodemResponse { .. } | SessionCommand::CancelZmodem { .. } => {}
+            SessionCommand::ZmodemResponse { .. }
+            | SessionCommand::ZmodemConflictResponse { .. }
+            | SessionCommand::CancelZmodem { .. } => {}
             SessionCommand::Resize(size) => {
                 pair.master
                     .resize(pty_size(&size))
@@ -2243,8 +2706,9 @@ fn wait_for_initial_local_resize(
                 break;
             }
             Ok(SessionCommand::Input(data)) => pending_input.push(data),
-            Ok(SessionCommand::ZmodemResponse { .. }) | Ok(SessionCommand::CancelZmodem { .. }) => {
-            }
+            Ok(SessionCommand::ZmodemResponse { .. })
+            | Ok(SessionCommand::ZmodemConflictResponse { .. })
+            | Ok(SessionCommand::CancelZmodem { .. }) => {}
             Ok(SessionCommand::Close) => return None,
             Ok(SessionCommand::CancelReconnect) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => return None,
@@ -2972,11 +3436,84 @@ mod tests {
 
     use super::{
         OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
-        SessionCommand, input_requests_clean_exit, login_shell_args, normalize_input,
-        remaining_otp_attempts, resolve_remote_forward_target, wait_for_initial_local_resize,
-        zmodem_download_file_name,
+        SessionCommand, ZmodemDownloadFile, ZmodemFinishKind, ZmodemInputGate,
+        ZmodemPendingConflict, finish_staged_zmodem_overwrite, input_requests_clean_exit,
+        login_shell_args, normalize_input, rearm_zmodem_probes_for_input, remaining_otp_attempts,
+        resolve_remote_forward_target, stage_zmodem_overwrite, wait_for_initial_local_resize,
+        zmodem_download_file_name, zmodem_stage_path,
     };
     use crate::models::terminal::TerminalSize;
+    use crate::ssh::zmodem::{ZmodemDownloadProbe, ZmodemFinishFilter, ZmodemProbe};
+    use tokio::io::AsyncWriteExt;
+    use zmodem2::{Action, Receiver, Sender};
+
+    #[test]
+    fn finished_sz_keeps_typed_command_until_oo_and_shell_return() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_download_transfer();
+        let mut gate = ZmodemInputGate::new(ZmodemFinishKind::Download);
+        for key in ["s", "z", "\r"] {
+            assert!(gate.queue(key.to_string()));
+        }
+
+        let first = filter.feed(b"\r\x8aO");
+        gate.observe_output(&first, &filter);
+        assert!(!gate.ready());
+        assert!(filter.awaiting_sender_oo());
+
+        let second = filter.feed(b"O\r\n");
+        gate.observe_output(&second, &filter);
+        assert_eq!(second, b"\r\n");
+        assert!(!filter.awaiting_sender_oo());
+        assert!(gate.release_at.is_none());
+
+        let prompt = filter.feed(b"user@host:~$ ");
+        gate.observe_output(&prompt, &filter);
+        assert_eq!(prompt, b"user@host:~$ ");
+        assert!(!gate.ready());
+        assert_eq!(gate.queued_input.into_iter().collect::<String>(), "sz\r");
+    }
+
+    #[test]
+    fn finished_rz_does_not_replay_input_on_protocol_trailer_alone() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_transfer();
+        let mut gate = ZmodemInputGate::new(ZmodemFinishKind::Upload);
+        assert!(gate.queue("s".to_string()));
+        let trailer = filter.feed(b"\r\x8a\x11");
+        gate.observe_output(&trailer, &filter);
+        assert!(!gate.ready());
+        assert!(gate.release_at.is_none());
+
+        let prompt = filter.feed(b"user@host:~$ ");
+        gate.observe_output(&prompt, &filter);
+        assert_eq!(prompt, b"user@host:~$ ");
+        assert!(gate.release_at.is_some());
+        assert!(!gate.ready());
+    }
+
+    #[test]
+    fn repeated_r_echo_is_not_lost_when_each_keystroke_rearms_probes() {
+        let mut upload_probe = ZmodemProbe::default();
+        let mut download_probe = ZmodemDownloadProbe::default();
+        let mut finish_filter = ZmodemFinishFilter::default();
+        finish_filter.finish_download_transfer();
+        let prompt = finish_filter.feed(b"OO\r\n[j3xie@host ~]$ ");
+        let prompt = download_probe.feed(&prompt);
+        assert_eq!(
+            upload_probe.feed(&prompt.text).text,
+            b"\r\n[j3xie@host ~]$ "
+        );
+        for key in ["r", "r", "\u{7f}"] {
+            rearm_zmodem_probes_for_input(key, &mut upload_probe, &mut download_probe);
+            let filtered = finish_filter.feed(key.as_bytes());
+            let download_output = download_probe.feed(&filtered);
+            let visible = upload_probe.feed(&download_output.text);
+            assert_eq!(visible.text, key.as_bytes());
+            assert!(visible.detection.is_none());
+            assert!(download_output.detection.is_none());
+        }
+    }
 
     #[test]
     fn common_local_shells_start_as_login_shells() {
@@ -3064,6 +3601,34 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_zmodem_probes_detect_the_next_rz_and_sz_without_ctrl_c() {
+        let mut upload_probe = ZmodemProbe::default();
+        let mut download_probe = ZmodemDownloadProbe::default();
+        upload_probe.suppress_until_cancel();
+        download_probe.suppress_until_cancel();
+
+        let mut receiver = Receiver::new().unwrap();
+        let rz_handshake = match receiver.poll() {
+            Action::WriteWire(bytes) => bytes.to_vec(),
+            action => panic!("expected rz handshake, got {action:?}"),
+        };
+        let mut sender = Sender::new().unwrap();
+        let sz_handshake = match sender.poll() {
+            Action::WriteWire(bytes) => bytes.to_vec(),
+            action => panic!("expected sz handshake, got {action:?}"),
+        };
+
+        rearm_zmodem_probes_for_input("", &mut upload_probe, &mut download_probe);
+        assert!(upload_probe.feed(&rz_handshake).detection.is_none());
+        assert!(download_probe.feed(&sz_handshake).detection.is_none());
+
+        rearm_zmodem_probes_for_input("rz\r", &mut upload_probe, &mut download_probe);
+        assert!(upload_probe.feed(&rz_handshake).detection.is_some());
+        rearm_zmodem_probes_for_input("sz\r", &mut upload_probe, &mut download_probe);
+        assert!(download_probe.feed(&sz_handshake).detection.is_some());
+    }
+
+    #[test]
     fn clean_exit_detection_handles_chunked_commands_and_ctrl_d() {
         let mut pending = String::new();
         assert!(!input_requests_clean_exit(&mut pending, "ex"));
@@ -3107,6 +3672,115 @@ mod tests {
                 "{unsafe_name:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn staged_sz_overwrite_preserves_original_until_download_completes() {
+        let directory = zmodem_stage_path(&std::env::temp_dir());
+        std::fs::create_dir(&directory).unwrap();
+        let destination = directory.join("payload.txt");
+        std::fs::write(&destination, b"old content").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let metadata = std::fs::metadata(&destination).unwrap();
+        let conflict = ZmodemPendingConflict {
+            name: "payload.txt".to_string(),
+            size: 11,
+            destination: destination.clone(),
+            original_size: metadata.len(),
+            original_modified: metadata.modified().ok(),
+            original_permissions: metadata.permissions(),
+        };
+
+        let (mut file, mut staged) = stage_zmodem_overwrite(&conflict).await.unwrap();
+        let stage_path = staged.path.clone().unwrap();
+        file.write_all(b"new content").await.unwrap();
+        file.sync_all().await.unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old content");
+        drop(file);
+        finish_staged_zmodem_overwrite(&mut staged).await.unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new content");
+        assert!(!stage_path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&destination)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_sz_overwrite_removes_only_its_temporary_file() {
+        let directory = zmodem_stage_path(&std::env::temp_dir());
+        std::fs::create_dir(&directory).unwrap();
+        let destination = directory.join("payload.txt");
+        std::fs::write(&destination, b"old content").unwrap();
+        let metadata = std::fs::metadata(&destination).unwrap();
+        let conflict = ZmodemPendingConflict {
+            name: "payload.txt".to_string(),
+            size: 11,
+            destination: destination.clone(),
+            original_size: metadata.len(),
+            original_modified: metadata.modified().ok(),
+            original_permissions: metadata.permissions(),
+        };
+
+        let (mut file, staged) = stage_zmodem_overwrite(&conflict).await.unwrap();
+        let stage_path = staged.path.clone().unwrap();
+        file.write_all(b"incomplete").await.unwrap();
+        drop(ZmodemDownloadFile {
+            name: conflict.name,
+            size: conflict.size,
+            file,
+            transferred: 10,
+            staged: Some(staged),
+        });
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old content");
+        assert!(!stage_path.exists());
+
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sz_overwrite_refuses_to_replace_a_changed_local_file() {
+        let directory = zmodem_stage_path(&std::env::temp_dir());
+        std::fs::create_dir(&directory).unwrap();
+        let destination = directory.join("payload.txt");
+        std::fs::write(&destination, b"old content").unwrap();
+        let metadata = std::fs::metadata(&destination).unwrap();
+        let conflict = ZmodemPendingConflict {
+            name: "payload.txt".to_string(),
+            size: 11,
+            destination: destination.clone(),
+            original_size: metadata.len(),
+            original_modified: metadata.modified().ok(),
+            original_permissions: metadata.permissions(),
+        };
+
+        let (mut file, mut staged) = stage_zmodem_overwrite(&conflict).await.unwrap();
+        file.write_all(b"new content").await.unwrap();
+        file.sync_all().await.unwrap();
+        drop(file);
+        std::fs::write(&destination, b"changed by another process").unwrap();
+        assert!(finish_staged_zmodem_overwrite(&mut staged).await.is_err());
+        drop(staged);
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"changed by another process"
+        );
+
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

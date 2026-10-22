@@ -13,14 +13,17 @@ import {
   onTerminalOutput,
   onTerminalStatus,
   onTerminalTransferPrompt,
+  onTerminalTransferConflict,
   onTerminalTransferStatus,
   readSshSessionOutput,
   respondZmodemPrompt,
+  respondZmodemConflict,
   resizeSshSession,
   startLocalSession as startLocalSessionCommand,
   startSshSession,
   writeSshSession,
   type TerminalTransferStatusEvent,
+  type TerminalTransferConflictEvent,
 } from "../services/sshSessionService";
 
 export type TerminalOutputListener = (data: string) => void;
@@ -84,6 +87,7 @@ export function useTerminalSessions() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
   const [terminalTransfers, setTerminalTransfers] = useState<TerminalTransferStatusEvent[]>([]);
+  const [terminalConflicts, setTerminalConflicts] = useState<TerminalTransferConflictEvent[]>([]);
   const [commandActivity, setCommandActivity] = useState<ReadonlySet<string>>(() => new Set());
   const pendingZmodemPromptsRef = useRef(new Set<string>());
   const manualReconnectsRef = useRef(new Set<string>());
@@ -265,6 +269,7 @@ export function useTerminalSessions() {
       );
       if (event.status !== "connected") {
         updateCommandActivity(event.sessionId, "idle");
+        setTerminalConflicts((current) => current.filter((item) => item.sessionId !== event.sessionId));
       }
       if (event.message) {
         // Reconnect notices read as yellow, connected as green, failures as red.
@@ -305,8 +310,19 @@ export function useTerminalSessions() {
         }
       })();
     });
+    const conflictPromise = onTerminalTransferConflict((event) => {
+      if (!hasTerminalInstance(event.sessionId)) return;
+      setTerminalConflicts((current) => current.some((item) =>
+        item.sessionId === event.sessionId && item.detectionId === event.detectionId && item.fileIndex === event.fileIndex,
+      ) ? current : [...current, event]);
+    });
     const statusPromise = onTerminalTransferStatus((event) => {
       if (!hasTerminalInstance(event.sessionId)) return;
+      if (event.state !== "awaitingConflict") {
+        setTerminalConflicts((current) => current.filter((item) =>
+          item.sessionId !== event.sessionId || item.detectionId !== event.detectionId,
+        ));
+      }
       setTerminalTransfers((current) => {
         const next = current.filter((item) => item.detectionId !== event.detectionId);
         return [...next, event];
@@ -319,6 +335,7 @@ export function useTerminalSessions() {
     });
     return () => {
       void promptPromise.then((unlisten) => unlisten());
+      void conflictPromise.then((unlisten) => unlisten());
       void statusPromise.then((unlisten) => unlisten());
     };
   }, []);
@@ -406,6 +423,11 @@ export function useTerminalSessions() {
     });
   }, []);
 
+  const resolveTerminalConflict = useCallback(async (conflict: TerminalTransferConflictEvent, overwrite: boolean) => {
+    await respondZmodemConflict(conflict.sessionId, conflict.detectionId, overwrite);
+    setTerminalConflicts((current) => current.filter((item) => item !== conflict));
+  }, []);
+
   const writeToActiveSession = useCallback(
     async (data: string) => {
       if (!activeSessionId) {
@@ -454,6 +476,7 @@ export function useTerminalSessions() {
     listenersRef.current.delete(sessionId);
     activityTrackersRef.current.delete(sessionId);
     latestSessionStatusesRef.current.delete(sessionId);
+    setTerminalConflicts((current) => current.filter((item) => item.sessionId !== sessionId));
     setCommandActivity((current) => {
       if (!current.has(sessionId)) return current;
       const next = new Set(current);
@@ -480,7 +503,9 @@ export function useTerminalSessions() {
     resizeSession,
     sessions,
     terminalTransfers,
+    terminalConflicts,
     cancelTerminalTransfer,
+    resolveTerminalConflict,
     commandActivity,
     setActiveSessionId,
     startLocalSession,

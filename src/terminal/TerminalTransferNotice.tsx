@@ -11,11 +11,13 @@ export function TerminalTransferNotice({ transfers, onCancel }: TerminalTransfer
   return (
     <div aria-live="polite" className="terminal-transfer-notices">
       {transfers.map((transfer) => {
-        const isActive = transfer.state === "transferring" || transfer.state === "awaitingSelection";
+        const isActive = transfer.state === "transferring" || transfer.state === "awaitingSelection" || transfer.state === "awaitingConflict";
         const percentage = transfer.total && transfer.total > 0
           ? Math.min(100, Math.round((transfer.transferred / transfer.total) * 100))
           : 0;
-        const title = transfer.state === "awaitingSelection"
+        const title = transfer.state === "awaitingConflict"
+          ? "等待处理同名文件"
+          : transfer.state === "awaitingSelection"
           ? transfer.direction === "download" ? "等待选择保存目录" : "等待选择上传文件"
           : transfer.state === "transferring"
             ? transfer.direction === "download" ? "正在通过 sz 下载" : "正在通过 rz 上传"

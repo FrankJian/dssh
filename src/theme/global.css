@@ -9740,6 +9740,10 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   pointer-events: none;
 }
 
+.terminal-transfer-conflict-backdrop {
+  z-index: 1300;
+}
+
 .terminal-transfer-notice {
   padding: var(--space-3);
   border: 1px solid var(--glass-border);

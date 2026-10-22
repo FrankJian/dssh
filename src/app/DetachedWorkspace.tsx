@@ -7,6 +7,8 @@ import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings"
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
+import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { serializeTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
@@ -481,6 +483,16 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         />
       ) : null}
       <ToastHost />
+      {!appLock.status?.locked ? (
+        <TerminalTransferNotice transfers={terminal.terminalTransfers} onCancel={terminal.cancelTerminalTransfer} />
+      ) : null}
+      {!appLock.status?.locked && terminal.terminalConflicts[0] ? (
+        <TerminalTransferConflictDialog
+          conflict={terminal.terminalConflicts[0]}
+          key={`${terminal.terminalConflicts[0].sessionId}:${terminal.terminalConflicts[0].detectionId}:${terminal.terminalConflicts[0].fileIndex}`}
+          onResolve={terminal.resolveTerminalConflict}
+        />
+      ) : null}
       {appLock.status?.locked ? <AppLockScreen onUnlock={appLock.unlock} /> : null}
     </div>
   );

@@ -65,7 +65,7 @@
 ### 6. 终端 ZMODEM 与 JumpServer 文件传输
 
 - 终端 `rz` 上传与 `sz` 下载首版已接入：Rust 侧原始字节探测/分流、原生文件选择或保存目录选择、分块读写、进度与取消。
-  `sz` 下载不覆盖同名本地文件，并会拒绝不安全的远端文件名。仍需用真实 SSH `rz`/`sz`/`lrzsz` 做互操作与 Windows/macOS 验收；实现细节和边界见
+  `sz` 下载遇到同名本地文件会暂停并询问覆盖或跳过（默认跳过）；覆盖先写临时文件，完整接收后才替换原文件。远端文件名仍经过安全校验。仍需用真实 SSH `rz`/`sz`/`lrzsz` 做互操作与 Windows/macOS 验收；实现细节和边界见
   [功能规格](features/zmodem-jumpserver-transfer.md)。
 - JumpServer SFTP 虚拟路径诊断与指定资产终端上传入口尚未实现；上传到暂存目录后自动搬运不进入首版。
 

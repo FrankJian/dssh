@@ -92,6 +92,7 @@ pub fn run() {
             commands::sessions::start_ssh_session,
             commands::sessions::write_ssh_session,
             commands::sessions::respond_zmodem_prompt,
+            commands::sessions::respond_zmodem_conflict,
             commands::sessions::cancel_zmodem_transfer,
             commands::sessions::resize_ssh_session,
             commands::sessions::close_ssh_session,

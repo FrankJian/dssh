@@ -38,8 +38,16 @@ export interface TerminalTransferPromptEvent {
   direction: "upload" | "download";
 }
 
+export interface TerminalTransferConflictEvent {
+  sessionId: string;
+  detectionId: string;
+  fileName: string;
+  fileSize: number;
+  fileIndex: number;
+}
+
 export interface TerminalTransferStatusEvent extends TerminalTransferPromptEvent {
-  state: "awaitingSelection" | "transferring" | "completed" | "cancelled" | "failed";
+  state: "awaitingSelection" | "awaitingConflict" | "transferring" | "completed" | "cancelled" | "failed";
   fileName?: string;
   fileIndex?: number;
   fileCount?: number;
@@ -78,6 +86,10 @@ export function respondZmodemPrompt(
 
 export function cancelZmodemTransfer(sessionId: string, detectionId: string) {
   return invokeCommand<void>("cancel_zmodem_transfer", { sessionId, detectionId });
+}
+
+export function respondZmodemConflict(sessionId: string, detectionId: string, overwrite: boolean) {
+  return invokeCommand<void>("respond_zmodem_conflict", { sessionId, detectionId, overwrite });
 }
 
 export function resizeSshSession(request: ResizeSshSessionRequest) {
@@ -171,4 +183,8 @@ export function onTerminalTransferPrompt(handler: (event: TerminalTransferPrompt
 
 export function onTerminalTransferStatus(handler: (event: TerminalTransferStatusEvent) => void) {
   return listen<TerminalTransferStatusEvent>("terminal://zmodem-status", (event) => handler(event.payload));
+}
+
+export function onTerminalTransferConflict(handler: (event: TerminalTransferConflictEvent) => void) {
+  return listen<TerminalTransferConflictEvent>("terminal://zmodem-conflict", (event) => handler(event.payload));
 }

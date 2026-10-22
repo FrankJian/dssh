@@ -43,6 +43,8 @@ pub(crate) async fn flush_receiver_output<E, F: std::future::Future<Output = Res
 const MAX_CANDIDATE_BYTES: usize = 32;
 const MAX_MARKER_BYTES: usize = 6;
 const FINISH_FRAME_GRACE: Duration = Duration::from_secs(2);
+const DOWNLOAD_FINISH_FRAME_GRACE: Duration = Duration::from_secs(5);
+const DOWNLOAD_TRIGGER_GRACE: Duration = Duration::from_millis(250);
 const ZFIN_HEX_MARKERS: [&[u8]; 2] = [b"**\x18B08", b"*\x18B08"];
 const LRZSZ_DOWNLOAD_TRIGGER: &[u8] = b"rz\r";
 
@@ -114,7 +116,12 @@ impl ZmodemFinishFilter {
     /// output, and can arrive separately from the final header or prompt.
     pub fn finish_download_transfer(&mut self) {
         self.finish_transfer();
+        self.active_until = Some(Instant::now() + DOWNLOAD_FINISH_FRAME_GRACE);
         self.awaiting_sender_oo = true;
+    }
+
+    pub fn awaiting_sender_oo(&self) -> bool {
+        self.awaiting_sender_oo
     }
 
     pub fn feed(&mut self, input: &[u8]) -> Vec<u8> {
@@ -160,16 +167,15 @@ impl ZmodemFinishFilter {
                 _ => self.trailer = HexTrailer::None,
             }
 
-            if self.awaiting_sender_oo {
-                if first != b'O' {
-                    self.awaiting_sender_oo = false;
-                } else if self.pending.len() == 1 {
+            if self.awaiting_sender_oo && first == b'O' {
+                if self.pending.len() == 1 {
                     // Keep one byte until the second `O` arrives, so a
                     // packet boundary cannot leak half the final response.
                     break;
                 } else if self.pending[1] == b'O' {
                     self.pending.drain(..2);
                     self.awaiting_sender_oo = false;
+                    self.active_until = Some(Instant::now() + FINISH_FRAME_GRACE);
                     continue;
                 } else {
                     // This was ordinary shell output beginning with `O`, not
@@ -182,6 +188,16 @@ impl ZmodemFinishFilter {
                     .pending
                     .len()
                     .saturating_sub(longest_zfin_marker_prefix(&self.pending));
+                if self.awaiting_sender_oo
+                    && self.pending[..safe_len]
+                        .iter()
+                        .any(|byte| !byte.is_ascii_control())
+                {
+                    // A shell prompt can follow without a standalone OO on
+                    // some peers. Ordinary text also confirms the protocol
+                    // sender has returned control to the shell.
+                    self.awaiting_sender_oo = false;
+                }
                 visible.extend(self.pending.drain(..safe_len));
                 break;
             };
@@ -371,6 +387,7 @@ impl ZmodemProbe {
 pub(crate) struct ZmodemDownloadProbe {
     pending: Vec<u8>,
     suppressed: bool,
+    trigger_since: Option<Instant>,
 }
 
 impl ZmodemDownloadProbe {
@@ -388,7 +405,7 @@ impl ZmodemDownloadProbe {
             let Some(start) = find_zrqinit_marker(&self.pending) else {
                 let safe_len = self.pending.len().saturating_sub(
                     longest_zrqinit_marker_prefix(&self.pending)
-                        .max(longest_lrzsz_download_trigger_prefix(&self.pending)),
+                        .max(held_download_trigger_suffix(&self.pending)),
                 );
                 visible.extend(self.pending.drain(..safe_len));
                 break;
@@ -409,6 +426,7 @@ impl ZmodemDownloadProbe {
                 Ok(Some(header_len)) => {
                     let trailing = self.pending.split_off(header_len);
                     self.pending.clear();
+                    self.trigger_since = None;
                     return DownloadProbeOutput {
                         text: visible,
                         detection: Some(ZmodemDownloadDetection { trailing }),
@@ -417,6 +435,12 @@ impl ZmodemDownloadProbe {
                 Ok(None) if self.pending.len() <= MAX_CANDIDATE_BYTES => break,
                 Ok(None) | Err(()) => visible.push(self.pending.remove(0)),
             }
+        }
+
+        if self.pending.starts_with(LRZSZ_DOWNLOAD_TRIGGER) {
+            self.trigger_since.get_or_insert_with(Instant::now);
+        } else {
+            self.trigger_since = None;
         }
 
         DownloadProbeOutput {
@@ -428,14 +452,33 @@ impl ZmodemDownloadProbe {
     pub fn suppress_until_cancel(&mut self) {
         self.pending.clear();
         self.suppressed = true;
+        self.trigger_since = None;
     }
 
     pub fn rearm(&mut self) {
         self.suppressed = false;
         self.pending.clear();
+        self.trigger_since = None;
+    }
+
+    pub fn trigger_flush_wait(&self) -> Option<Duration> {
+        self.trigger_since
+            .map(|since| DOWNLOAD_TRIGGER_GRACE.saturating_sub(since.elapsed()))
+    }
+
+    pub fn flush_stale_trigger(&mut self) -> Vec<u8> {
+        if self
+            .trigger_since
+            .is_none_or(|since| since.elapsed() < DOWNLOAD_TRIGGER_GRACE)
+        {
+            return Vec::new();
+        }
+        self.trigger_since = None;
+        self.pending.drain(..LRZSZ_DOWNLOAD_TRIGGER.len()).collect()
     }
 
     pub fn finish(&mut self) -> Vec<u8> {
+        self.trigger_since = None;
         std::mem::take(&mut self.pending)
     }
 }
@@ -567,18 +610,40 @@ fn longest_zrqinit_marker_prefix(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
-fn longest_lrzsz_download_trigger_prefix(bytes: &[u8]) -> usize {
-    (1..=bytes.len().min(LRZSZ_DOWNLOAD_TRIGGER.len()))
-        .rev()
-        .find(|&length| bytes[bytes.len() - length..] == LRZSZ_DOWNLOAD_TRIGGER[..length])
-        .unwrap_or(0)
+fn held_download_trigger_suffix(bytes: &[u8]) -> usize {
+    if bytes.len() < LRZSZ_DOWNLOAD_TRIGGER.len() {
+        return 0;
+    }
+    for start in (0..=bytes.len() - LRZSZ_DOWNLOAD_TRIGGER.len()).rev() {
+        if !bytes[start..].starts_with(LRZSZ_DOWNLOAD_TRIGGER) {
+            continue;
+        }
+        let following = &bytes[start + LRZSZ_DOWNLOAD_TRIGGER.len()..];
+        if following.is_empty()
+            || [
+                b"**\x18B00".as_slice(),
+                b"*\x18B00",
+                b"**\x18C\x00",
+                b"*\x18C\x00",
+                b"**\x18A\x00",
+                b"*\x18A\x00",
+            ]
+            .iter()
+            .any(|marker| marker.starts_with(following))
+        {
+            return bytes.len() - start;
+        }
+    }
+    0
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::{
-        ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter, flush_receiver_output,
-        flush_sender_output, primed_sender,
+        DOWNLOAD_TRIGGER_GRACE, ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter,
+        flush_receiver_output, flush_sender_output, primed_sender,
     };
     use zmodem2::{Action, Event, FileInfo, Position, Receiver, Sender};
 
@@ -589,6 +654,31 @@ mod tests {
         match sender.poll() {
             Action::WriteWire(bytes) => assert_eq!(bytes, ZMODEM_ABORT_SEQUENCE),
             action => panic!("expected cancel bytes, got {action:?}"),
+        }
+    }
+
+    #[test]
+    fn active_upload_and_download_abort_before_any_queued_file_data() {
+        let mut sender = Sender::new().expect("sender starts");
+        sender
+            .start_file(FileInfo::new(b"payload.bin", Some(Position::new(1))))
+            .expect("file starts");
+        sender.abort();
+        match sender.poll() {
+            Action::WriteWire(bytes) => assert_eq!(bytes, ZMODEM_ABORT_SEQUENCE),
+            action => panic!("expected upload cancel bytes, got {action:?}"),
+        }
+
+        let mut receiver = Receiver::with_flow_control(0, true).expect("receiver starts");
+        let init_len = match receiver.poll() {
+            Action::WriteWire(bytes) => bytes.len(),
+            action => panic!("expected receiver handshake, got {action:?}"),
+        };
+        receiver.wire_written(init_len);
+        receiver.abort().expect("receiver aborts");
+        match receiver.poll() {
+            Action::WriteWire(bytes) => assert_eq!(bytes, ZMODEM_ABORT_SEQUENCE),
+            action => panic!("expected download cancel bytes, got {action:?}"),
         }
     }
 
@@ -727,12 +817,35 @@ mod tests {
     fn download_finish_filter_hides_final_oo_across_packet_boundaries() {
         let mut filter = ZmodemFinishFilter::default();
         filter.finish_download_transfer();
+        assert!(filter.awaiting_sender_oo());
 
         // lrzsz leaves its ZFIN line ending first, then `sz` writes the final
         // response without a line terminator. The shell prompt can follow in
         // the same SSH packet or a later one.
         assert_eq!(filter.feed(b"\r\x8aO"), b"\r\n");
+        assert!(filter.awaiting_sender_oo());
         assert_eq!(filter.feed(b"O\r\nuser@host:~$ "), b"\r\nuser@host:~$ ");
+        assert!(!filter.awaiting_sender_oo());
+    }
+
+    #[test]
+    fn download_finish_filter_keeps_waiting_through_a_duplicate_zfin() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_download_transfer();
+        assert_eq!(filter.feed(ZFIN), b"\r\n");
+        assert!(filter.awaiting_sender_oo());
+        assert_eq!(filter.feed(b"OOuser@host:~$ "), b"user@host:~$ ");
+        assert!(!filter.awaiting_sender_oo());
+    }
+
+    #[test]
+    fn download_finish_filter_does_not_treat_blank_lines_as_shell_return() {
+        let mut filter = ZmodemFinishFilter::default();
+        filter.finish_download_transfer();
+        assert_eq!(filter.feed(b"\r\x8a\r\n"), b"\r\n\r\n");
+        assert!(filter.awaiting_sender_oo());
+        assert_eq!(filter.feed(b"OOuser@host:~$ "), b"user@host:~$ ");
+        assert!(!filter.awaiting_sender_oo());
     }
 
     #[test]
@@ -881,6 +994,40 @@ mod tests {
             probe.feed(b"not a transfer\r\n").text,
             b"rz\rnot a transfer\r\n"
         );
+    }
+
+    #[test]
+    fn download_probe_does_not_hide_interactive_r_or_backspace() {
+        let mut probe = ZmodemDownloadProbe::default();
+        assert_eq!(probe.feed(b"r").text, b"r");
+        assert_eq!(probe.feed(b"\x08").text, b"\x08");
+        assert_eq!(probe.feed(b"r").text, b"r");
+        assert_eq!(probe.feed(b"z").text, b"z");
+        assert!(probe.trigger_flush_wait().is_none());
+    }
+
+    #[test]
+    fn download_probe_releases_a_trigger_without_a_handshake() {
+        let mut probe = ZmodemDownloadProbe::default();
+        assert!(probe.feed(b"rz\r").text.is_empty());
+        probe.trigger_since = Some(Instant::now() - DOWNLOAD_TRIGGER_GRACE);
+        assert_eq!(probe.flush_stale_trigger(), b"rz\r");
+        assert!(probe.trigger_flush_wait().is_none());
+        assert_eq!(probe.feed(b"r").text, b"r");
+    }
+
+    #[test]
+    fn download_probe_keeps_trigger_with_a_split_handshake_prefix() {
+        let mut sender = Sender::new().unwrap();
+        let handshake = match sender.poll() {
+            Action::WriteWire(bytes) => bytes.to_vec(),
+            other => panic!("unexpected sender action: {other:?}"),
+        };
+        let mut probe = ZmodemDownloadProbe::default();
+        assert!(probe.feed(b"rz\r**").text.is_empty());
+        let output = probe.feed(&handshake[2..]);
+        assert!(output.detection.is_some());
+        assert!(output.text.is_empty());
     }
 }
 
