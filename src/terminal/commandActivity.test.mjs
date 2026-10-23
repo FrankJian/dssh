@@ -61,6 +61,32 @@ test("an interactive child shell does not keep the tab marked as running", () =>
   assert.equal(tracker.observeOutput("done\r\nuser@host:~$ "), "idle");
 });
 
+test("sudo su login shell stays idle through the parent command marker", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  tracker.observeOutput("[user@host ~]$ ");
+
+  assert.equal(tracker.observeInput("sudo su -\r"), null);
+  assert.equal(tracker.observeOutput("\x1b]133;C\x07"), null);
+  assert.equal(tracker.observeOutput("\r\n[root@host ~]# "), null);
+
+  assert.equal(tracker.observeInput("sleep 30\r"), "running");
+  assert.equal(tracker.observeOutput("\r\n[root@host ~]# "), "idle");
+});
+
+test("other user-switching interactive shells stay idle", () => {
+  for (const command of ["su -", "su - deploy", "sudo -i", "sudo -s", "sudo -u deploy su -", "sudo -u deploy bash -l"]) {
+    const tracker = new TerminalCommandActivityTracker();
+    assert.equal(tracker.observeInput(`${command}\r`), null, command);
+  }
+});
+
+test("sudo and su commands that execute work still show activity", () => {
+  for (const command of ["sudo su -c 'sleep 30'", "su -c 'sleep 30'", "sudo bash deploy.sh", "sudo -i sleep 30", "sudo sleep 30"]) {
+    const tracker = new TerminalCommandActivityTracker();
+    assert.equal(tracker.observeInput(`${command}\r`), "running", command);
+  }
+});
+
 test("shell commands that run a script or -c command remain blocking", () => {
   const tracker = new TerminalCommandActivityTracker();
   assert.equal(tracker.observeInput("bash deploy.sh\r"), "running");

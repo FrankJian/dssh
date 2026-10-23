@@ -36,6 +36,7 @@ import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
 import { RemoteFileTree } from "../sftp/RemoteFileTree";
 import { LocalFileTree } from "../sftp/LocalFileTree";
 import { ProfileEditor } from "../ssh/ProfileEditor";
+import { profileIconName } from "../ssh/profileIcons";
 import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
@@ -52,6 +53,8 @@ import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConf
 import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
+import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
+import { defaultSshTerminalTitle } from "../terminal/terminalTitle";
 import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
 import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
@@ -350,6 +353,7 @@ function MainApp() {
     activeSessionId,
     cancelReconnect,
     commandActivity,
+    targetAddresses,
     closeSession,
     getBacklog,
     reconnectSession,
@@ -366,6 +370,9 @@ function MainApp() {
     writeToActiveSession,
     writeToSession,
   } = useTerminalSessions();
+  const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
+  const bulkClosingRef = useRef(false);
+  const windowCloseRef = useRef<() => Promise<boolean>>(async () => false);
   const {
     sftpTabs,
     activeSftpId,
@@ -451,13 +458,20 @@ function MainApp() {
   }, [sessions]);
 
   function defaultTerminalName(session: TerminalSession) {
+    if (session.kind === "ssh") {
+      return defaultSshTerminalTitle(
+        session,
+        profiles.find((profile) => profile.id === session.profileId),
+        targetAddresses[session.id],
+      );
+    }
     const terminalWindowId = panes.findLayout(session.id)?.tabSessionId ?? session.id;
     const siblings = sessions.filter((candidate) => {
       if (candidate.kind !== session.kind || candidate.profileId !== session.profileId) return false;
       const layout = panes.findLayout(candidate.id);
       return !layout || layout.tabSessionId === candidate.id;
     });
-    return `终端 ${Math.max(0, siblings.findIndex((candidate) => candidate.id === terminalWindowId)) + 1}`;
+    return `本地终端 ${Math.max(0, siblings.findIndex((candidate) => candidate.id === terminalWindowId)) + 1}`;
   }
 
   function terminalName(session: TerminalSession) {
@@ -475,6 +489,7 @@ function MainApp() {
   }
 
   function terminalTabTitle(session: TerminalSession) {
+    if (!terminalNames[session.id]) return terminalName(session);
     const hostName = session.kind === "ssh"
       ? profiles.find((profile) => profile.id === session.profileId)?.name ?? session.title
       : "本地";
@@ -1010,9 +1025,20 @@ function MainApp() {
     }
   }
 
-  function handleClosePane(sessionId: string) {
+  async function closeTerminalSessions(sessionIds: string[], title: string) {
+    if (!await confirmClose(sessionIds, title)) return false;
+    try {
+      await Promise.all(sessionIds.map((id) => closeSession(id)));
+      return true;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "关闭终端失败，请重试。", "error");
+      return false;
+    }
+  }
+
+  async function handleClosePane(sessionId: string) {
+    if (!await closeTerminalSessions([sessionId], paneName(sessionId))) return;
     const remaining = paneSessionIds(panes.findLayout(sessionId)).filter((id) => id !== sessionId);
-    void closeSession(sessionId);
     if (fileTreeSessionId === sessionId) {
       setFileTreeSessionId(null);
     }
@@ -1027,22 +1053,22 @@ function MainApp() {
     }
   }
 
-  function handleCloseTerminalWindow(tabSessionId: string) {
+  async function handleCloseTerminalWindow(tabSessionId: string) {
     const layout = panes.findLayoutByTab(tabSessionId);
+    const sessionIds = layout ? paneSessionIds(layout) : [tabSessionId];
+    const session = sessions.find((item) => item.id === tabSessionId);
+    if (!await closeTerminalSessions(sessionIds, session ? terminalName(session) : "终端窗口")) return;
+    if (sessionIds.includes(fileTreeSessionId ?? "")) setFileTreeSessionId(null);
     if (!layout) {
       if (terminalFullscreenPaneId === tabSessionId) {
         setTerminalFullscreenPaneId(null);
       }
-      void closeSession(tabSessionId);
       return;
     }
     if (paneSessionIds(layout).includes(terminalFullscreenPaneId ?? "")) {
       setTerminalFullscreenPaneId(null);
     }
     panes.removeLayout(tabSessionId);
-    for (const sessionId of paneSessionIds(layout)) {
-      void closeSession(sessionId);
-    }
   }
 
   // --- Session-tree node actions -------------------------------------------
@@ -1114,11 +1140,9 @@ function MainApp() {
   }
 
   async function handleDisconnectNode(node: SessionNode) {
+    if (!await closeTerminalSessions(node.sessions.map((session) => session.id), node.title)) return;
     if (node.sessions.some((session) => session.id === fileTreeSessionId)) {
       setFileTreeSessionId(null);
-    }
-    for (const session of node.sessions) {
-      await closeSession(session.id);
     }
     if (node.kind === "ssh" && node.profile) {
       closeSftpTabsForProfile(node.profile.id);
@@ -1263,6 +1287,9 @@ function MainApp() {
       .map((session) => ({
         id: session.id,
         kind: session.kind === "ssh" ? ("ssh" as const) : ("local" as const),
+        icon: session.kind === "ssh"
+          ? profileIconName(profiles.find((profile) => profile.id === session.profileId)?.icon)
+          : ("terminalTool" as const),
         title: terminalTabTitle(session),
         renameValue: terminalName(session),
         active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
@@ -1274,6 +1301,7 @@ function MainApp() {
     ...sftpTabs.filter((tab) => !detachedSftpProfileIds.has(tab.profileId)).map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
+      icon: profileIconName(profiles.find((profile) => profile.id === tab.profileId)?.icon),
       title: `SFTP · ${tab.title}`,
       renameValue: tab.title,
       active: isSftpActive && tab.id === activeSftpId,
@@ -1323,26 +1351,48 @@ function MainApp() {
     }
   }
 
-  function handleCloseTab(tab: WorkspaceTabItem) {
+  async function handleCloseTab(tab: WorkspaceTabItem) {
     if (tab.kind === "sftp") {
       closeSftpTab(tab.id);
-    } else if (panes.findLayoutByTab(tab.id)) {
-      const layout = panes.findLayoutByTab(tab.id)!;
-      const sessionIds = paneSessionIds(layout);
-      if (sessionIds.includes(fileTreeSessionId ?? "")) {
-        setFileTreeSessionId(null);
-      }
-      panes.removeLayout(tab.id);
-      for (const sessionId of sessionIds) {
-        void closeSession(sessionId);
-      }
     } else {
-      if (tab.id === fileTreeSessionId) {
-        setFileTreeSessionId(null);
-      }
-      void closeSession(tab.id);
+      await handleCloseTerminalWindow(tab.id);
     }
   }
+
+  async function handleCloseTabs(tabs: WorkspaceTabItem[]) {
+    if (bulkClosingRef.current) return;
+    bulkClosingRef.current = true;
+    try {
+      // Each running window gets its own decision. Keeping one does not stop
+      // the rest of the requested batch from closing.
+      for (const tab of tabs) await handleCloseTab(tab);
+    } finally {
+      bulkClosingRef.current = false;
+    }
+  }
+
+  windowCloseRef.current = () => closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口");
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let allowed = false;
+    let pending = false;
+    const listener = appWindow.onCloseRequested((event) => {
+      if (allowed) return;
+      event.preventDefault();
+      if (pending) return;
+      pending = true;
+      void windowCloseRef.current().then(async (closed) => {
+        if (closed) {
+          allowed = true;
+          await appWindow.close();
+        }
+      }).catch((error: unknown) => {
+        allowed = false;
+        toast(error instanceof Error ? error.message : "关闭窗口失败，请重试。", "error");
+      }).finally(() => { pending = false; });
+    });
+    return () => { void listener.then((dispose) => dispose()); };
+  }, []);
 
   async function handleDetachTab(tab: WorkspaceTabItem) {
     try {
@@ -1368,6 +1418,7 @@ function MainApp() {
           tabSessionId: tab.id,
           sessionIds,
           layout,
+          autoTitle: !terminalNames[tab.id],
         },
       });
       addWorkspace(workspace);
@@ -1415,7 +1466,7 @@ function MainApp() {
       ) : (
         <SessionTree
           sessions={visibleSessions}
-          terminalNames={terminalNames}
+          terminalNames={Object.fromEntries(visibleSessions.map((session) => [session.id, terminalName(session)]))}
           paneNames={paneNames}
           paneLayouts={panes.layouts}
           activeSessionId={activeSessionId}
@@ -1463,6 +1514,10 @@ function MainApp() {
       ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
       : null;
   const isLocalFileTree = fileTreeSession?.kind === "local";
+  const recentProfiles = recentIds
+    .map((id) => profiles.find((profile) => profile.id === id))
+    .filter((profile): profile is SshProfile => Boolean(profile))
+    .slice(0, 6);
 
   const terminalSurface = (
     <TerminalWorkspace
@@ -1480,6 +1535,9 @@ function MainApp() {
       hasWallpaper={hasTerminalWallpaper}
       rightClick={rightClick}
       hasProfiles={profiles.length > 0}
+      recentProfiles={recentProfiles}
+      onConnectProfile={handleConnectProfile}
+      onOpenConnections={() => setActiveActivity("connections")}
       onCreateProfile={openCreateProfile}
       onFontSizeChange={setFontSize}
       onOpenHostTools={() => toggleRightPanel("hosttools")}
@@ -1707,7 +1765,7 @@ function MainApp() {
         hint: "终端",
         icon: "close",
         keywords: "close 关闭",
-        run: () => void closeSession(activeSession.id),
+        run: () => void handleClosePane(activeSession.id),
       });
       items.push({
         id: "act:file-list-current",
@@ -1880,6 +1938,7 @@ function MainApp() {
 
   return (
     <div className="app-root" onContextMenu={handleContextMenu}>
+      {closeDialog}
       <AppLayout
         sidebar={zenMode || terminalFullscreenPaneId ? null : sidebarContent}
         sidebarWidth={sidebarWidth}
@@ -1930,6 +1989,7 @@ function MainApp() {
                 onSelect={handleSelectTab}
                 onRename={handleRenameTab}
                 onClose={handleCloseTab}
+                onCloseMany={(tabs) => void handleCloseTabs(tabs)}
                 onDetach={(tab) => void handleDetachTab(tab)}
                 onReorder={(draggedId, targetId) =>
                   reorderTab(

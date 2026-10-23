@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DetachedWorkspace } from "../models";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
+import { profileIconName } from "../ssh/profileIcons";
 import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
@@ -12,6 +13,8 @@ import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { serializeTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
+import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
+import { defaultSshTerminalTitle } from "../terminal/terminalTitle";
 import { useTheme } from "../theme/useTheme";
 import { readImageDataUrl } from "../services/configService";
 import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
@@ -118,6 +121,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const currentWindow = getCurrentWindow();
   const profilesState = useProfiles();
   const terminal = useTerminalSessions();
+  const { confirmClose, closeDialog } = useTerminalCloseGuard(terminal.commandActivity);
   const panes = usePaneLayout();
   const settings = useTerminalSettings();
   const appLock = useAppLock();
@@ -173,7 +177,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     const ids = new Set(descriptor?.sessionIds ?? []);
     return terminal.sessions.filter((session) => ids.has(session.id));
   }, [descriptor?.sessionIds, terminal.sessions]);
-  sessionCountRef.current = visibleSessions.length;
+  sessionCountRef.current = terminal.isSessionsLoaded ? visibleSessions.length : descriptor?.sessionIds.length ?? 0;
   const layout = descriptor ? panes.findLayoutByTab(descriptor.tabSessionId) : null;
   const activeSession = visibleSessions.find((session) => session.id === terminal.activeSessionId)
     ?? visibleSessions.find((session) => session.id === layout?.focusedPaneId)
@@ -182,6 +186,19 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const activeProfile = activeSession?.kind === "ssh"
     ? profilesState.profiles.find((profile) => profile.id === activeSession.profileId) ?? null
     : null;
+  const tabIcon = activeSession?.kind === "ssh" ? profileIconName(activeProfile?.icon) : "terminalTool";
+  const isCommandRunning = visibleSessions.some((session) => terminal.commandActivity.has(session.id));
+  const displayTitle = descriptor?.autoTitle && activeSession?.kind === "ssh"
+    ? terminal.targetAddresses[activeSession.id] === undefined
+      // The original window may have learned the asset before detachment;
+      // backend scrollback can already have discarded that menu exchange.
+      ? workspace.title
+      : defaultSshTerminalTitle(activeSession, activeProfile ?? undefined, terminal.targetAddresses[activeSession.id])
+    : workspace.title;
+
+  useEffect(() => {
+    void currentWindow.setTitle(`${displayTitle} · Duo SSH`);
+  }, [currentWindow, displayTitle]);
 
   // The session hook seeds `activeSessionId` from the backend's full list,
   // which includes terminals owned by the main window. Left alone it points at
@@ -239,6 +256,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     const latestLayout = panes.findLayoutByTab(descriptor.tabSessionId) ?? null;
     const sessionIds = latestLayout ? paneSessionIds(latestLayout) : visibleSessions.map((item) => item.id);
     void updateDetachedTerminalWorkspace(workspace.label, {
+      autoTitle: descriptor.autoTitle,
       tabSessionId: latestLayout?.tabSessionId ?? descriptor.tabSessionId,
       sessionIds,
       layout: latestLayout,
@@ -266,6 +284,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         }),
       );
       await updateDetachedTerminalWorkspace(workspace.label, {
+        autoTitle: descriptor.autoTitle,
         tabSessionId: latestLayout?.tabSessionId ?? descriptor.tabSessionId,
         sessionIds,
         layout: latestLayout,
@@ -278,13 +297,19 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     await closeWindow();
   }, [closeWindow, descriptor, panes, visibleSessions, workspace.label]);
 
-  const closeTab = useCallback(async () => {
-    const ids = layout ? paneSessionIds(layout) : visibleSessions.map((session) => session.id);
-    await Promise.all(ids.map((id) => terminal.closeSession(id)));
-    setTerminalFullscreenPaneId(null);
-    await discardDetachedWorkspace(workspace.label).catch(() => {});
-    await closeWindow();
-  }, [closeWindow, layout, terminal.closeSession, visibleSessions, workspace.label]);
+  const closeTab = useCallback(async (confirmed = false) => {
+    const ids = layout ? paneSessionIds(layout)
+      : terminal.isSessionsLoaded ? visibleSessions.map((session) => session.id) : descriptor?.sessionIds ?? [];
+    if (!confirmed && !await confirmClose(ids, workspace.title)) return;
+    try {
+      await Promise.all(ids.map((id) => terminal.closeSession(id)));
+      setTerminalFullscreenPaneId(null);
+      await discardDetachedWorkspace(workspace.label);
+      await closeWindow();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "关闭终端失败，请重试。", "error");
+    }
+  }, [closeWindow, confirmClose, descriptor?.sessionIds, layout, terminal.closeSession, terminal.isSessionsLoaded, visibleSessions, workspace.label, workspace.title]);
 
   // Closing the window used to hand the sessions straight back to the main
   // window. That is a reasonable default but it reads as "closed", so the two
@@ -334,10 +359,16 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     }
   }, [activeSession, panes, profilesState.profiles, terminal]);
 
-  const closePane = useCallback((sessionId: string) => {
+  const closePane = useCallback(async (sessionId: string) => {
+    if (!await confirmClose([sessionId], "终端分屏")) return;
+    try {
+      await terminal.closeSession(sessionId);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "关闭终端失败，请重试。", "error");
+      return;
+    }
     const currentLayout = panes.findLayout(sessionId);
     const remaining = paneSessionIds(currentLayout).filter((id) => id !== sessionId);
-    void terminal.closeSession(sessionId);
     if (terminalFullscreenPaneId === sessionId) {
       setTerminalFullscreenPaneId(null);
     }
@@ -347,7 +378,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     }
     panes.removePane(sessionId);
     terminal.setActiveSessionId(remaining[0] ?? null);
-  }, [closeWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
+  }, [closeWindow, confirmClose, panes, terminal, terminalFullscreenPaneId, workspace.label]);
 
   const sessionLabel = activeSession
     ? activeProfile ? `${activeProfile.username}@${activeProfile.host}:${activeProfile.port}` : activeSession.title
@@ -393,12 +424,18 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
 
   return (
     <div className="detached-workspace">
-      {terminalFullscreenPaneId ? null : <DetachedTitlebar title={workspace.title} onReturn={handleReturn} />}
+      {terminalFullscreenPaneId ? null : <DetachedTitlebar title={displayTitle} onReturn={handleReturn} />}
+      {closeDialog}
       {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar is-glass-chrome">
         <div className="detached-workspace__tab">
-          <span className="detached-workspace__tab-title" title={workspace.title}>
-            <Icon name="terminalTool" height="15" width="15" />
-            <span>{workspace.title}</span>
+          <span className="detached-workspace__tab-title" title={displayTitle}>
+            <span
+              className={`tab__kind-icon${isCommandRunning ? " is-running" : ""}`}
+              title={isCommandRunning ? "命令正在运行" : undefined}
+            >
+              <Icon name={tabIcon} />
+            </span>
+            <span className="detached-workspace__tab-title-text">{displayTitle}</span>
           </span>
           <button
             aria-label="关闭终端"
@@ -473,13 +510,13 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           onCancel={() => setIsCloseConfirmOpen(false)}
           onCloseSessions={() => {
             setIsCloseConfirmOpen(false);
-            void closeTab();
+            void closeTab(true);
           }}
           onReturn={() => {
             setIsCloseConfirmOpen(false);
             handleReturn();
           }}
-          sessionCount={visibleSessions.length}
+          sessionCount={sessionCountRef.current}
         />
       ) : null}
       <ToastHost />

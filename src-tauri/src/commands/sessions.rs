@@ -115,7 +115,7 @@ pub async fn close_ssh_session(state: State<'_, AppState>, session_id: String) -
     // Tear down any port forwards bound to this session before closing the
     // shell so tunnels never outlive the SSH connection that spawned them.
     state.forwards.stop_session(&session_id).await;
-    state.sessions.close_session(&session_id)
+    state.sessions.close_session(&session_id).await
 }
 
 #[tauri::command]

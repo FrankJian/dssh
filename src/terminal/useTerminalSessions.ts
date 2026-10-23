@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
+import { TerminalTargetTracker } from "./terminalTarget";
 import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../ui/ToastHost";
@@ -89,9 +90,11 @@ export function useTerminalSessions() {
   const [terminalTransfers, setTerminalTransfers] = useState<TerminalTransferStatusEvent[]>([]);
   const [terminalConflicts, setTerminalConflicts] = useState<TerminalTransferConflictEvent[]>([]);
   const [commandActivity, setCommandActivity] = useState<ReadonlySet<string>>(() => new Set());
+  const [targetAddresses, setTargetAddresses] = useState<Readonly<Record<string, string | null>>>({});
   const pendingZmodemPromptsRef = useRef(new Set<string>());
   const manualReconnectsRef = useRef(new Set<string>());
   const activityTrackersRef = useRef(new Map<string, TerminalCommandActivityTracker>());
+  const targetTrackersRef = useRef(new Map<string, TerminalTargetTracker>());
   // A local PTY can become ready before `start_local_session` resolves in the
   // WebView. Keep that early event so adding the returned session cannot put
   // the sidebar permanently in the "connecting" state.
@@ -137,6 +140,15 @@ export function useTerminalSessions() {
     return tracker;
   }, []);
 
+  const targetTrackerForSession = useCallback((sessionId: string) => {
+    let tracker = targetTrackersRef.current.get(sessionId);
+    if (!tracker) {
+      tracker = new TerminalTargetTracker();
+      targetTrackersRef.current.set(sessionId, tracker);
+    }
+    return tracker;
+  }, []);
+
   const withLatestStatus = useCallback((session: TerminalSession): TerminalSession => {
     const status = latestSessionStatusesRef.current.get(session.id);
     return status ? { ...session, status } : session;
@@ -147,6 +159,11 @@ export function useTerminalSessions() {
       return;
     }
     updateCommandActivity(sessionId, trackerForSession(sessionId).observeOutput(data));
+    const address = targetTrackerForSession(sessionId).observeOutput(data);
+    if (address !== undefined) {
+      setTargetAddresses((current) => current[sessionId] === address
+        ? current : { ...current, [sessionId]: address });
+    }
 
     let backlog = buffersRef.current.get(sessionId);
     if (!backlog) {
@@ -161,7 +178,7 @@ export function useTerminalSessions() {
         listener(data);
       }
     }
-  }, [trackerForSession, updateCommandActivity]);
+  }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const getBacklog = useCallback((sessionId: string) => {
     const backlog = buffersRef.current.get(sessionId);
@@ -228,8 +245,14 @@ export function useTerminalSessions() {
         for (const snapshot of snapshots) {
           if (snapshot.output) {
             buffersRef.current.set(snapshot.sessionId, createBacklog(snapshot.output));
+            targetTrackerForSession(snapshot.sessionId).observeOutput(snapshot.output);
           }
         }
+        const hydratedAddresses = Object.fromEntries(snapshots.flatMap(({ sessionId }) => {
+          const address = targetTrackerForSession(sessionId).address;
+          return address === undefined ? [] : [[sessionId, address]];
+        }));
+        setTargetAddresses((current) => ({ ...hydratedAddresses, ...current }));
 
         if (loadedSessions.length > 0) {
           setSessions(loadedSessions);
@@ -254,7 +277,7 @@ export function useTerminalSessions() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [targetTrackerForSession]);
 
   useEffect(() => {
     const outputPromise = onTerminalOutput((event) => {
@@ -262,6 +285,15 @@ export function useTerminalSessions() {
     });
     const statusPromise = onTerminalStatus((event) => {
       latestSessionStatusesRef.current.set(event.sessionId, event.status);
+      if (event.status === "reconnecting") {
+        const address = targetTrackerForSession(event.sessionId).resetConnection();
+        setTargetAddresses((current) => {
+          const next = { ...current };
+          if (address === undefined) delete next[event.sessionId];
+          else next[event.sessionId] = address;
+          return next;
+        });
+      }
       setSessions((currentSessions) =>
         currentSessions.map((session) =>
           session.id === event.sessionId ? { ...session, status: event.status } : session,
@@ -287,7 +319,7 @@ export function useTerminalSessions() {
       void outputPromise.then((unlisten) => unlisten());
       void statusPromise.then((unlisten) => unlisten());
     };
-  }, [pushOutput, updateCommandActivity]);
+  }, [pushOutput, targetTrackerForSession, updateCommandActivity]);
 
   useEffect(() => {
     const promptPromise = onTerminalTransferPrompt((event) => {
@@ -377,13 +409,22 @@ export function useTerminalSessions() {
 
         try {
           await closeSshSession(sessionId);
-        } catch {
-          // Old session may already be gone; ignore.
+        } catch (error) {
+          // Do not hide a failed teardown behind a replacement terminal.
+          await closeSshSession(fresh.id).catch(() => undefined);
+          throw error;
         }
 
         target.delete(sessionId);
         listenersRef.current.delete(sessionId);
         activityTrackersRef.current.delete(sessionId);
+        targetTrackersRef.current.delete(sessionId);
+        setTargetAddresses((current) => {
+          if (!(sessionId in current)) return current;
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
         latestSessionStatusesRef.current.delete(sessionId);
         setCommandActivity((current) => {
           if (!current.has(sessionId)) return current;
@@ -435,12 +476,13 @@ export function useTerminalSessions() {
       }
 
       updateCommandActivity(activeSessionId, trackerForSession(activeSessionId).observeInput(data));
+      targetTrackerForSession(activeSessionId).observeInput(data);
       await writeSshSession({
         data,
         sessionId: activeSessionId,
       });
     },
-    [activeSessionId, trackerForSession, updateCommandActivity],
+    [activeSessionId, targetTrackerForSession, trackerForSession, updateCommandActivity],
   );
 
   // Per-session I/O. Terminal surfaces target the session they render rather
@@ -459,22 +501,26 @@ export function useTerminalSessions() {
       return;
     }
     updateCommandActivity(sessionId, trackerForSession(sessionId).observeInput(data));
+    targetTrackerForSession(sessionId).observeInput(data);
     await writeSshSession({ data, sessionId });
-  }, [reconnectSession, trackerForSession, updateCommandActivity]);
+  }, [reconnectSession, targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const resizeSession = useCallback(async (sessionId: string, size: TerminalSize) => {
     await resizeSshSession({ sessionId, size });
   }, []);
 
   const closeSession = useCallback(async (sessionId: string) => {
-    try {
-      await closeSshSession(sessionId);
-    } catch {
-      // The backend may already have removed failed/disconnected sessions.
-    }
+    await closeSshSession(sessionId);
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);
     activityTrackersRef.current.delete(sessionId);
+    targetTrackersRef.current.delete(sessionId);
+    setTargetAddresses((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     latestSessionStatusesRef.current.delete(sessionId);
     setTerminalConflicts((current) => current.filter((item) => item.sessionId !== sessionId));
     setCommandActivity((current) => {
@@ -507,6 +553,7 @@ export function useTerminalSessions() {
     cancelTerminalTransfer,
     resolveTerminalConflict,
     commandActivity,
+    targetAddresses,
     setActiveSessionId,
     startLocalSession,
     startSession,

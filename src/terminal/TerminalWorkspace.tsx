@@ -1,5 +1,5 @@
 import { Suspense, useCallback } from "react";
-import type { TerminalSession } from "../models";
+import type { SshProfile, TerminalSession } from "../models";
 import type { RightClickAction } from "../settings/settings";
 import { Icon } from "../ui/Icon";
 import { EmptyTerminal } from "./EmptyTerminal";
@@ -21,6 +21,9 @@ interface TerminalWorkspaceProps {
   letterSpacing: number;
   getBacklog: (sessionId: string) => string;
   hasProfiles: boolean;
+  recentProfiles?: SshProfile[];
+  onConnectProfile?: (profile: SshProfile) => void;
+  onOpenConnections?: () => void;
   onCreateProfile: () => void;
   onFontSizeChange: (size: number) => void;
   onOpenHostTools: () => void;
@@ -57,6 +60,9 @@ export function TerminalWorkspace({
   letterSpacing,
   getBacklog,
   hasProfiles,
+  recentProfiles,
+  onConnectProfile,
+  onOpenConnections,
   onCreateProfile,
   onFontSizeChange,
   onOpenHostTools,
@@ -161,6 +167,9 @@ export function TerminalWorkspace({
       ) : (
         <EmptyTerminal
           mode={hasProfiles ? "terminal" : "home"}
+          recentProfiles={recentProfiles}
+          onConnectProfile={onConnectProfile}
+          onOpenConnections={onOpenConnections}
           onCreateProfile={onCreateProfile}
           onStartLocalSession={onStartLocalSession}
         />

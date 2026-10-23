@@ -7,6 +7,8 @@ export interface DetachedTerminalWorkspace {
   tabSessionId: string;
   sessionIds: string[];
   layout: PaneLayout | null;
+  /** Keep the label in sync with the connected host unless the user renamed it. */
+  autoTitle?: boolean;
   /** Latest screen state, used once when this workspace returns to its parent. */
   terminalSnapshots?: Record<string, TerminalSnapshot>;
 }

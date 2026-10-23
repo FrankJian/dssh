@@ -157,12 +157,12 @@ export class TerminalCommandActivityTracker {
   }
 
   private setActivity(next: CommandActivity): CommandActivity | null {
-    if (next === this.activity) return null;
-    this.activity = next;
     if (next === "idle") {
       this.promptBeforeCommand = null;
       this.sawLineBreakSinceCommand = false;
     }
+    if (next === this.activity) return null;
+    this.activity = next;
     return next;
   }
 }
@@ -185,11 +185,54 @@ function isInteractiveShellInvocation(input: string): boolean {
   while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index += 1;
   if (words[index] === "command" || words[index] === "exec") index += 1;
 
-  const executableParts = words[index]?.split("/");
+  return isInteractiveShellWords(words.slice(index));
+}
+
+function isInteractiveShellWords(words: string[]): boolean {
+  const executableParts = words[0]?.split("/");
   const executable = executableParts?.[executableParts.length - 1]?.toLowerCase();
+
+  if (executable === "sudo") {
+    let index = 1;
+    let shellMode = false;
+    while (index < words.length) {
+      const option = words[index];
+      if (option === "--") {
+        index += 1;
+        break;
+      }
+      if (!option.startsWith("-")) break;
+      if (["-i", "--login", "-s", "--shell"].includes(option)) {
+        shellMode = true;
+      } else if (["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt"].includes(option)) {
+        index += 1;
+      } else if (!["-E", "--preserve-env", "-H", "--set-home", "-P", "--preserve-groups", "-n", "--non-interactive"].includes(option)) {
+        return false;
+      }
+      index += 1;
+    }
+    return index === words.length ? shellMode : isInteractiveShellWords(words.slice(index));
+  }
+
+  if (executable === "su") {
+    const args = words.slice(1);
+    if (args.some((arg) => arg.startsWith("-c") || /^--(?:session-)?command(?:=|$)/.test(arg))) return false;
+    let users = 0;
+    for (let index = 0; index < args.length; index += 1) {
+      const arg = args[index];
+      if (["-s", "--shell", "-g", "--group", "-G", "--supp-group", "-w", "--whitelist-environment"].includes(arg)) {
+        if (index + 1 >= args.length) return false;
+        index += 1;
+      } else if (arg !== "-" && !arg.startsWith("-")) {
+        users += 1;
+      }
+    }
+    return users <= 1;
+  }
+
   if (!executable || !INTERACTIVE_SHELLS.has(executable)) return false;
 
-  const argumentsAfterExecutable = words.slice(index + 1);
+  const argumentsAfterExecutable = words.slice(1);
   return !argumentsAfterExecutable.some((argument) =>
     argument === "-c"
       || argument === "--command"

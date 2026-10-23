@@ -80,6 +80,14 @@ interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
 }
 
+// These glyphs have asymmetric artwork bounds. Center the visible outline in
+// its viewport so flex alignment also aligns the drawing with adjacent text.
+const centeredViewBoxes: Partial<Record<IconName, string>> = {
+  ubuntu: "0 -2 24 24",
+  centos: "0 -1.5 24 24",
+  linux: "0 1 24 24",
+};
+
 export function Icon({ name, ...props }: IconProps) {
   return (
     <svg
@@ -90,7 +98,7 @@ export function Icon({ name, ...props }: IconProps) {
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeWidth="1.8"
-      viewBox="0 0 24 24"
+      viewBox={centeredViewBoxes[name] ?? "0 0 24 24"}
       width="18"
       {...props}
     >

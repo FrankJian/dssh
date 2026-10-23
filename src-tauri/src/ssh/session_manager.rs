@@ -14,7 +14,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use russh::{
-    ChannelMsg, MethodKind, Pty,
+    ChannelMsg, MethodKind, Pty, Sig,
     client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
     keys::{PrivateKeyWithHashAlg, decode_secret_key},
 };
@@ -23,7 +23,7 @@ use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::TcpStream,
-    sync::{Mutex as AsyncMutex, mpsc, oneshot},
+    sync::{Mutex as AsyncMutex, mpsc, oneshot, watch},
 };
 
 use crate::{
@@ -107,6 +107,7 @@ struct SessionHandle {
     profile_id: String,
     title: String,
     tx: mpsc::Sender<SessionCommand>,
+    closed: watch::Receiver<bool>,
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
     /// to answer AI `read_terminal` requests about the visible session.
     output: Arc<Mutex<String>>,
@@ -254,6 +255,7 @@ impl SessionManager {
         let profile_id = profile.id.clone();
         let title = profile.name.clone();
         let (tx, rx) = mpsc::channel(256);
+        let (closed_tx, closed) = watch::channel(false);
         let output = Arc::new(Mutex::new(String::new()));
         self.sessions.lock().map_err(lock_error)?.insert(
             session_id.clone(),
@@ -262,6 +264,7 @@ impl SessionManager {
                 profile_id: profile.id.clone(),
                 title: title.clone(),
                 tx,
+                closed,
                 output: output.clone(),
             },
         );
@@ -300,6 +303,7 @@ impl SessionManager {
             if let Ok(mut sessions) = sessions.lock() {
                 sessions.remove(&task_session_id);
             }
+            let _ = closed_tx.send(true);
         });
 
         Ok(TerminalSession {
@@ -319,6 +323,7 @@ impl SessionManager {
         let session_id = create_session_id();
         let title = local_shell_title();
         let (tx, rx) = mpsc::channel(256);
+        let (closed_tx, closed) = watch::channel(false);
         let output = Arc::new(Mutex::new(String::new()));
         self.sessions.lock().map_err(lock_error)?.insert(
             session_id.clone(),
@@ -327,6 +332,7 @@ impl SessionManager {
                 profile_id: "local".to_string(),
                 title: title.clone(),
                 tx,
+                closed,
                 output: output.clone(),
             },
         );
@@ -361,6 +367,7 @@ impl SessionManager {
             if let Ok(mut sessions) = sessions.lock() {
                 sessions.remove(&task_session_id);
             }
+            let _ = closed_tx.send(true);
         });
 
         Ok(TerminalSession {
@@ -418,10 +425,30 @@ impl SessionManager {
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
     }
 
-    pub fn close_session(&self, session_id: &str) -> AppResult<()> {
-        let tx = self.session_tx(session_id)?;
-        tx.try_send(SessionCommand::Close)
-            .map_err(|error| AppError::new("session_send_error", error.to_string()))
+    pub async fn close_session(&self, session_id: &str) -> AppResult<()> {
+        let Some(handle) = self
+            .sessions
+            .lock()
+            .map_err(lock_error)?
+            .get(session_id)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        // Closing must not be dropped when the input queue is full. Do not
+        // acknowledge it until the worker has actually released its resources.
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let mut closed = handle.closed;
+            if !*closed.borrow() {
+                let _ = handle.tx.send(SessionCommand::Close).await;
+                closed.wait_for(|done| *done).await.map_err(|_| {
+                    AppError::new("session_close_error", "终端清理失败，请重试关闭。")
+                })?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| AppError::new("session_close_timeout", "终端尚未完成关闭，请稍后重试。"))?
     }
 
     /// Stop an in-progress grace-period reconnect for a session (it settles as
@@ -1386,6 +1413,12 @@ async fn connect_and_run(
                             .await;
                         }
                     }
+                    // A pooled transport stays alive after its shell channel
+                    // closes. Explicitly interrupt the PTY foreground job and
+                    // request shell hangup before releasing only this channel.
+                    let _ = writer.data(&b"\x03"[..]).await;
+                    let _ = writer.signal(Sig::HUP).await;
+                    let _ = writer.eof().await;
                     let _ = writer.close().await;
                     break ConnOutcome::Closed;
                 }
@@ -2644,48 +2677,89 @@ fn run_local_session(
 
     emit_status(&app_handle, &session_id, SessionStatus::Connected, None);
 
-    for data in pending_input {
-        writer
-            .write_all(data.as_bytes())
-            .and_then(|_| writer.flush())
-            .map_err(local_terminal_error)?;
-    }
-
-    while let Some(command) = rx.blocking_recv() {
-        match command {
-            SessionCommand::Input(data) => {
-                writer
-                    .write_all(data.as_bytes())
-                    .and_then(|_| writer.flush())
-                    .map_err(local_terminal_error)?;
-            }
-            SessionCommand::ZmodemResponse { .. }
-            | SessionCommand::ZmodemConflictResponse { .. }
-            | SessionCommand::CancelZmodem { .. } => {}
-            SessionCommand::Resize(size) => {
-                pair.master
-                    .resize(pty_size(&size))
-                    .map_err(local_terminal_error)?;
-            }
-            SessionCommand::Close => {
-                emit_status(&app_handle, &session_id, SessionStatus::Disconnecting, None);
-                let _ = child.kill();
-                break;
-            }
-            // Local sessions never reconnect, so this is a no-op.
-            SessionCommand::CancelReconnect => {}
+    let io_result = (|| -> AppResult<()> {
+        for data in pending_input {
+            writer
+                .write_all(data.as_bytes())
+                .and_then(|_| writer.flush())
+                .map_err(local_terminal_error)?;
         }
-    }
 
-    let _ = child.kill();
-    let _ = reader_thread.join();
+        while let Some(command) = rx.blocking_recv() {
+            match command {
+                SessionCommand::Input(data) => {
+                    writer
+                        .write_all(data.as_bytes())
+                        .and_then(|_| writer.flush())
+                        .map_err(local_terminal_error)?;
+                }
+                SessionCommand::ZmodemResponse { .. }
+                | SessionCommand::ZmodemConflictResponse { .. }
+                | SessionCommand::CancelZmodem { .. } => {}
+                SessionCommand::Resize(size) => {
+                    pair.master
+                        .resize(pty_size(&size))
+                        .map_err(local_terminal_error)?;
+                }
+                SessionCommand::Close => {
+                    emit_status(&app_handle, &session_id, SessionStatus::Disconnecting, None);
+                    break;
+                }
+                // Local sessions never reconnect, so this is a no-op.
+                SessionCommand::CancelReconnect => {}
+            }
+        }
+        Ok(())
+    })();
+
+    terminate_local_processes(&*pair.master, &mut *child);
+    // Release our PTY handles after terminating the foreground process group.
+    // A descendant holding a slave must not block the close acknowledgment.
+    drop(writer);
+    drop(pair.master);
+    let _ = child.wait();
+    // Some detached jobs can retain a slave descriptor. A reader owns only
+    // output state and may finish independently; it must not block close ack.
+    drop(reader_thread);
     flushing.store(false, Ordering::Relaxed);
     let _ = flusher_thread.join();
     // Drain anything the reader buffered after the last tick, so the status
     // event below cannot overtake it.
     sink.flush();
     emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
-    Ok(())
+    io_result
+}
+
+fn terminate_local_processes(
+    master: &dyn portable_pty::MasterPty,
+    child: &mut dyn portable_pty::Child,
+) {
+    #[cfg(unix)]
+    {
+        let foreground = master.as_raw_fd().map(|fd| unsafe { libc::tcgetpgrp(fd) });
+        let shell = child.process_id().and_then(|pid| i32::try_from(pid).ok());
+        for group in [foreground, shell].into_iter().flatten() {
+            // Only terminal-owned process groups; never signal our own group.
+            if group > 1 && group != unsafe { libc::getpgrp() } {
+                unsafe {
+                    libc::killpg(group, libc::SIGHUP);
+                    libc::killpg(group, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = master;
+        if let Some(pid) = child.process_id() {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000)
+                .output();
+        }
+    }
+    let _ = child.kill();
 }
 
 /// Resolve the actual xterm geometry before a local shell prints its first
@@ -3446,6 +3520,62 @@ mod tests {
     use crate::ssh::zmodem::{ZmodemDownloadProbe, ZmodemFinishFilter, ZmodemProbe};
     use tokio::io::AsyncWriteExt;
     use zmodem2::{Action, Receiver, Sender};
+
+    #[cfg(unix)]
+    #[test]
+    fn closing_local_terminal_terminates_foreground_job_not_only_shell() {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::{
+            io::Write,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("open test PTY");
+        let mut command = CommandBuilder::new("/bin/bash");
+        command.args(["--noprofile", "--norc", "-i"]);
+        let mut child = pair.slave.spawn_command(command).expect("spawn test shell");
+        drop(pair.slave);
+        let shell = child.process_id().expect("shell PID") as i32;
+        let fd = pair.master.as_raw_fd().expect("master fd");
+        let mut writer = pair.master.take_writer().expect("PTY writer");
+        writer
+            .write_all(b"sleep 60\r")
+            .expect("start foreground job");
+        writer.flush().expect("flush test command");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let foreground = loop {
+            let group = unsafe { libc::tcgetpgrp(fd) };
+            if group > 1 && group != shell {
+                break Some(group);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        super::terminate_local_processes(&*pair.master, &mut *child);
+        child.wait().expect("reap test shell");
+        drop(writer);
+        drop(pair.master);
+        let foreground = foreground.expect("foreground task has its own process group");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while unsafe { libc::killpg(foreground, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            unsafe { libc::killpg(foreground, 0) },
+            -1,
+            "foreground job must not survive closure"
+        );
+    }
 
     #[test]
     fn finished_sz_keeps_typed_command_until_oo_and_shell_return() {

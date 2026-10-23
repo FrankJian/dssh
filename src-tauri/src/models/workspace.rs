@@ -33,6 +33,8 @@ pub struct DetachedTerminalWorkspace {
     /// changes inside a split layout.
     pub tab_session_id: String,
     pub session_ids: Vec<String>,
+    #[serde(default)]
+    pub auto_title: bool,
     /// Serialized pane layout owned by the renderer. Keeping the shape opaque
     /// lets UI-only layout revisions remain backward compatible with a running
     /// desktop process.
