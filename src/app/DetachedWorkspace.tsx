@@ -476,7 +476,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
             getPaneLabel={(sessionId) => `Pane ${Math.max(0, paneSessionIds(layout).indexOf(sessionId)) + 1}`}
             getBacklog={terminal.getBacklog}
             subscribeOutput={terminal.subscribeOutput}
-            onPaneData={(id, data) => void terminal.writeToSession(id, data)}
+            onPaneData={(id, data) => terminal.writeToSession(id, data)}
             onPaneResize={(id, size) => void terminal.resizeSession(id, size)}
             onFocusPane={(id) => { panes.focusPane(id); terminal.setActiveSessionId(id); }}
             onClosePane={closePane}

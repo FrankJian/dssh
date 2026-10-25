@@ -301,6 +301,10 @@ function MainApp() {
   const { setThemeMode, themeMode } = useTheme();
   const appLock = useAppLock();
   const {
+    commandCompletion,
+    setCommandCompletion,
+    commandHistoryLimit,
+    setCommandHistoryLimit,
     copyOnSelect,
     fontFamily,
     fontSize,
@@ -1646,7 +1650,7 @@ function MainApp() {
         getPaneLabel={paneName}
         getBacklog={getBacklog}
         subscribeOutput={subscribeOutput}
-        onPaneData={(id, data) => void writeToSession(id, data)}
+        onPaneData={(id, data) => writeToSession(id, data)}
         onPaneResize={(id, size) => void resizeSession(id, size)}
         onFocusPane={(sessionId) => {
           panes.focusPane(sessionId);
@@ -2099,6 +2103,10 @@ function MainApp() {
       ) : null}
       {isSettingsOpen ? (
         <SettingsDialog
+          commandCompletion={commandCompletion}
+          onCommandCompletionChange={setCommandCompletion}
+          commandHistoryLimit={commandHistoryLimit}
+          onCommandHistoryLimitChange={setCommandHistoryLimit}
           aiConfig={aiConfig}
           appLockStatus={appLock.status}
           editorSettings={editorSettings}

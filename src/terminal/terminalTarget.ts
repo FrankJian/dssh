@@ -26,11 +26,17 @@ function ipInTerminalTitle(title: string): string | null {
   return candidate && validIpv4(candidate) ? candidate : null;
 }
 
+/** KoKo sets OSC 2 to `ssh://account@asset-address` after opening the asset. */
+function ipInKokoTitle(title: string): string | null {
+  const candidate = /^(?:ssh|telnet):\/\/[^\r\n]*@((?:\d{1,3}\.){3}\d{1,3})(?=[:/\s]|$)/i.exec(title)?.[1];
+  return candidate && validIpv4(candidate) ? candidate : null;
+}
+
 /** JumpServer direct-login usernames include the asset address before the gateway. */
 export function jumpServerAssetIp(username: string): string | null {
   const parts = username.split("@");
-  if (parts.length < 4) return null;
-  const candidate = parts[parts.length - 2] ?? "";
+  if (parts.length < 3) return null;
+  const candidate = parts.length === 3 ? parts[2] : parts[parts.length - 2] ?? "";
   return validIpv4(candidate) ? candidate : null;
 }
 
@@ -106,13 +112,32 @@ export class TerminalTargetTracker {
           break;
       }
     }
+    this.inspectJumpServerMenu(this.line);
     this.inspectPrompt(this.line);
     return this.target !== before ? this.target : undefined;
   }
 
+  private inspectJumpServerMenu(line: string): void {
+    // KoKo returns to Opt> after exiting an asset, often without repeating its
+    // welcome banner. Clear the old asset so the next selection can be tracked.
+    if (!/^Opt\s*[>:]\s*$/i.test(line.trim())) return;
+    if (this.atShell) this.assetIds.clear();
+    this.jumpServer = true;
+    this.atShell = false;
+    this.pendingAssetIp = null;
+    this.input = "";
+    this.target = null;
+  }
+
   private finishOsc(): void {
     const title = /^(?:0|2);(.*)$/.exec(this.osc)?.[1];
-    if (title && (!this.jumpServer || this.atShell || this.pendingAssetIp)) {
+    const kokoIp = title ? ipInKokoTitle(title) : null;
+    if (kokoIp) {
+      this.jumpServer = true;
+      this.atShell = true;
+      this.pendingAssetIp = null;
+      this.target = kokoIp;
+    } else if (title && (!this.jumpServer || this.atShell || this.pendingAssetIp)) {
       const ip = ipInTerminalTitle(title);
       if (ip && (!this.jumpServer || this.atShell || ip === this.pendingAssetIp)) this.target = ip;
     }
@@ -122,6 +147,7 @@ export class TerminalTargetTracker {
 
   private finishLine(): void {
     const line = this.line.trim();
+    this.inspectJumpServerMenu(line);
     if (/^(?:Welcome to|欢迎使用).*JumpServer|^(?:JumpServer|KoKo)(?:\s|$)/i.test(line)) {
       this.jumpServer = true;
       this.atShell = false;
@@ -131,15 +157,19 @@ export class TerminalTargetTracker {
     }
     if (this.jumpServer && !this.atShell) {
       // Asset selection tables use a numeric ID plus an IP/address column.
-      const row = /^(\d{1,5})[.)]?\s+.+$/.exec(line);
+      const row = /^(?:Opt\s*[>:]\s*)?(\d{1,5})[.)]?\s+.+$/i.exec(line);
       const ip = row && firstIp(row[0]);
       if (row && ip) this.assetIds.set(row[1], ip);
-      const connected = /(?:connected\s+to|连接(?:到|至)?[^\r\n]{0,80}成功|成功连接(?:到|至)?)/i.test(line);
-      if (connected) {
-        const connectedIp = firstIp(line);
-        if (connectedIp) {
-          this.target = connectedIp;
-          this.atShell = true;
+      const connecting = /(?:connect(?:ed|ing)\s+to|开始连接到|正在连接到|连接(?:到|至)?[^\r\n]{0,80}成功|成功连接(?:到|至)?)/i.test(line);
+      if (connecting) {
+        const assetIp = firstIp(line);
+        if (assetIp) {
+          if (/(?:connected\s+to|连接(?:到|至)?[^\r\n]{0,80}成功|成功连接(?:到|至)?)/i.test(line)) {
+            this.target = assetIp;
+            this.atShell = true;
+          } else {
+            this.pendingAssetIp = assetIp;
+          }
         }
       }
     }
@@ -149,13 +179,16 @@ export class TerminalTargetTracker {
   private inspectPrompt(line: string): void {
     if (!SHELL_PROMPT.test(line)) return;
     if (this.jumpServer) {
-      if (this.pendingAssetIp) {
+      const ip = /[\w.-]+@((?:\d{1,3}\.){3}\d{1,3})/.exec(line)?.[1];
+      if (ip && validIpv4(ip)) {
+        // The shell's own host is stronger evidence than a preceding menu row.
+        this.target = ip;
+        this.pendingAssetIp = null;
+        this.atShell = true;
+      } else if (this.pendingAssetIp) {
         this.target = this.pendingAssetIp;
         this.pendingAssetIp = null;
         this.atShell = true;
-      } else if (this.atShell) {
-        const ip = /[\w.-]+@((?:\d{1,3}\.){3}\d{1,3})/.exec(line)?.[1];
-        if (ip && validIpv4(ip)) this.target = ip;
       }
       return;
     }

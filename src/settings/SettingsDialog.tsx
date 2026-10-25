@@ -7,6 +7,13 @@ import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
+import {
+  clampCommandHistoryLimit,
+  clearCommandHistory,
+  COMMAND_HISTORY_DEFAULT_LIMIT,
+  COMMAND_HISTORY_MAX_LIMIT,
+  COMMAND_HISTORY_MIN_LIMIT,
+} from "../terminal/commandCompletion";
 import { AppLockSettings } from "./AppLockSettings";
 import type { AppLockStatus, UpdateAppLockSettingsRequest } from "../services/appLockService";
 import {
@@ -55,6 +62,10 @@ import {
 export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "security" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
+  commandCompletion: boolean;
+  onCommandCompletionChange: (value: boolean) => void;
+  commandHistoryLimit: number;
+  onCommandHistoryLimitChange: (value: number) => void;
   aiConfig: AiConfig;
   appLockStatus: AppLockStatus | null;
   onAppLockSettingsChange: (request: UpdateAppLockSettingsRequest) => Promise<void>;
@@ -171,6 +182,10 @@ function buildFontOptions(systemFamilies: readonly string[], currentValues: read
 }
 
 export function SettingsDialog({
+  commandCompletion,
+  onCommandCompletionChange,
+  commandHistoryLimit,
+  onCommandHistoryLimitChange,
   aiConfig,
   appLockStatus,
   copyOnSelect,
@@ -228,6 +243,17 @@ export function SettingsDialog({
         : initialCategory ?? "appearance"
     ),
   );
+  const [commandHistoryLimitDraft, setCommandHistoryLimitDraft] = useState(String(commandHistoryLimit));
+  const [confirmClearCommandHistory, setConfirmClearCommandHistory] = useState(false);
+  const [commandHistoryCleared, setCommandHistoryCleared] = useState(false);
+  useEffect(() => setCommandHistoryLimitDraft(String(commandHistoryLimit)), [commandHistoryLimit]);
+  const commitCommandHistoryLimit = () => {
+    const next = commandHistoryLimitDraft.trim()
+      ? clampCommandHistoryLimit(Number(commandHistoryLimitDraft))
+      : commandHistoryLimit;
+    setCommandHistoryLimitDraft(String(next));
+    if (next !== commandHistoryLimit) onCommandHistoryLimitChange(next);
+  };
   const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>([]);
   const [yamlText, setYamlText] = useState("");
   const [configMessage, setConfigMessage] = useState<string | null>(null);
@@ -549,6 +575,67 @@ export function SettingsDialog({
 
             {category === "terminal" ? (
               <section className="settings-section" aria-label="终端设置">
+                <div className="settings-section__head">
+                  <h3>命令补全</h3>
+                  <p>记住本机终端中输入并回显过的单行命令，在所有服务器和本地终端共享。输入前缀后可用 ↑ ↓ 选择，Tab 填入；历史保存在本机。</p>
+                </div>
+                <label className="checkbox-field">
+                  <input
+                    checked={commandCompletion}
+                    onChange={(event) => {
+                      const enabled = event.currentTarget.checked;
+                      if (!enabled) {
+                        setConfirmClearCommandHistory(false);
+                        setCommandHistoryCleared(false);
+                      }
+                      onCommandCompletionChange(enabled);
+                    }}
+                    type="checkbox"
+                  />
+                  启用全局命令补全（默认关闭）
+                </label>
+                {commandCompletion ? (
+                  <>
+                    <label className="settings-field settings-field--short">
+                      <span className="settings-field__label">保存的历史命令条数</span>
+                      <input
+                        className="settings-number"
+                        max={COMMAND_HISTORY_MAX_LIMIT}
+                        min={COMMAND_HISTORY_MIN_LIMIT}
+                        onBlur={commitCommandHistoryLimit}
+                        onChange={(event) => setCommandHistoryLimitDraft(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        step="1"
+                        type="number"
+                        value={commandHistoryLimitDraft}
+                      />
+                      <span className="settings-field__hint">
+                        {COMMAND_HISTORY_MIN_LIMIT}–{COMMAND_HISTORY_MAX_LIMIT} 条，默认 {COMMAND_HISTORY_DEFAULT_LIMIT} 条。调低后会立即删除超出上限的旧记录。
+                      </span>
+                    </label>
+                    <div className="settings-history-clear">
+                      {confirmClearCommandHistory ? (
+                        <div className="settings-history-clear__confirm" role="group" aria-label="确认清空历史命令">
+                          <span>确定清空所有历史命令？此操作无法撤销。</span>
+                          <Button autoFocus onClick={() => {
+                            clearCommandHistory();
+                            setConfirmClearCommandHistory(false);
+                            setCommandHistoryCleared(true);
+                          }}>确认清空</Button>
+                          <Button onClick={() => setConfirmClearCommandHistory(false)} variant="ghost">取消</Button>
+                        </div>
+                      ) : (
+                        <Button onClick={() => {
+                          setCommandHistoryCleared(false);
+                          setConfirmClearCommandHistory(true);
+                        }} variant="ghost">清空所有历史命令</Button>
+                      )}
+                      {commandHistoryCleared ? <span className="settings-field__hint" role="status">历史命令已清空。</span> : null}
+                    </div>
+                  </>
+                ) : null}
                 <TerminalColorSettings
                   fontFamily={fontFamily}
                   fontSize={fontSize}

@@ -22,6 +22,8 @@ import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
 import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
 import { toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
+import { CommandInputTracker, commandCompletionEnabled, commandWasEchoed, matchingCommands, recordCommand } from "./commandCompletion";
+import { placeCompletionMenu, type CompletionBounds } from "./completionPosition";
 import "@xterm/xterm/css/xterm.css";
 
 /**
@@ -99,6 +101,8 @@ const windowsPtyOptions = isWindows ? ({ backend: "conpty" } as const) : undefin
  * and vim/tmux act on them.
  */
 const FOCUS_REPORTS = new Set(["\x1b[I", "\x1b[O"]);
+// Keep in sync with --terminal-completion-row-height in global.css.
+const COMPLETION_ROW_HEIGHT = 24;
 
 interface RegistryEntry {
   handle: TerminalHandle;
@@ -188,11 +192,32 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   let replaying = false;
   let restoringSnapshot = false;
   let unsubscribeOutput: (() => void) | undefined;
+  const commandInput = new CommandInputTracker();
+  let completionStartColumn: number | null = null;
+  let completionStartRow: number | null = null;
+  let pendingCommand: {
+    command: string;
+    startRow: number;
+    submittedAt: number;
+    written: boolean;
+    echoSeen: boolean;
+  } | null = null;
+  let suggestions: string[] = [];
+  let selectedSuggestion = 0;
 
   // xterm renders into this element, which travels with the instance rather
   // than with whichever view is currently showing it.
   const host = document.createElement("div");
   host.className = "terminal-view__surface";
+  const suggestionMenu = document.createElement("div");
+  suggestionMenu.className = "terminal-completion";
+  suggestionMenu.setAttribute("role", "listbox");
+  suggestionMenu.setAttribute("aria-label", "历史命令补全");
+  suggestionMenu.hidden = true;
+  const suggestionContent = document.createElement("div");
+  suggestionContent.className = "terminal-completion__content";
+  suggestionMenu.appendChild(suggestionContent);
+  host.appendChild(suggestionMenu);
 
   const terminal = new Terminal({
     allowProposedApi: false,
@@ -222,6 +247,8 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   // returning to the normal buffer; the application keeps its own cursor
   // style while it is running in the alternate screen.
   const bufferChangeDisposable = terminal.buffer.onBufferChange((buffer) => {
+    commandInput.reset();
+    hideSuggestions();
     if (buffer.type !== "normal") {
       return;
     }
@@ -261,13 +288,226 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
 
   const suppressFocusReports = isWindows && isLocalShell;
 
+  function visibleCursorLine(): string {
+    const buffer = terminal.buffer.active;
+    return buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? "";
+  }
+
+  function commandEchoVisible(command: string, startRow: number): boolean {
+    // A command may enter an alternate-screen app (for example Vim) before
+    // its write acknowledgment arrives. The shell's echoed line stays here.
+    const buffer = terminal.buffer.normal;
+    const rows = Math.min(8, Math.ceil(command.length / terminal.cols) + 3);
+    const lines: string[] = [];
+    for (let row = startRow; row < Math.min(buffer.length, startRow + rows); row += 1) {
+      lines.push(buffer.getLine(row)?.translateToString(false) ?? "");
+    }
+    return commandWasEchoed(command, lines);
+  }
+
+  function confirmPendingCommand() {
+    const pending = pendingCommand;
+    if (!pending) return;
+    if (Date.now() - pending.submittedAt > 10_000) {
+      pendingCommand = null;
+      return;
+    }
+    pending.echoSeen ||= commandEchoVisible(pending.command, pending.startRow);
+    if (pending.written && pending.echoSeen) {
+      pendingCommand = null;
+      recordCommand(pending.command);
+    }
+  }
+
+  function hideSuggestions() {
+    suggestions = [];
+    selectedSuggestion = 0;
+    suggestionMenu.hidden = true;
+    suggestionContent.replaceChildren();
+    suggestionContent.style.height = "0px";
+    suggestionMenu.scrollTop = 0;
+  }
+
+  function positionSuggestions() {
+    const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+    if (!screen || suggestionMenu.hidden) return;
+
+    const screenRect = screen.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const cellWidth = screenRect.width / terminal.cols;
+    const cellHeight = screenRect.height / terminal.rows;
+    if (!cellWidth || !cellHeight) return;
+
+    const viewport = window.visualViewport;
+    const bounds: CompletionBounds = {
+      left: Math.max(hostRect.left, viewport?.offsetLeft ?? 0),
+      top: Math.max(hostRect.top, viewport?.offsetTop ?? 0),
+      right: Math.min(hostRect.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth)),
+      bottom: Math.min(hostRect.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)),
+    };
+    for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const style = window.getComputedStyle(ancestor);
+      const rect = ancestor.getBoundingClientRect();
+      const clipLeft = rect.left + ancestor.clientLeft;
+      const clipTop = rect.top + ancestor.clientTop;
+      if (/^(auto|scroll|hidden|clip|overlay)$/.test(style.overflowX)) {
+        bounds.left = Math.max(bounds.left, clipLeft);
+        bounds.right = Math.min(bounds.right, clipLeft + ancestor.clientWidth);
+      }
+      if (/^(auto|scroll|hidden|clip|overlay)$/.test(style.overflowY)) {
+        bounds.top = Math.max(bounds.top, clipTop);
+        bounds.bottom = Math.min(bounds.bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+
+    const column = completionStartColumn ?? terminal.buffer.active.cursorX;
+    suggestionMenu.style.maxWidth = "";
+    const rowTop = screenRect.top + terminal.buffer.active.cursorY * cellHeight;
+    const placement = placeCompletionMenu(
+      bounds,
+      screenRect.left + column * cellWidth,
+      rowTop,
+      rowTop + cellHeight,
+      suggestionMenu.offsetWidth,
+      suggestions.length,
+      COMPLETION_ROW_HEIGHT,
+    );
+    if (!placement) {
+      hideSuggestions();
+      return;
+    }
+    suggestionMenu.style.maxWidth = `${placement.width}px`;
+    suggestionMenu.style.maxHeight = `${placement.height}px`;
+    suggestionMenu.style.left = `${placement.left - hostRect.left}px`;
+    suggestionMenu.style.top = `${placement.top - hostRect.top}px`;
+    revealSelectedSuggestion();
+  }
+
+  function acceptSuggestion(index: number) {
+    const command = suggestions[index];
+    if (!command || !commandInput.atPrompt || !command.startsWith(commandInput.line)) return;
+    const suffix = command.slice(commandInput.line.length);
+    hideSuggestions();
+    commandInput.line = command;
+    void Promise.resolve(props.onData?.(suffix)).catch((error: unknown) => {
+      console.error("终端补全写入失败", key, error);
+      commandInput.reset();
+    });
+    terminal.focus();
+  }
+
+  function renderSuggestionItems() {
+    if (suggestionMenu.hidden) return;
+    const first = Math.max(0, Math.floor(suggestionMenu.scrollTop / COMPLETION_ROW_HEIGHT) - 1);
+    const visibleCount = Math.ceil(suggestionMenu.clientHeight / COMPLETION_ROW_HEIGHT) + 3;
+    const items: HTMLButtonElement[] = [];
+    for (let index = first; index < Math.min(suggestions.length, first + visibleCount); index += 1) {
+      const command = suggestions[index];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "terminal-completion__item";
+      button.style.top = `${index * COMPLETION_ROW_HEIGHT}px`;
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", String(index === selectedSuggestion));
+      button.setAttribute("aria-posinset", String(index + 1));
+      button.setAttribute("aria-setsize", String(suggestions.length));
+      button.textContent = command;
+      button.title = command;
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", () => acceptSuggestion(index));
+      items.push(button);
+    }
+    suggestionContent.replaceChildren(...items);
+  }
+
+  function revealSelectedSuggestion() {
+    const top = selectedSuggestion * COMPLETION_ROW_HEIGHT;
+    const bottom = top + COMPLETION_ROW_HEIGHT;
+    const viewTop = suggestionMenu.scrollTop;
+    const viewBottom = viewTop + suggestionMenu.clientHeight - 4;
+    if (top < viewTop) suggestionMenu.scrollTop = top;
+    else if (bottom > viewBottom) suggestionMenu.scrollTop += bottom - viewBottom;
+    renderSuggestionItems();
+  }
+
+  function renderSuggestions() {
+    suggestions = commandInput.atPrompt && terminal.buffer.active.type === "normal"
+      ? matchingCommands(commandInput.line) : [];
+    if (!suggestions.length) {
+      hideSuggestions();
+      return;
+    }
+    selectedSuggestion = 0;
+    const longest = suggestions.reduce((length, command) => Math.max(length, command.length), 0);
+    suggestionMenu.style.width = `min(360px, calc(${longest}ch + 18px))`;
+    suggestionContent.style.height = `${suggestions.length * COMPLETION_ROW_HEIGHT}px`;
+    suggestionMenu.hidden = false;
+    suggestionMenu.scrollTop = 0;
+    renderSuggestionItems();
+    positionSuggestions();
+  }
+
+  suggestionMenu.addEventListener("scroll", renderSuggestionItems);
+  const onWindowScroll = (event: Event) => {
+    if (event.target !== suggestionMenu) positionSuggestions();
+  };
+  window.addEventListener("scroll", onWindowScroll, true);
+  window.addEventListener("resize", positionSuggestions);
+
+  const onCompletionSettingChange = () => {
+    if (!commandCompletionEnabled()) {
+      commandInput.reset();
+      hideSuggestions();
+    } else if (!suggestionMenu.hidden) {
+      renderSuggestions();
+    }
+  };
+  window.addEventListener("dssh:command-completion-settings", onCompletionSettingChange);
+  window.addEventListener("storage", onCompletionSettingChange);
+
   const dataDisposable = terminal.onData((data) => {
     if (replaying || (suppressFocusReports && FOCUS_REPORTS.has(data))) {
       return;
     }
+    confirmPendingCommand();
+    let submitted: typeof pendingCommand = null;
+    if (sessionId && commandCompletionEnabled() && terminal.buffer.active.type === "normal") {
+      const startsLine = commandInput.line.length === 0;
+      const startColumn = terminal.buffer.active.cursorX;
+      const startRow = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
+      const command = commandInput.observe(data, visibleCursorLine());
+      if (startsLine && commandInput.atPrompt && commandInput.line) {
+        completionStartColumn = startColumn;
+        completionStartRow = startRow;
+      }
+      if (command) {
+        pendingCommand = {
+          command,
+          startRow: completionStartRow ?? startRow,
+          submittedAt: Date.now(),
+          written: false,
+          echoSeen: false,
+        };
+        submitted = pendingCommand;
+      }
+      if (!commandInput.atPrompt) {
+        completionStartColumn = null;
+        completionStartRow = null;
+      }
+      renderSuggestions();
+    } else {
+      commandInput.reset();
+      hideSuggestions();
+    }
     // Dropping keystrokes silently is what made this class of bug so hard to
     // see; a failed write must at least leave a trace.
-    void Promise.resolve(props.onData?.(data)).catch((error: unknown) => {
+    void Promise.resolve(props.onData?.(data)).then(() => {
+      if (submitted && pendingCommand === submitted) {
+        submitted.written = true;
+        confirmPendingCommand();
+      }
+    }).catch((error: unknown) => {
+      if (submitted && pendingCommand === submitted) pendingCommand = null;
       console.error("终端输入写入失败", key, error);
     });
     if (!sessionId) {
@@ -285,6 +525,27 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // listener would never fire. Returning false makes xterm skip the key.
     if (isAppShortcut(event)) {
       return false;
+    }
+
+    if (!suggestionMenu.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      selectedSuggestion = (selectedSuggestion + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+      revealSelectedSuggestion();
+      return false;
+    }
+    if (!suggestionMenu.hidden && event.key === "Tab" && !event.shiftKey) {
+      event.preventDefault();
+      acceptSuggestion(selectedSuggestion);
+      return false;
+    }
+    if (!suggestionMenu.hidden && event.key === "Escape") {
+      event.preventDefault();
+      hideSuggestions();
+      return false;
+    }
+    if (commandInput.atPrompt && ["ArrowLeft", "ArrowRight", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      commandInput.reset();
+      hideSuggestions();
     }
 
     if (matchesShortcut(event, "increaseTerminalFont")) {
@@ -361,6 +622,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     }
 
     lastSize = nextSize;
+    positionSuggestions();
     void Promise.resolve(props.onResize?.(nextSize)).catch(() => {});
   }
 
@@ -561,7 +823,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
           }
         }
         unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) => {
-          terminal.write(data);
+          terminal.write(data, confirmPendingCommand);
         });
       } else {
         terminal.write(welcomeOutput.join("\r\n"));
@@ -580,6 +842,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       return;
     }
     container = null;
+    hideSuggestions();
     host.remove();
     syncRenderer();
   }
@@ -599,6 +862,11 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     host.removeEventListener("wheel", handleWheel);
     host.removeEventListener("paste", handlePaste, true);
     host.removeEventListener("contextmenu", handleContextMenu);
+    suggestionMenu.removeEventListener("scroll", renderSuggestionItems);
+    window.removeEventListener("scroll", onWindowScroll, true);
+    window.removeEventListener("resize", positionSuggestions);
+    window.removeEventListener("dssh:command-completion-settings", onCompletionSettingChange);
+    window.removeEventListener("storage", onCompletionSettingChange);
     unsubscribeOutput?.();
     bufferChangeDisposable.dispose();
     selectionDisposable.dispose();

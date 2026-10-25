@@ -18,7 +18,7 @@ interface PaneGridProps {
   getPaneLabel: (sessionId: string) => string;
   getBacklog: (sessionId: string) => string;
   subscribeOutput: (sessionId: string, listener: TerminalOutputListener) => () => void;
-  onPaneData: (sessionId: string, data: string) => void;
+  onPaneData: (sessionId: string, data: string) => Promise<void> | void;
   onPaneResize: (sessionId: string, size: TerminalSize) => void;
   onFocusPane: (sessionId: string) => void;
   onClosePane: (sessionId: string) => void;

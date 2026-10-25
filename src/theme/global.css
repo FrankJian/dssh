@@ -4421,8 +4421,65 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
    the terminal down; it must not create a stacking context or the wallpaper
    layers below would stop compositing with .xterm. */
 .terminal-view__surface {
+  position: relative;
   width: 100%;
   height: 100%;
+}
+
+.terminal-completion {
+  --terminal-completion-row-height: 24px;
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, calc(100% - var(--space-2)));
+  /* Six 24px rows plus padding and border; extra matches scroll below. */
+  max-height: min(150px, 45%);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  font: 12px/24px var(--font-mono);
+}
+
+.terminal-completion[hidden] { display: none; }
+
+.terminal-completion::-webkit-scrollbar { width: 8px; }
+.terminal-completion::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.terminal-completion__content {
+  position: relative;
+}
+
+.terminal-completion__item {
+  position: absolute;
+  left: 0;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--terminal-completion-row-height);
+  overflow: hidden;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.terminal-completion__item[aria-selected="true"],
+.terminal-completion__item:hover {
+  background: var(--bg-selected);
+  color: var(--text-strong);
 }
 
 .terminal-view .xterm {
@@ -6259,6 +6316,25 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .settings-field {
   display: grid;
   gap: 6px;
+}
+
+.settings-field--short {
+  max-width: 220px;
+}
+
+.settings-history-clear {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+
+.settings-history-clear__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .settings-field__label {

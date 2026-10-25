@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  commandCompletionEnabled,
+  getCommandHistoryLimit,
+  setCommandCompletionEnabled as saveCommandCompletionEnabled,
+  setCommandHistoryLimit as saveCommandHistoryLimit,
+} from "../terminal/commandCompletion";
+import {
   clampFontSize,
   clampS3TransferConcurrency,
   COPY_ON_SELECT_DEFAULT,
@@ -59,6 +65,8 @@ function getStoredS3TransferConcurrency(key: string): number {
 }
 
 export function useTerminalSettings() {
+  const [commandCompletion, setCommandCompletionState] = useState(commandCompletionEnabled);
+  const [commandHistoryLimit, setCommandHistoryLimitState] = useState(getCommandHistoryLimit);
   const [fontSize, setFontSizeState] = useState<number>(() => getStoredFontSize());
   const [fontFamily, setFontFamilyState] = useState<string>(() => getStoredFontFamily());
   const [lineHeight, setLineHeightState] = useState<number>(() => {
@@ -167,6 +175,24 @@ export function useTerminalSettings() {
     setCopyOnSelectState(value);
   }, []);
 
+  const setCommandCompletion = useCallback((value: boolean) => {
+    saveCommandCompletionEnabled(value);
+    setCommandCompletionState(value);
+  }, []);
+
+  const setCommandHistoryLimit = useCallback((value: number) => {
+    setCommandHistoryLimitState(saveCommandHistoryLimit(value));
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      setCommandCompletionState(commandCompletionEnabled());
+      setCommandHistoryLimitState(getCommandHistoryLimit());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+
   const setGpuAcceleration = useCallback((value: boolean) => {
     setGpuAccelerationState(value);
   }, []);
@@ -248,6 +274,10 @@ export function useTerminalSettings() {
   }, []);
 
   return {
+    commandCompletion,
+    setCommandCompletion,
+    commandHistoryLimit,
+    setCommandHistoryLimit,
     fontSize,
     setFontSize,
     increaseFontSize,
