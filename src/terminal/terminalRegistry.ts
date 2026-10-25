@@ -138,6 +138,11 @@ export function hasTerminalInstance(sessionId: string): boolean {
   return instances.has(sessionId);
 }
 
+export function terminalSize(sessionId: string): TerminalSize | null {
+  const terminal = instances.get(sessionId)?.handle.terminal;
+  return terminal ? { cols: terminal.cols, rows: terminal.rows } : null;
+}
+
 export function acquireTerminal(setup: TerminalSetup): TerminalHandle {
   const key = setup.sessionId ?? WELCOME_KEY;
   const existing = instances.get(key);

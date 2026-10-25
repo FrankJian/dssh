@@ -135,10 +135,27 @@ enum SessionCommand {
 
 /// Outcome of one connect-and-run attempt for an SSH session.
 enum ConnOutcome {
-    /// The user closed the session, or the remote shell exited cleanly.
+    /// The user explicitly closed the session.
     Closed,
+    /// The remote shell ended without a close request from the UI.
+    ShellExited,
     /// The transport dropped unexpectedly — eligible for grace reconnect.
     Dropped,
+}
+
+fn classify_channel_end(
+    outcome: ConnOutcome,
+    channel_closed_without_status: bool,
+    transport_closed: bool,
+) -> ConnOutcome {
+    // Some SSH servers close a PTY channel without ExitStatus. That ends only
+    // this pane while the pooled transport remains healthy for its siblings.
+    if matches!(outcome, ConnOutcome::Dropped) && channel_closed_without_status && !transport_closed
+    {
+        ConnOutcome::ShellExited
+    } else {
+        outcome
+    }
 }
 
 #[derive(Clone)]
@@ -533,6 +550,10 @@ async fn run_ssh_session(
                 emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
                 return Ok(());
             }
+            Ok(ConnOutcome::ShellExited) => {
+                emit_status(&app_handle, &session_id, SessionStatus::Exited, None);
+                return Ok(());
+            }
             Ok(ConnOutcome::Dropped) => {
                 // A live session dropped — start a fresh grace window.
                 grace_deadline = None;
@@ -914,6 +935,7 @@ async fn connect_and_run(
     let mut input_gate: Option<ZmodemInputGate> = None;
     let mut pending_command = String::new();
     let mut close_requested = false;
+    let mut channel_closed_without_status = false;
     let outcome = 'connection: loop {
         if input_gate.as_ref().is_some_and(ZmodemInputGate::ready) {
             let mut gate = input_gate.take().expect("ready input gate exists");
@@ -922,7 +944,7 @@ async fn connect_and_run(
                 close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                 if writer.data_bytes(normalize_input(&data)).await.is_err() {
                     break 'connection if close_requested {
-                        ConnOutcome::Closed
+                        ConnOutcome::ShellExited
                     } else {
                         ConnOutcome::Dropped
                     };
@@ -1160,7 +1182,7 @@ async fn connect_and_run(
                     rearm_zmodem_probes_for_input(&data, &mut probe, &mut download_probe);
                     close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
-                        break if close_requested { ConnOutcome::Closed } else { ConnOutcome::Dropped };
+                        break if close_requested { ConnOutcome::ShellExited } else { ConnOutcome::Dropped };
                     }
                 }
                 Some(SessionCommand::ZmodemResponse { detection_id, paths }) => {
@@ -1355,8 +1377,10 @@ async fn connect_and_run(
                     }
                 }
                 Some(SessionCommand::Resize(new_size)) => {
-                    let _ = writer.window_change(new_size.cols.into(), new_size.rows.into(), 0, 0).await;
-                    *size = new_size;
+                    if size.cols != new_size.cols || size.rows != new_size.rows {
+                        let _ = writer.window_change(new_size.cols.into(), new_size.rows.into(), 0, 0).await;
+                        *size = new_size;
+                    }
                 }
                 Some(SessionCommand::Close) | None => {
                     if let Some(mut active) = transfer.take() {
@@ -1571,13 +1595,19 @@ async fn connect_and_run(
                         }
                     }
                 }
-                None => break ConnOutcome::Dropped,
+                None => {
+                    channel_closed_without_status = true;
+                    break ConnOutcome::Dropped;
+                }
             },
             result = &mut drop_rx => {
                 break match result {
-                    Ok(true) => ConnOutcome::Closed,
-                    _ if close_requested => ConnOutcome::Closed,
-                    _ => ConnOutcome::Dropped,
+                    Ok(true) => ConnOutcome::ShellExited,
+                    _ if close_requested => ConnOutcome::ShellExited,
+                    _ => {
+                        channel_closed_without_status = true;
+                        ConnOutcome::Dropped
+                    },
                 };
             }
             _ = tokio::time::sleep(flush_wait) => {
@@ -1752,7 +1782,9 @@ async fn connect_and_run(
     }
     read_task.abort();
     sink.flush();
-    if matches!(&outcome, ConnOutcome::Dropped) {
+    let transport_closed = transport.is_closed().await;
+    let outcome = classify_channel_end(outcome, channel_closed_without_status, transport_closed);
+    if matches!(&outcome, ConnOutcome::Dropped) && transport_closed {
         transport.invalidate().await;
     }
     Ok(outcome)
@@ -2677,6 +2709,7 @@ fn run_local_session(
 
     emit_status(&app_handle, &session_id, SessionStatus::Connected, None);
 
+    let mut shell_exited = false;
     let io_result = (|| -> AppResult<()> {
         for data in pending_input {
             writer
@@ -2685,7 +2718,24 @@ fn run_local_session(
                 .map_err(local_terminal_error)?;
         }
 
-        while let Some(command) = rx.blocking_recv() {
+        loop {
+            // A local `exit` closes the child without sending a session command.
+            // Wake periodically to notice it while still receiving typed input
+            // immediately when a command arrives.
+            let command = tauri::async_runtime::block_on(async {
+                tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+            });
+            let command = match command {
+                Ok(Some(command)) => command,
+                Ok(None) => break,
+                Err(_) => {
+                    if child.try_wait().map_err(local_terminal_error)?.is_some() {
+                        shell_exited = true;
+                        break;
+                    }
+                    continue;
+                }
+            };
             match command {
                 SessionCommand::Input(data) => {
                     writer
@@ -2712,7 +2762,9 @@ fn run_local_session(
         Ok(())
     })();
 
-    terminate_local_processes(&*pair.master, &mut *child);
+    if !shell_exited {
+        terminate_local_processes(&*pair.master, &mut *child);
+    }
     // Release our PTY handles after terminating the foreground process group.
     // A descendant holding a slave must not block the close acknowledgment.
     drop(writer);
@@ -2726,7 +2778,16 @@ fn run_local_session(
     // Drain anything the reader buffered after the last tick, so the status
     // event below cannot overtake it.
     sink.flush();
-    emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
+    emit_status(
+        &app_handle,
+        &session_id,
+        if shell_exited {
+            SessionStatus::Exited
+        } else {
+            SessionStatus::Disconnected
+        },
+        None,
+    );
     io_result
 }
 
@@ -3509,17 +3570,34 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
+        ConnOutcome, OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
         SessionCommand, ZmodemDownloadFile, ZmodemFinishKind, ZmodemInputGate,
-        ZmodemPendingConflict, finish_staged_zmodem_overwrite, input_requests_clean_exit,
-        login_shell_args, normalize_input, rearm_zmodem_probes_for_input, remaining_otp_attempts,
-        resolve_remote_forward_target, stage_zmodem_overwrite, wait_for_initial_local_resize,
-        zmodem_download_file_name, zmodem_stage_path,
+        ZmodemPendingConflict, classify_channel_end, finish_staged_zmodem_overwrite,
+        input_requests_clean_exit, login_shell_args, normalize_input,
+        rearm_zmodem_probes_for_input, remaining_otp_attempts, resolve_remote_forward_target,
+        stage_zmodem_overwrite, wait_for_initial_local_resize, zmodem_download_file_name,
+        zmodem_stage_path,
     };
     use crate::models::terminal::TerminalSize;
     use crate::ssh::zmodem::{ZmodemDownloadProbe, ZmodemFinishFilter, ZmodemProbe};
     use tokio::io::AsyncWriteExt;
     use zmodem2::{Action, Receiver, Sender};
+
+    #[test]
+    fn a_shell_channel_closing_does_not_drop_other_sessions_on_live_transport() {
+        assert!(matches!(
+            classify_channel_end(ConnOutcome::Dropped, true, false),
+            ConnOutcome::ShellExited
+        ));
+        assert!(matches!(
+            classify_channel_end(ConnOutcome::Dropped, true, true),
+            ConnOutcome::Dropped
+        ));
+        assert!(matches!(
+            classify_channel_end(ConnOutcome::Dropped, false, false),
+            ConnOutcome::Dropped
+        ));
+    }
 
     #[cfg(unix)]
     #[test]

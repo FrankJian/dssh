@@ -134,7 +134,9 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
   const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
+  const [ownedSessionIds, setOwnedSessionIds] = useState<string[]>(() => descriptor?.sessionIds ?? []);
   const sessionCountRef = useRef(0);
+  const handledShellExitsRef = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -173,12 +175,16 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
   }, [sessionBarHidden]);
 
+  const layout = descriptor
+    ? panes.findLayoutByTab(descriptor.tabSessionId)
+      ?? panes.layouts.find((item) => paneSessionIds(item).some((id) => ownedSessionIds.includes(id)))
+      ?? null
+    : null;
   const visibleSessions = useMemo(() => {
-    const ids = new Set(descriptor?.sessionIds ?? []);
+    const ids = new Set([...ownedSessionIds, ...paneSessionIds(layout)]);
     return terminal.sessions.filter((session) => ids.has(session.id));
-  }, [descriptor?.sessionIds, terminal.sessions]);
+  }, [layout, ownedSessionIds, terminal.sessions]);
   sessionCountRef.current = terminal.isSessionsLoaded ? visibleSessions.length : descriptor?.sessionIds.length ?? 0;
-  const layout = descriptor ? panes.findLayoutByTab(descriptor.tabSessionId) : null;
   const activeSession = visibleSessions.find((session) => session.id === terminal.activeSessionId)
     ?? visibleSessions.find((session) => session.id === layout?.focusedPaneId)
     ?? visibleSessions[0]
@@ -253,7 +259,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   // same session IDs while this renderer is open.
   useEffect(() => {
     if (!descriptor || !appliedInitialLayout.current || !terminal.isSessionsLoaded) return;
-    const latestLayout = panes.findLayoutByTab(descriptor.tabSessionId) ?? null;
+    const latestLayout = layout;
     const sessionIds = latestLayout ? paneSessionIds(latestLayout) : visibleSessions.map((item) => item.id);
     void updateDetachedTerminalWorkspace(workspace.label, {
       autoTitle: descriptor.autoTitle,
@@ -264,7 +270,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       // A close can race this best-effort sync; the native close event still
       // restores the last registered state safely.
     });
-  }, [descriptor, panes.layouts, terminal.isSessionsLoaded, visibleSessions, workspace.label]);
+  }, [descriptor, layout, terminal.isSessionsLoaded, visibleSessions, workspace.label]);
 
   // Destroy rather than close: every path below has already decided what
   // happens to the sessions, and `close()` would bounce back through the
@@ -275,7 +281,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
 
   const handleReturn = useCallback(async () => {
     if (descriptor) {
-      const latestLayout = panes.findLayoutByTab(descriptor.tabSessionId) ?? null;
+      const latestLayout = layout;
       const sessionIds = latestLayout ? paneSessionIds(latestLayout) : visibleSessions.map((item) => item.id);
       const terminalSnapshots = Object.fromEntries(
         sessionIds.flatMap((sessionId) => {
@@ -295,7 +301,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       });
     }
     await closeWindow();
-  }, [closeWindow, descriptor, panes, visibleSessions, workspace.label]);
+  }, [closeWindow, descriptor, layout, visibleSessions, workspace.label]);
 
   const closeTab = useCallback(async (confirmed = false) => {
     const ids = layout ? paneSessionIds(layout)
@@ -351,18 +357,27 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     const profile = activeSession.kind === "ssh"
       ? profilesState.profiles.find((item) => item.id === activeSession.profileId) ?? null
       : null;
+    if (activeSession.kind === "ssh" && !profile) {
+      toast("原终端的连接配置已不存在，无法创建分屏。", "error");
+      return;
+    }
     try {
-      const next = profile ? await terminal.startSession(profile) : await terminal.startLocalSession();
+      const next = activeSession.kind === "ssh"
+        ? await terminal.startSession(profile!, undefined, { activate: false })
+        : await terminal.startLocalSession({ activate: false });
+      setOwnedSessionIds((current) => [...current, next.id]);
       panes.split(dir, activeSession.id, next.id);
+      terminal.setActiveSessionId(next.id);
+      setTerminalFullscreenPaneId(null);
     } catch (error) {
       toast(error instanceof Error ? error.message : "拆分终端失败。", "error");
     }
   }, [activeSession, panes, profilesState.profiles, terminal]);
 
-  const closePane = useCallback(async (sessionId: string) => {
-    if (!await confirmClose([sessionId], "终端分屏")) return;
+  const handleShellExited = useCallback(async (sessionId: string) => {
     try {
       await terminal.closeSession(sessionId);
+      setOwnedSessionIds((current) => current.filter((id) => id !== sessionId));
     } catch (error) {
       toast(error instanceof Error ? error.message : "关闭终端失败，请重试。", "error");
       return;
@@ -378,7 +393,16 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     }
     panes.removePane(sessionId);
     terminal.setActiveSessionId(remaining[0] ?? null);
-  }, [closeWindow, confirmClose, panes, terminal, terminalFullscreenPaneId, workspace.label]);
+  }, [closeWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
+
+  useEffect(() => {
+    if (!terminal.isSessionsLoaded || !appliedInitialLayout.current) return;
+    for (const session of visibleSessions) {
+      if (session.status !== "exited" || handledShellExitsRef.current.has(session.id)) continue;
+      handledShellExitsRef.current.add(session.id);
+      void handleShellExited(session.id);
+    }
+  }, [handleShellExited, terminal.isSessionsLoaded, visibleSessions]);
 
   const sessionLabel = activeSession
     ? activeProfile ? `${activeProfile.username}@${activeProfile.host}:${activeProfile.port}` : activeSession.title
@@ -423,7 +447,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   }
 
   return (
-    <div className="detached-workspace">
+    <div className={`detached-workspace${isMacOS && terminalFullscreenPaneId ? " detached-workspace--mac-chrome-hidden" : ""}`}>
       {terminalFullscreenPaneId ? null : <DetachedTitlebar title={displayTitle} onReturn={handleReturn} />}
       {closeDialog}
       {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar is-glass-chrome">
@@ -473,13 +497,11 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
             focusedPaneId={layout.focusedPaneId}
             zoomedPaneId={terminalFullscreenPaneId}
             sessions={visibleSessions}
-            getPaneLabel={(sessionId) => `Pane ${Math.max(0, paneSessionIds(layout).indexOf(sessionId)) + 1}`}
             getBacklog={terminal.getBacklog}
             subscribeOutput={terminal.subscribeOutput}
             onPaneData={(id, data) => terminal.writeToSession(id, data)}
             onPaneResize={(id, size) => void terminal.resizeSession(id, size)}
             onFocusPane={(id) => { panes.focusPane(id); terminal.setActiveSessionId(id); }}
-            onClosePane={closePane}
             onRatios={panes.setRatios}
             fontSize={settings.fontSize}
             fontFamily={settings.fontFamily}

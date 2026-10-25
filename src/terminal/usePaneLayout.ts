@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
 export type SplitDir = "h" | "v";
-export const MAX_PANES = 4;
 
 export interface PaneLeaf {
   type: "leaf";
@@ -33,24 +32,83 @@ export function paneSessionIds(node: PaneNode | PaneLayout | null): string[] {
     : [...paneSessionIds(node.children[0]), ...paneSessionIds(node.children[1])];
 }
 
-function replaceLeaf(node: PaneNode, sessionId: string, replacement: PaneNode): PaneNode {
-  if (node.type === "leaf") return node.sessionId === sessionId ? replacement : node;
-  return {
-    ...node,
-    children: [
-      replaceLeaf(node.children[0], sessionId, replacement),
-      replaceLeaf(node.children[1], sessionId, replacement),
-    ],
-  };
-}
-
 function removeLeaf(node: PaneNode, sessionId: string): PaneNode | null {
   if (node.type === "leaf") return node.sessionId === sessionId ? null : node;
   const first = removeLeaf(node.children[0], sessionId);
   const second = removeLeaf(node.children[1], sessionId);
   if (!first) return second;
   if (!second) return first;
-  return { ...node, children: [first, second] };
+  if (first === node.children[0] && second === node.children[1]) return node;
+  const children: [PaneNode, PaneNode] = [first, second];
+  const changedSpan = axisSpan(first, node.dir) !== axisSpan(node.children[0], node.dir)
+    || axisSpan(second, node.dir) !== axisSpan(node.children[1], node.dir);
+  return { ...node, children, ratios: changedSpan ? axisRatios(children, node.dir) : node.ratios };
+}
+
+function axisSpan(node: PaneNode, dir: SplitDir): number {
+  return node.type === "split" && node.dir === dir
+    ? axisSpan(node.children[0], dir) + axisSpan(node.children[1], dir)
+    : 1;
+}
+
+function axisRatios(children: [PaneNode, PaneNode], dir: SplitDir): [number, number] {
+  const first = axisSpan(children[0], dir);
+  const second = axisSpan(children[1], dir);
+  return [first / (first + second), second / (first + second)];
+}
+
+/** Divide each axis equally without counting splits on the other axis. */
+export function balancePaneTree(node: PaneNode): PaneNode {
+  if (node.type === "leaf") return node;
+  const first = balancePaneTree(node.children[0]);
+  const second = balancePaneTree(node.children[1]);
+  const children: [PaneNode, PaneNode] = [first, second];
+  return {
+    ...node,
+    children,
+    ratios: axisRatios(children, node.dir),
+  };
+}
+
+/** A new split only changes ratios along its own axis on the path to that pane. */
+export function splitPaneTree(node: PaneNode, sessionId: string, replacement: PaneSplit): PaneNode {
+  if (node.type === "leaf") return node.sessionId === sessionId ? replacement : node;
+  const children: [PaneNode, PaneNode] = [
+    splitPaneTree(node.children[0], sessionId, replacement),
+    splitPaneTree(node.children[1], sessionId, replacement),
+  ];
+  if (children[0] === node.children[0] && children[1] === node.children[1]) return node;
+  return {
+    ...node,
+    children,
+    ratios: node.dir === replacement.dir ? axisRatios(children, node.dir) : node.ratios,
+  };
+}
+
+export function prunePaneLayouts(layouts: PaneLayout[], removedSessionIds: ReadonlySet<string>): PaneLayout[] {
+  if (removedSessionIds.size === 0) return layouts;
+  let changedAny = false;
+  const next = layouts.flatMap((layout) => {
+    let root: PaneNode | null = layout.root;
+    let changed = false;
+    for (const sessionId of paneSessionIds(layout)) {
+      if (removedSessionIds.has(sessionId) && root) {
+        root = removeLeaf(root, sessionId);
+        changed = true;
+      }
+    }
+    if (!changed) return [layout];
+    changedAny = true;
+    if (root?.type !== "split") return [];
+    const remaining = paneSessionIds(root);
+    return [{
+      ...layout,
+      root,
+      tabSessionId: remaining.includes(layout.tabSessionId) ? layout.tabSessionId : remaining[0]!,
+      focusedPaneId: remaining.includes(layout.focusedPaneId) ? layout.focusedPaneId : remaining[0]!,
+    }];
+  });
+  return changedAny ? next : layouts;
 }
 
 function setSplitRatios(node: PaneNode, splitId: string, ratios: [number, number]): PaneNode {
@@ -85,10 +143,7 @@ export function usePaneLayout() {
     [layouts],
   );
 
-  const canSplit = useCallback(
-    (sessionId: string | null) => sessionId ? paneSessionIds(findLayout(sessionId)).length < MAX_PANES : false,
-    [findLayout],
-  );
+  const canSplit = useCallback((sessionId: string | null) => Boolean(sessionId), []);
 
   const split = useCallback((dir: SplitDir, currentId: string, newSessionId: string) => {
     const makeSplit = (first: PaneNode): PaneSplit => ({
@@ -108,14 +163,14 @@ export function usePaneLayout() {
         }];
       }
       const layout = current[index];
-      if (paneSessionIds(layout).length >= MAX_PANES || paneSessionIds(layout).includes(newSessionId)) {
+      if (paneSessionIds(layout).includes(newSessionId)) {
         return current;
       }
       const next = [...current];
       next[index] = {
         ...layout,
         focusedPaneId: newSessionId,
-        root: replaceLeaf(layout.root, currentId, makeSplit({ type: "leaf", sessionId: currentId })) as PaneSplit,
+        root: splitPaneTree(layout.root, currentId, makeSplit({ type: "leaf", sessionId: currentId })) as PaneSplit,
       };
       return next;
     });
@@ -182,22 +237,9 @@ export function usePaneLayout() {
     });
   }, []);
 
-  /** Keep layouts coherent when a session is closed outside the pane UI. */
-  const pruneSessions = useCallback((liveSessionIds: Set<string>) => {
-    setLayouts((current) => current.flatMap((layout) => {
-      let root: PaneNode | null = layout.root;
-      for (const sessionId of paneSessionIds(layout)) {
-        if (!liveSessionIds.has(sessionId) && root) root = removeLeaf(root, sessionId);
-      }
-      if (root?.type !== "split") return [];
-      const remaining = paneSessionIds(root);
-      return [{
-        ...layout,
-        root,
-        tabSessionId: remaining.includes(layout.tabSessionId) ? layout.tabSessionId : remaining[0]!,
-        focusedPaneId: remaining.includes(layout.focusedPaneId) ? layout.focusedPaneId : remaining[0]!,
-      }];
-    }));
+  /** Remove only sessions known to have closed, never a pane being created. */
+  const pruneSessions = useCallback((removedSessionIds: Set<string>) => {
+    setLayouts((current) => prunePaneLayouts(current, removedSessionIds));
   }, []);
 
   return {

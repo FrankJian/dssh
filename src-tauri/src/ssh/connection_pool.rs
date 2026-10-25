@@ -754,6 +754,16 @@ impl ConnectionLease {
         }
     }
 
+    /// A shell channel may close while this shared SSH transport remains live.
+    pub async fn is_closed(&self) -> bool {
+        self.entry
+            .handle
+            .lock()
+            .await
+            .as_ref()
+            .is_none_or(client::Handle::is_closed)
+    }
+
     /// Remove a transport that has demonstrably dropped from the pool. Existing
     /// channel owners keep their own failure handling, while the next acquire
     /// creates a fresh authenticated transport instead of reusing this one.

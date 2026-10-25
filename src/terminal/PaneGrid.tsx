@@ -1,10 +1,9 @@
 import { Suspense } from "react";
 import type { TerminalSession, TerminalSize } from "../models";
 import type { RightClickAction } from "../settings/settings";
-import { Icon } from "../ui/Icon";
 import { LazyTerminalView } from "./LazyTerminalView";
 import { beginPaneDrag, endPaneDrag } from "./paneDrag";
-import type { PaneLayout, PaneNode, PaneSplit } from "./usePaneLayout";
+import { paneSessionIds, type PaneLayout, type PaneNode, type PaneSplit } from "./usePaneLayout";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 
 const MIN_RATIO = 0.12;
@@ -15,13 +14,11 @@ interface PaneGridProps {
   /** Temporarily render one leaf while preserving the underlying pane tree. */
   zoomedPaneId?: string | null;
   sessions: TerminalSession[];
-  getPaneLabel: (sessionId: string) => string;
   getBacklog: (sessionId: string) => string;
   subscribeOutput: (sessionId: string, listener: TerminalOutputListener) => () => void;
   onPaneData: (sessionId: string, data: string) => Promise<void> | void;
   onPaneResize: (sessionId: string, size: TerminalSize) => void;
   onFocusPane: (sessionId: string) => void;
-  onClosePane: (sessionId: string) => void;
   onRatios: (splitId: string, ratios: [number, number]) => void;
   fontSize: number;
   fontFamily: string;
@@ -40,13 +37,11 @@ export function PaneGrid({
   focusedPaneId,
   zoomedPaneId,
   sessions,
-  getPaneLabel,
   getBacklog,
   subscribeOutput,
   onPaneData,
   onPaneResize,
   onFocusPane,
-  onClosePane,
   onRatios,
   fontSize,
   fontFamily,
@@ -69,6 +64,7 @@ export function PaneGrid({
     const total = split.dir === "h" ? rect.width : rect.height;
     const startPos = split.dir === "h" ? event.clientX : event.clientY;
     const startRatios = [...split.ratios] as [number, number];
+    const minRatio = Math.min(MIN_RATIO, Math.min(...startRatios) / 2);
 
     // A mouse can report moves far more often than the screen refreshes.
     // Collapse them to one layout update per frame so a drag cannot queue up
@@ -85,7 +81,7 @@ export function PaneGrid({
       pendingPos = null;
       const first = startRatios[0] + deltaFraction;
       const second = startRatios[1] - deltaFraction;
-      if (first < MIN_RATIO || second < MIN_RATIO) {
+      if (first < minRatio || second < minRatio) {
         return;
       }
       onRatios(split.id, [first, second]);
@@ -125,24 +121,13 @@ export function PaneGrid({
         // closing or splitting one would hand an existing view a different
         // session and cross-wire the terminals that outlive the change.
         <div
+          aria-label={`终端分屏 ${paneSessionIds(layout).indexOf(node.sessionId) + 1}${session ? `：${session.title}` : ""}`}
           className="pane"
           data-focused={node.sessionId === focusedPaneId}
           key={node.sessionId}
           onMouseDownCapture={() => onFocusPane(node.sessionId)}
+          role="group"
         >
-          <div className="pane__bar">
-            <span className="pane__status" data-status={session?.status ?? "disconnected"} />
-            <span className="pane__label">{getPaneLabel(node.sessionId)}</span>
-            <button
-              aria-label="关闭此分屏"
-              className="pane__close"
-              onClick={() => onClosePane(node.sessionId)}
-              title="关闭此分屏"
-              type="button"
-            >
-              <Icon name="close" height="13" width="13" />
-            </button>
-          </div>
           <div className="pane__body">
             <Suspense fallback={<div className="terminal-loading">正在加载终端...</div>}>
               <LazyTerminalView

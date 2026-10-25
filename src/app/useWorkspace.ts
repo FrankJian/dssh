@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
  * tabs (one per host node); later phases add forwards / host-monitor kinds here.
  */
 export interface SftpTab {
-  /** Stable id: `sftp:${profileId}` — one SFTP tab per host. */
+  /** The first tab uses `sftp:${profileId}`; duplicates have unique ids. */
   id: string;
   profileId: string;
   title: string;
@@ -56,6 +56,13 @@ export function useWorkspace() {
     return id;
   }, []);
 
+  const duplicateSftpTab = useCallback((source: SftpTab) => {
+    const id = `sftp:${source.profileId}:${crypto.randomUUID()}`;
+    setSftpTabs((current) => [...current, { ...source, id }]);
+    setActiveSftpId(id);
+    return id;
+  }, []);
+
   const closeSftpTab = useCallback((id: string) => {
     setSftpTabs((current) => current.filter((tab) => tab.id !== id));
     setActiveSftpId((current) => (current === id ? null : current));
@@ -63,9 +70,8 @@ export function useWorkspace() {
 
   /** Close every SFTP tab bound to a host (used when a node disconnects). */
   const closeSftpTabsForProfile = useCallback((profileId: string) => {
-    const id = `sftp:${profileId}`;
-    setSftpTabs((current) => current.filter((tab) => tab.id !== id));
-    setActiveSftpId((current) => (current === id ? null : current));
+    setSftpTabs((current) => current.filter((tab) => tab.profileId !== profileId));
+    setActiveSftpId((current) => current === `sftp:${profileId}` || current?.startsWith(`sftp:${profileId}:`) ? null : current);
   }, []);
 
   const updateSftpTabPaths = useCallback((id: string, paths: Partial<SftpTabPaths>) => {
@@ -98,6 +104,7 @@ export function useWorkspace() {
     tabOrder,
     reorderTab,
     openSftpTab,
+    duplicateSftpTab,
     closeSftpTab,
     closeSftpTabsForProfile,
     updateSftpTabPaths,

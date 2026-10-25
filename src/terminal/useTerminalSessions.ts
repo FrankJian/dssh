@@ -215,13 +215,13 @@ export function useTerminalSessions() {
     [],
   );
 
-  const startLocalSession = useCallback(async () => {
+  const startLocalSession = useCallback(async (options?: { activate?: boolean }) => {
     const startedSession = await startLocalSessionCommand({
       size: initialSize,
     });
     const session = withLatestStatus(startedSession);
     setSessions((currentSessions) => [...currentSessions, session]);
-    setActiveSessionId(session.id);
+    if (options?.activate !== false) setActiveSessionId(session.id);
     return session;
   }, [withLatestStatus]);
 
@@ -377,14 +377,18 @@ export function useTerminalSessions() {
     [activeSessionId, sessions],
   );
 
-  const startSession = useCallback(async (profile: SshProfile) => {
+  const startSession = useCallback(async (
+    profile: SshProfile,
+    size: TerminalSize = initialSize,
+    options?: { activate?: boolean },
+  ) => {
     const startedSession = await startSshSession({
       profileId: profile.id,
-      size: initialSize,
+      size,
     });
     const session = withLatestStatus(startedSession);
     setSessions((currentSessions) => [...currentSessions, session]);
-    setActiveSessionId(session.id);
+    if (options?.activate !== false) setActiveSessionId(session.id);
     return session;
   }, [withLatestStatus]);
 

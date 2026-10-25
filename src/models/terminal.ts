@@ -4,6 +4,7 @@ export type SessionStatus =
   | "reconnecting"
   | "disconnecting"
   | "disconnected"
+  | "exited"
   | "failed";
 
 export interface TerminalSize {

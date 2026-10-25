@@ -20,6 +20,7 @@ export interface WorkspaceTabItem {
 interface WorkspaceTabStripProps {
   tabs: WorkspaceTabItem[];
   onSelect: (tab: WorkspaceTabItem) => void;
+  onDuplicate: (tab: WorkspaceTabItem) => void;
   onRename: (tab: WorkspaceTabItem, name: string) => void;
   onClose: (tab: WorkspaceTabItem) => void;
   onCloseMany: (tabs: WorkspaceTabItem[]) => void;
@@ -69,6 +70,7 @@ function TabTitle({ value }: { value: string }) {
 export function WorkspaceTabStrip({
   tabs,
   onSelect,
+  onDuplicate,
   onRename,
   onClose,
   onCloseMany,
@@ -156,6 +158,10 @@ export function WorkspaceTabStrip({
           draggable={Boolean(onReorder) && editingTabId !== tab.id}
           key={tab.id}
           onClick={() => onSelect(tab)}
+          onDoubleClick={(event) => {
+            if (editingTabId === tab.id || (event.target instanceof Element && event.target.closest(".tab__close"))) return;
+            onDuplicate(tab);
+          }}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -233,6 +239,7 @@ export function WorkspaceTabStrip({
               onBlur={() => commitRename(tab)}
               onChange={(event) => setRenameValue(event.currentTarget.value)}
               onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
               onFocus={(event) => event.currentTarget.select()}
               onKeyDown={(event) => {
                 event.stopPropagation();
@@ -257,6 +264,7 @@ export function WorkspaceTabStrip({
               event.stopPropagation();
               onClose(tab);
             }}
+            onDoubleClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();

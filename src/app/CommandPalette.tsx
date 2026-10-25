@@ -106,7 +106,10 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
             className="palette__input"
             placeholder="搜索连接、标签页或动作…"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActiveIndex(0);
+            }}
             onKeyDown={handleKeyDown}
             spellCheck={false}
             autoComplete="off"

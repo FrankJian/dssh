@@ -117,5 +117,6 @@ pub enum SessionStatus {
     Reconnecting,
     Disconnecting,
     Disconnected,
+    Exited,
     Failed,
 }

@@ -320,6 +320,13 @@ button {
   background: var(--app-canvas);
 }
 
+/* Overlay title bars keep the native macOS window buttons visible even when
+   the app hides its chrome. Reserve their row before terminal content starts. */
+.app-root--mac-chrome-hidden .app-shell,
+.detached-workspace--mac-chrome-hidden {
+  padding-top: var(--titlebar-height);
+}
+
 .app-body {
   position: relative;
   display: flex;
@@ -2355,75 +2362,6 @@ button {
   overflow: hidden;
 }
 
-.pane__bar {
-  display: flex;
-  height: 26px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  padding: 0 6px 0 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-panel-muted);
-}
-
-.pane[data-focused="true"] .pane__bar {
-  background: var(--bg-selected);
-}
-
-.pane__status {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-pill);
-  background: var(--text-faint);
-}
-
-.pane__status[data-status="connected"] {
-  background: var(--success);
-}
-
-.pane__status[data-status="connecting"],
-.pane__status[data-status="reconnecting"] {
-  background: var(--warning);
-}
-
-.pane__status[data-status="disconnected"],
-.pane__status[data-status="failed"] {
-  background: var(--danger);
-}
-
-.pane__label {
-  overflow: hidden;
-  flex: 1 1 auto;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pane[data-focused="true"] .pane__label {
-  color: var(--text-base);
-}
-
-.pane__close {
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.pane__close:hover {
-  background: var(--bg-hover);
-  color: var(--text-base);
-}
-
 .pane__body {
   display: flex;
   min-width: 0;
@@ -2433,27 +2371,45 @@ button {
 }
 
 .pane-divider {
+  position: relative;
   flex: 0 0 auto;
   z-index: 3;
-  background: var(--border-subtle);
-  transition: background 0.12s ease;
+  background: transparent;
+}
+
+.pane-divider::before {
+  position: absolute;
+  background: var(--border-strong);
+  content: "";
 }
 
 .pane-divider[data-dir="h"] {
-  width: 4px;
-  margin: 0 -1px;
+  width: 5px;
   cursor: col-resize;
 }
 
 .pane-divider[data-dir="v"] {
-  height: 4px;
-  margin: -1px 0;
+  height: 5px;
   cursor: row-resize;
 }
 
-.pane-divider:hover,
-.pane-divider:active {
-  background: var(--accent);
+.pane-divider[data-dir="h"]::before {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+}
+
+.pane-divider[data-dir="v"]::before {
+  top: 2px;
+  right: 0;
+  left: 0;
+  height: 1px;
+}
+
+.pane-divider:hover::before,
+.pane-divider:active::before {
+  background: var(--text-faint);
 }
 
 /* ===== Toasts ===== */

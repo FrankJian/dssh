@@ -19,7 +19,7 @@ import {
   type SshAuthPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
-import type { S3Profile, SshProfile, TerminalSession } from "../models";
+import type { S3Profile, SshProfile, TerminalSession, TerminalSize } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
 import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
@@ -27,7 +27,7 @@ import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
 import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
-import { SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
+import { SETTINGS_CATEGORIES, SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { checkForStartupUpdate } from "../services/appUpdateService";
@@ -50,7 +50,7 @@ import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
-import { releaseTerminal, restoreTerminalSnapshot } from "../terminal/terminalRegistry";
+import { releaseTerminal, restoreTerminalSnapshot, terminalSize } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
@@ -72,6 +72,7 @@ import { CommandPalette, type PaletteItem } from "./CommandPalette";
 import {
   formatShortcut,
   getShortcutBinding,
+  getShortcutDefinitions,
   isCommandPaletteShortcut,
   isFocusModeExitShortcut,
   isLockAppShortcut,
@@ -381,6 +382,7 @@ function MainApp() {
     sftpTabs,
     activeSftpId,
     openSftpTab,
+    duplicateSftpTab,
     closeSftpTab,
     closeSftpTabsForProfile,
     updateSftpTabPaths,
@@ -400,12 +402,11 @@ function MainApp() {
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
   const [terminalNames, setTerminalNames] = useState<Record<string, string>>({});
   const [paneNames, setPaneNames] = useState<Record<string, string>>({});
+  const handledShellExitsRef = useRef(new Set<string>());
+  const previousSessionIdsRef = useRef(new Set<string>());
 
   const detachedTerminalSessionIds = new Set(
     detachedWorkspaces.flatMap((workspace) => workspace.terminal?.sessionIds ?? []),
-  );
-  const detachedSftpProfileIds = new Set(
-    detachedWorkspaces.flatMap((workspace) => workspace.sftp?.profileId ?? []),
   );
   const visibleSessions = sessions.filter((session) => !detachedTerminalSessionIds.has(session.id));
 
@@ -580,7 +581,6 @@ function MainApp() {
   // state, this keeps an in-flight Tauri command and its progress listener
   // alive while the user temporarily switches to a terminal or another tab.
   const sftpTabSurfaces = sftpTabs
-    .filter((tab) => !detachedSftpProfileIds.has(tab.profileId))
     .map((tab) => {
       const isActive = isSftpActive && tab.id === activeSftpId;
       return (
@@ -813,12 +813,19 @@ function MainApp() {
     setThemeMode,
   ]);
 
-  // Closing/disconnecting the target session also closes its adjacent tree.
+  // Only prune after a session actually leaves. Splitting starts a session and
+  // then adds its pane; pruning on that addition can race the layout update
+  // and discard the brand-new first split before it appears.
   useEffect(() => {
-    setFileTreeSessionId((current) =>
-      current && sessions.some((session) => session.id === current) ? current : null,
+    const liveSessionIds = new Set(sessions.map((session) => session.id));
+    const removedSessionIds = new Set(
+      [...previousSessionIdsRef.current].filter((id) => !liveSessionIds.has(id)),
     );
-    panes.pruneSessions(new Set(sessions.map((session) => session.id)));
+    previousSessionIdsRef.current = liveSessionIds;
+    setFileTreeSessionId((current) =>
+      current && liveSessionIds.has(current) ? current : null,
+    );
+    if (removedSessionIds.size > 0) panes.pruneSessions(removedSessionIds);
   }, [panes.pruneSessions, sessions]);
 
   useEffect(() => {
@@ -985,10 +992,10 @@ function MainApp() {
     }
   }
 
-  async function handleConnectProfile(profile: SshProfile) {
+  async function handleConnectProfile(profile: SshProfile, size?: TerminalSize) {
     setSelectedProfileId(profile.id);
     try {
-      await startSession(profile);
+      await startSession(profile, size);
       recordUse(profile.id);
       showTerminalSurface();
     } catch (error) {
@@ -1019,11 +1026,20 @@ function MainApp() {
       source?.kind === "ssh"
         ? (profiles.find((profile) => profile.id === source.profileId) ?? null)
         : null;
+    if (!source || (source.kind === "ssh" && !sourceProfile)) {
+      toast("原终端的连接配置已不存在，无法创建分屏。", "error");
+      return;
+    }
     try {
-      const session = sourceProfile
-        ? await startSession(sourceProfile)
-        : await startLocalSession();
+      const session = source.kind === "ssh"
+        ? await startSession(sourceProfile!, undefined, { activate: false })
+        : await startLocalSession({ activate: false });
       panes.split(dir, currentId, session.id);
+      setActiveSessionId(session.id);
+      setTerminalFullscreenPaneId(null);
+      setFileTreeSessionId(null);
+      setActiveRemoteFilePath(null);
+      showTerminalSurface();
     } catch (error) {
       toast(error instanceof Error ? error.message : "拆分终端失败。", "error");
     }
@@ -1056,6 +1072,31 @@ function MainApp() {
       panes.focusPane(next);
     }
   }
+
+  async function handleShellExited(sessionId: string) {
+    const remaining = paneSessionIds(panes.findLayout(sessionId)).filter((id) => id !== sessionId);
+    try {
+      await closeSession(sessionId);
+      if (fileTreeSessionId === sessionId) setFileTreeSessionId(null);
+      if (terminalFullscreenPaneId === sessionId) setTerminalFullscreenPaneId(null);
+      panes.removePane(sessionId);
+      if (activeSessionId === sessionId && remaining[0]) {
+        setActiveSessionId(remaining[0]);
+        panes.focusPane(remaining[0]);
+      }
+    } catch (error) {
+      handledShellExitsRef.current.delete(sessionId);
+      toast(error instanceof Error ? error.message : "退出终端后清理分屏失败。", "error");
+    }
+  }
+
+  useEffect(() => {
+    for (const session of visibleSessions) {
+      if (session.status !== "exited" || handledShellExitsRef.current.has(session.id)) continue;
+      handledShellExitsRef.current.add(session.id);
+      void handleShellExited(session.id);
+    }
+  }, [sessions, detachedWorkspaces]);
 
   async function handleCloseTerminalWindow(tabSessionId: string) {
     const layout = panes.findLayoutByTab(tabSessionId);
@@ -1302,7 +1343,7 @@ function MainApp() {
           : [session.id]
         ).some((paneId) => commandActivity.has(paneId)),
       })),
-    ...sftpTabs.filter((tab) => !detachedSftpProfileIds.has(tab.profileId)).map((tab) => ({
+    ...sftpTabs.map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
       icon: profileIconName(profiles.find((profile) => profile.id === tab.profileId)?.icon),
@@ -1344,6 +1385,30 @@ function MainApp() {
       }
     } else {
       setActiveSessionId(tab.id);
+    }
+  }
+
+  async function handleDuplicateTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "sftp") {
+      const source = sftpTabs.find((item) => item.id === tab.id);
+      if (source) {
+        duplicateSftpTab(source);
+        setFileTreeSessionId(null);
+        setActiveActivity("sessions");
+      }
+      return;
+    }
+    const source = sessions.find((session) => session.id === tab.id);
+    if (!source) return;
+    if (source.kind === "local") {
+      await handleStartLocalSession();
+      return;
+    }
+    const profile = profiles.find((item) => item.id === source.profileId);
+    if (profile) {
+      await handleConnectProfile(profile, terminalSize(tab.id) ?? undefined);
+    } else {
+      toast("连接配置已不存在，无法新建同一主机的终端。", "error");
     }
   }
 
@@ -1647,7 +1712,6 @@ function MainApp() {
         focusedPaneId={activePaneLayout.focusedPaneId}
         zoomedPaneId={terminalFullscreenPaneId}
         sessions={sessions}
-        getPaneLabel={paneName}
         getBacklog={getBacklog}
         subscribeOutput={subscribeOutput}
         onPaneData={(id, data) => writeToSession(id, data)}
@@ -1656,7 +1720,6 @@ function MainApp() {
           panes.focusPane(sessionId);
           setActiveSessionId(sessionId);
         }}
-        onClosePane={handleClosePane}
         onRatios={panes.setRatios}
         fontSize={fontSize}
         fontFamily={fontFamily}
@@ -1686,20 +1749,45 @@ function MainApp() {
       { id: "act:terminal-surface", label: "显示终端", hint: "导航", icon: "terminalTool", keywords: "terminal shell", run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); } },
       { id: "act:assistant", label: rightPanel === "assistant" ? "关闭 AI 助手" : "打开 AI 助手", hint: "面板", icon: "bot", keywords: "ai assistant", run: () => toggleRightPanel("assistant") },
       { id: "act:ai-config", label: "配置 AI 助手", hint: "设置", icon: "bot", keywords: "ai api model", run: () => setIsAiConfigOpen(true) },
-      { id: "act:settings-appearance", label: "设置：外观", hint: "设置", icon: "sun", keywords: "appearance theme", run: () => openSettings("appearance") },
-      { id: "act:settings-terminal", label: "设置：终端", hint: "设置", icon: "terminalTool", keywords: "terminal font background", run: () => openSettings("terminal") },
-      { id: "act:settings-editor", label: "设置：文件编辑器", hint: "设置", icon: "fileCode", keywords: "editor monaco font", run: () => openSettings("editor") },
-      { id: "act:settings-shortcuts", label: "设置：快捷键", hint: "设置", icon: "command", keywords: "shortcut keybinding hotkey", run: () => openSettings("shortcuts") },
-      { id: "act:settings-s3", label: "设置：对象存储", hint: "设置", icon: "bucket", keywords: "s3 transfer", run: () => openSettings("s3") },
-      { id: "act:settings-ai", label: "设置：AI", hint: "设置", icon: "bot", keywords: "ai api", run: () => openSettings("ai") },
-      { id: "act:settings-config", label: "设置：配置文件", hint: "设置", icon: "file", keywords: "import export", run: () => openSettings("config") },
-      { id: "act:settings-about", label: "设置：关于", hint: "设置", icon: "info", keywords: "about version", run: () => openSettings("about") },
       { id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏" : "折叠侧栏", hint: "布局", icon: "panelLeft", keywords: "sidebar", run: toggleSidebar },
-      { id: "act:zen", label: zenMode ? "退出禅模式" : "进入禅模式", hint: "布局", icon: "panelLeft", keywords: "zen focus", run: () => setZenMode((value) => !value) },
+      { id: "act:zen", label: zenMode ? "退出禅模式" : "进入禅模式", hint: "保留分屏", icon: "panelLeft", keywords: "zen focus 隐藏界面", run: () => setZenMode((value) => !value) },
       { id: "act:theme-dark", label: "主题：深色", hint: "外观", icon: "moon", keywords: "theme dark", run: () => setThemeMode("dark") },
       { id: "act:theme-light", label: "主题：浅色", hint: "外观", icon: "sun", keywords: "theme light", run: () => setThemeMode("light") },
       { id: "act:theme-system", label: "主题：跟随系统", hint: "外观", icon: "system", keywords: "theme system", run: () => setThemeMode("system") },
     ];
+    for (const category of SETTINGS_CATEGORIES) {
+      if (category.id === "s3" && !navigationIcons.includes("s3")) continue;
+      if (category.id === "ai" && !navigationIcons.includes("assistant")) continue;
+      items.push({
+        id: `act:settings-${category.id}`,
+        label: `设置：${category.label}`,
+        hint: "设置",
+        icon: category.icon,
+        keywords: category.keywords,
+        run: () => openSettings(category.id),
+      });
+    }
+    for (const definition of getShortcutDefinitions()) {
+      const binding = formatShortcut(getShortcutBinding(definition.id));
+      items.push({
+        id: `shortcut:${definition.id}`,
+        label: `快捷键：${definition.label}`,
+        hint: binding,
+        icon: "command",
+        keywords: `${definition.description} ${binding} ${definition.id}`,
+        run: () => openSettings("shortcuts"),
+      });
+    }
+    if (appLock.status?.settings.enabled && !appLock.status.locked) {
+      items.push({
+        id: "act:lock-app",
+        label: "立即锁定应用",
+        hint: formatShortcut(getShortcutBinding("lockApp")),
+        icon: "shield",
+        keywords: "lock security 锁屏",
+        run: () => void appLock.lock(),
+      });
+    }
     if (activeSession) {
       items.push({
         id: "act:focus-active-terminal",
@@ -1852,6 +1940,14 @@ function MainApp() {
         keywords: "detach external window 新窗口",
         run: () => void handleDetachTab(tab),
       });
+      items.push({
+        id: `workspace:duplicate:${tab.id}`,
+        label: `新建同类标签：${tab.title}`,
+        hint: tab.kind === "sftp" ? "SFTP" : "终端",
+        icon: tab.icon,
+        keywords: "duplicate copy new tab 双击 复制标签 新建终端 同一主机",
+        run: () => void handleDuplicateTab(tab),
+      });
       if (tab.kind !== "sftp") {
         items.push({
           id: `workspace:close:${tab.id}`,
@@ -1941,7 +2037,10 @@ function MainApp() {
   }
 
   return (
-    <div className="app-root" onContextMenu={handleContextMenu}>
+    <div
+      className={`app-root${isMacOS && (zenMode || terminalFullscreenPaneId) ? " app-root--mac-chrome-hidden" : ""}`}
+      onContextMenu={handleContextMenu}
+    >
       {closeDialog}
       <AppLayout
         sidebar={zenMode || terminalFullscreenPaneId ? null : sidebarContent}
@@ -1991,6 +2090,7 @@ function MainApp() {
               <WorkspaceTabStrip
                 tabs={workspaceTabs}
                 onSelect={handleSelectTab}
+                onDuplicate={(tab) => void handleDuplicateTab(tab)}
                 onRename={handleRenameTab}
                 onClose={handleCloseTab}
                 onCloseMany={(tabs) => void handleCloseTabs(tabs)}
@@ -2018,7 +2118,7 @@ function MainApp() {
                     className="tab-action"
                     disabled={!activeCanSplit}
                     onClick={() => void handleSplit("h")}
-                    title={activeCanSplit ? "左右分屏（同一主机）" : "已达分屏上限"}
+                    title="左右分屏（同一主机）"
                     aria-label="左右分屏"
                     type="button"
                   >
@@ -2028,7 +2128,7 @@ function MainApp() {
                     className="tab-action"
                     disabled={!activeCanSplit}
                     onClick={() => void handleSplit("v")}
-                    title={activeCanSplit ? "上下分屏（同一主机）" : "已达分屏上限"}
+                    title="上下分屏（同一主机）"
                     aria-label="上下分屏"
                     type="button"
                   >
