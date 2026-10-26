@@ -161,7 +161,7 @@ pnpm tauri build
 
 ### 发布新版本（打 tag 触发）
 
-`.github/workflows/release.yml` 会在推送 `v*` tag 时构建 **macOS Apple Silicon**、**macOS Intel** 与 **Windows x64** 三个平台，签名后上传到一个**草稿 Release**；全部平台构建完成后再自动取消草稿正式发布——这样更新器不会在构建过程中读到只包含部分平台的 `latest.json`。
+`.github/workflows/release.yml` 会在推送 `v*` tag 时构建 **macOS Apple Silicon** 与 **Windows x64**，签名后上传到一个**草稿 Release**；全部平台构建完成后再自动取消草稿正式发布——这样更新器不会在构建过程中读到只包含部分平台的 `latest.json`。
 
 **一次性准备**：在仓库 **Settings → Secrets and variables → Actions** 中新增 secret：
 

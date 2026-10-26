@@ -64,10 +64,6 @@ jobs:
             os: macos-latest
             rust_targets: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-          - name: macOS Intel
-            os: macos-latest
-            rust_targets: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
           - name: Windows x64
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
@@ -106,7 +102,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: dssh v${{ needs.validate.outputs.version }}
           releaseBody: |
-            dssh v${{ needs.validate.outputs.version }}（macOS Apple Silicon / macOS Intel / Windows x64）。
+            dssh v${{ needs.validate.outputs.version }}（macOS Apple Silicon / Windows x64）。
             安装包见下方 assets；已安装的版本可在「设置 → 关于 → 检查更新」内自动升级。
           # 先发草稿：矩阵各平台都上传完成后再由 publish job 统一发布，
           # 避免更新器在构建过程中读到只含部分平台的 latest.json。
