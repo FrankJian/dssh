@@ -209,7 +209,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     echoSeen: boolean;
   } | null = null;
   let suggestions: string[] = [];
-  let selectedSuggestion = 0;
+  let selectedSuggestion: number | null = null;
   let desiredSuggestionWidth = 0;
 
   // xterm renders into this element, which travels with the instance rather
@@ -328,7 +328,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
 
   function hideSuggestions() {
     suggestions = [];
-    selectedSuggestion = 0;
+    selectedSuggestion = null;
     suggestionMenu.hidden = true;
     suggestionContent.replaceChildren();
     suggestionContent.style.height = "0px";
@@ -438,6 +438,10 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   }
 
   function revealSelectedSuggestion() {
+    if (selectedSuggestion === null) {
+      renderSuggestionItems();
+      return;
+    }
     const top = selectedSuggestion * COMPLETION_ROW_HEIGHT;
     const bottom = top + COMPLETION_ROW_HEIGHT;
     const viewTop = suggestionMenu.scrollTop;
@@ -454,7 +458,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       hideSuggestions();
       return;
     }
-    selectedSuggestion = 0;
+    // Keep Tab available for shell completion until the user explicitly picks
+    // a history entry with an arrow key or the pointer.
+    selectedSuggestion = null;
     suggestionMenu.hidden = false;
     desiredSuggestionWidth = measureSuggestionWidth();
     suggestionMenu.style.width = `${desiredSuggestionWidth}px`;
@@ -547,11 +553,15 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
 
     if (!suggestionMenu.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
-      selectedSuggestion = (selectedSuggestion + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+      if (selectedSuggestion === null) {
+        selectedSuggestion = event.key === "ArrowDown" ? 0 : suggestions.length - 1;
+      } else {
+        selectedSuggestion = (selectedSuggestion + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+      }
       revealSelectedSuggestion();
       return false;
     }
-    if (!suggestionMenu.hidden && event.key === "Tab" && !event.shiftKey) {
+    if (!suggestionMenu.hidden && selectedSuggestion !== null && event.key === "Tab" && !event.shiftKey) {
       event.preventDefault();
       acceptSuggestion(selectedSuggestion);
       return false;
