@@ -1443,20 +1443,18 @@ function MainApp() {
   windowCloseRef.current = () => closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口");
   useEffect(() => {
     const appWindow = getCurrentWindow();
-    let allowed = false;
     let pending = false;
     const listener = appWindow.onCloseRequested((event) => {
-      if (allowed) return;
       event.preventDefault();
       if (pending) return;
       pending = true;
       void windowCloseRef.current().then(async (closed) => {
         if (closed) {
-          allowed = true;
-          await appWindow.close();
+          // close() would emit another close request through this listener.
+          // The sessions have already been confirmed and closed here.
+          await appWindow.destroy();
         }
       }).catch((error: unknown) => {
-        allowed = false;
         toast(error instanceof Error ? error.message : "关闭窗口失败，请重试。", "error");
       }).finally(() => { pending = false; });
     });
