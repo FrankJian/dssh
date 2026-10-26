@@ -103,6 +103,7 @@ const windowsPtyOptions = isWindows ? ({ backend: "conpty" } as const) : undefin
 const FOCUS_REPORTS = new Set(["\x1b[I", "\x1b[O"]);
 // Keep in sync with --terminal-completion-row-height in global.css.
 const COMPLETION_ROW_HEIGHT = 24;
+const COMPLETION_CHROME_WIDTH = 18;
 
 interface RegistryEntry {
   handle: TerminalHandle;
@@ -209,6 +210,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   } | null = null;
   let suggestions: string[] = [];
   let selectedSuggestion = 0;
+  let desiredSuggestionWidth = 0;
 
   // xterm renders into this element, which travels with the instance rather
   // than with whichever view is currently showing it.
@@ -330,7 +332,17 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     suggestionMenu.hidden = true;
     suggestionContent.replaceChildren();
     suggestionContent.style.height = "0px";
+    suggestionContent.style.width = "";
     suggestionMenu.scrollTop = 0;
+  }
+
+  function measureSuggestionWidth() {
+    const context = document.createElement("canvas").getContext("2d");
+    if (!context) {
+      return Math.max(...suggestions.map((command) => command.length * 8)) + COMPLETION_CHROME_WIDTH;
+    }
+    context.font = window.getComputedStyle(suggestionMenu).font;
+    return Math.ceil(Math.max(...suggestions.map((command) => context.measureText(command).width)) + COMPLETION_CHROME_WIDTH);
   }
 
   function positionSuggestions() {
@@ -373,7 +385,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       screenRect.left + column * cellWidth,
       rowTop,
       rowTop + cellHeight,
-      suggestionMenu.offsetWidth,
+      desiredSuggestionWidth,
       suggestions.length,
       COMPLETION_ROW_HEIGHT,
     );
@@ -443,10 +455,11 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       return;
     }
     selectedSuggestion = 0;
-    const longest = suggestions.reduce((length, command) => Math.max(length, command.length), 0);
-    suggestionMenu.style.width = `min(360px, calc(${longest}ch + 18px))`;
-    suggestionContent.style.height = `${suggestions.length * COMPLETION_ROW_HEIGHT}px`;
     suggestionMenu.hidden = false;
+    desiredSuggestionWidth = measureSuggestionWidth();
+    suggestionMenu.style.width = `${desiredSuggestionWidth}px`;
+    suggestionContent.style.width = `${Math.max(0, desiredSuggestionWidth - 6)}px`;
+    suggestionContent.style.height = `${suggestions.length * COMPLETION_ROW_HEIGHT}px`;
     suggestionMenu.scrollTop = 0;
     renderSuggestionItems();
     positionSuggestions();

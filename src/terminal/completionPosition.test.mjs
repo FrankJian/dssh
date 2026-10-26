@@ -11,6 +11,11 @@ test("completion stays inside the viewport near its bottom and right edges", () 
   assert.ok(popup.top >= bounds.top && popup.top + popup.height <= bounds.bottom);
 });
 
+test("completion can grow beyond the former fixed popup width", () => {
+  const popup = placeCompletionMenu({ left: 0, top: 0, right: 1000, bottom: 300 }, 20, 100, 120, 760, 1, 24);
+  assert.equal(popup.width, 760);
+});
+
 test("completion moves below a top prompt and reduces visible rows when space is tight", () => {
   const top = placeCompletionMenu(bounds, 140, 65, 85, 140, 10, 24);
   assert.deepEqual(top, { left: 140, top: 89, width: 140, height: 150 });
