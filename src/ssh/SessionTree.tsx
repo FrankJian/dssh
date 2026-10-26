@@ -142,8 +142,9 @@ export function SessionTree({
     setRenameValue(terminalNames[session.id] ?? `终端 ${index + 1}`);
   }
 
-  function finishRename(sessionId: string) {
-    onRenameTerminal(sessionId, renameValue.trim());
+  function finishRename(sessionId: string, originalName: string) {
+    const name = renameValue.trim();
+    if (name !== originalName) onRenameTerminal(sessionId, name);
     setRenamingSessionId(null);
   }
 
@@ -152,8 +153,9 @@ export function SessionTree({
     setPaneRenameValue(paneNames[sessionId] ?? `Pane ${index + 1}`);
   }
 
-  function finishPaneRename(sessionId: string) {
-    onRenamePane(sessionId, paneRenameValue.trim());
+  function finishPaneRename(sessionId: string, originalName: string) {
+    const name = paneRenameValue.trim();
+    if (name !== originalName) onRenamePane(sessionId, name);
     setRenamingPaneId(null);
   }
 
@@ -252,7 +254,7 @@ export function SessionTree({
                                 className="session-terminal__rename-form"
                                 onSubmit={(event) => {
                                   event.preventDefault();
-                                  finishRename(session.id);
+                                  finishRename(session.id, terminalName);
                                 }}
                               >
                                 <Icon name="terminalTool" height="15" width="15" />
@@ -260,7 +262,7 @@ export function SessionTree({
                                   aria-label="终端名称"
                                   autoFocus
                                   className="session-terminal__rename-input"
-                                  onBlur={() => finishRename(session.id)}
+                                  onBlur={() => finishRename(session.id, terminalName)}
                                   onChange={(event) => setRenameValue(event.currentTarget.value)}
                                   onFocus={(event) => event.currentTarget.select()}
                                   onKeyDown={(event) => {
@@ -319,7 +321,7 @@ export function SessionTree({
                                         className="session-pane__rename-form"
                                         onSubmit={(event) => {
                                           event.preventDefault();
-                                          finishPaneRename(paneId);
+                                          finishPaneRename(paneId, paneName);
                                         }}
                                       >
                                         <Icon name="terminalTool" height="14" width="14" />
@@ -327,7 +329,7 @@ export function SessionTree({
                                           aria-label="Pane 名称"
                                           autoFocus
                                           className="session-pane__rename-input"
-                                          onBlur={() => finishPaneRename(paneId)}
+                                          onBlur={() => finishPaneRename(paneId, paneName)}
                                           onChange={(event) => setPaneRenameValue(event.currentTarget.value)}
                                           onFocus={(event) => event.currentTarget.select()}
                                           onKeyDown={(event) => {
