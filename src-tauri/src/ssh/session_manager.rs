@@ -3628,7 +3628,7 @@ mod tests {
             .write_all(b"sleep 60\r")
             .expect("start foreground job");
         writer.flush().expect("flush test command");
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(1);
         let foreground = loop {
             let group = unsafe { libc::tcgetpgrp(fd) };
             if group > 1 && group != shell {
@@ -3640,11 +3640,13 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         };
         super::terminate_local_processes(&*pair.master, &mut *child);
-        child.wait().expect("reap test shell");
+        // Match the production shutdown order. Holding the master or writer
+        // open can keep a PTY-backed child wait blocked on macOS runners.
         drop(writer);
         drop(pair.master);
+        child.wait().expect("reap test shell");
         let foreground = foreground.expect("foreground task has its own process group");
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(1);
         while unsafe { libc::killpg(foreground, 0) } == 0 && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
