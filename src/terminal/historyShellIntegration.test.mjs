@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { historyShellIntegrationCommand, historyShellIntegrationFor, readHistorySetupOutput } from "./historyShellIntegration.ts";
 
@@ -44,18 +48,52 @@ for (const shell of ["sh", "dash", "ksh"]) {
   });
 }
 
-test("Fish postexec reports successes and failures without replacing fish_prompt", (context) => {
-  const result = spawnSync("fish", ["--no-config", "--interactive"], {
-    input: [historyShellIntegrationFor("fish"), historyShellIntegrationFor("fish"), "false", "sh -c 'exit 2'", "printf 'done\\n'", "exit", ""].join("\n"),
-    encoding: "utf8",
-    env: { ...process.env, fish_history: "", TERM: "xterm-256color" },
-    timeout: 5000,
-  });
-  if (result.error?.code === "ENOENT") return context.skip("Fish is not installed");
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stderr);
-  const statuses = [...result.stdout.matchAll(/\x1b\]633;D;(\d+)\x07/g)].map((match) => Number(match[1]));
-  assert.deepEqual(statuses, [0, 0, 1, 2, 0]);
+test("Fish postexec reports successes and failures without replacing fish_prompt", { skip: process.platform === "win32" }, (context) => {
+  const fish = spawnSync("fish", ["--version"], { encoding: "utf8", timeout: 5000 });
+  if (fish.error?.code === "ENOENT") return context.skip("Fish is not installed");
+  assert.ifError(fish.error);
+  assert.equal(fish.status, 0, fish.stderr);
+
+  // Fish does not emit fish_postexec for piped stdin, even with --interactive.
+  // Give it a controlling PTY, as the application does, using Python's stdlib.
+  const fixture = fileURLToPath(new URL("./fixtures/runInteractivePty.py", import.meta.url));
+  const directory = mkdtempSync(join(tmpdir(), "dssh-fish-test-"));
+  try {
+    const result = spawnSync("python3", [fixture, "fish", "--no-config", "--interactive"], {
+      input: [
+        "function fish_prompt; printf 'DSSH-PROMPT> '; end",
+        historyShellIntegrationFor("fish"),
+        historyShellIntegrationFor("fish"),
+        "false",
+        "sh -c 'exit 2'",
+        "functions fish_prompt | string match -q '*DSSH-PROMPT>*'; and printf 'done\\n'",
+        "printf '\\033]777;DSSH-FISH-TEST-END\\007'",
+        "exit",
+        "",
+      ].join("\n"),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        fish_history: "",
+        TERM: "dumb",
+        XDG_CONFIG_HOME: directory,
+        XDG_DATA_HOME: directory,
+        XDG_CACHE_HOME: directory,
+      },
+      timeout: 5000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    const output = result.stdout + result.stderr;
+    // Fish versions can also report exit itself. Bound assertions to the five
+    // commands under test, before the explicit end marker and shutdown.
+    const end = output.indexOf("\x1b]777;DSSH-FISH-TEST-END\x07");
+    assert.notEqual(end, -1, output.slice(-4000));
+    const statuses = [...output.slice(0, end).matchAll(/\x1b\]633;D;(\d+)\x07/g)].map((match) => Number(match[1]));
+    assert.deepEqual(statuses, [0, 0, 1, 2, 0], output.slice(-4000));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 for (const shell of ["pwsh", "powershell"]) {
