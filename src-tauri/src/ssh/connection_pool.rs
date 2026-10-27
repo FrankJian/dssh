@@ -349,6 +349,20 @@ impl SshConnectionPool {
         self.inner.diagnostics.clone()
     }
 
+    /// Background shell discovery must not initiate authentication or recovery.
+    pub async fn try_acquire_ready(
+        &self,
+        profile: &SshProfile,
+        owner: ChannelOwner,
+    ) -> Option<ConnectionLease> {
+        let key = ConnectionKey::from_profile(profile);
+        let entry = self.inner.entries.lock().await.get(&key)?.clone();
+        if !matches!(*entry.state.lock().await, EntryState::Ready) {
+            return None;
+        }
+        Some(self.lease(key, entry, owner))
+    }
+
     fn emit_state(&self, key: &ConnectionKey, state: ConnectionState, message: Option<String>) {
         let _ = self.inner.app_handle.emit(
             SSH_TRANSPORT_STATUS_EVENT,

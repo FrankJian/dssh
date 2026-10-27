@@ -7,7 +7,7 @@ globalThis.localStorage = {
   setItem: (key, value) => values.set(key, value),
   removeItem: (key) => values.delete(key),
 };
-globalThis.window = { dispatchEvent: () => {} };
+globalThis.window = new EventTarget();
 
 const {
   CommandInputTracker,
@@ -20,6 +20,8 @@ const {
   recordCommand,
   setCommandCompletionEnabled,
   setCommandHistoryLimit,
+  commandHistoryClearedEvent,
+  commandCompletionEnabled,
 } = await import("./commandCompletion.ts");
 
 test("disabled by default and shared history keeps recent unique commands", () => {
@@ -163,4 +165,29 @@ test("shell Tab completion and command line edits recover the final echoed input
   tracker.observe("\x1b[A", "$ ");
   assert.equal(tracker.observe("\r", "$ echo previous", "echo previous"), "echo previous");
   assert.equal(tracker.observe("secret\r", "Password: ", "secret"), null);
+});
+
+test("clearing history cancels the old candidate and keeps session reporting active", () => {
+  setCommandCompletionEnabled(true);
+  setCommandHistoryLimit(5);
+  const recorder = new CommandHistoryRecorder();
+  recorder.enablePromptReporting();
+  const onClear = () => recorder.cancel();
+  window.addEventListener(commandHistoryClearedEvent, onClear);
+  try {
+    recorder.submit("echo before-clear")();
+    clearCommandHistory();
+    recorder.observeMarker("D;0");
+    assert.equal(getCommandHistoryCount(), 0);
+    recorder.submit("echo after-clear")();
+    recorder.observeMarker("D;0");
+    recorder.submit("ls --invalid-option")();
+    recorder.observeMarker("D;2");
+    assert.deepEqual(matchingCommands("echo"), ["echo after-clear"]);
+    assert.equal(getCommandHistoryCount(), 1);
+    assert.equal(getCommandHistoryLimit(), 5);
+    assert.equal(commandCompletionEnabled(), true);
+  } finally {
+    window.removeEventListener(commandHistoryClearedEvent, onClear);
+  }
 });

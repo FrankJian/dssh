@@ -3,7 +3,7 @@ import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
 import { TerminalTargetTracker } from "./terminalTarget";
-import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
+import { hasTerminalInstance, pruneTerminals, resetHistoryReporting } from "./terminalRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../ui/ToastHost";
 import {
@@ -284,6 +284,7 @@ export function useTerminalSessions() {
       pushOutput(event.sessionId, event.data);
     });
     const statusPromise = onTerminalStatus((event) => {
+      if (event.status !== "connected") resetHistoryReporting(event.sessionId);
       latestSessionStatusesRef.current.set(event.sessionId, event.status);
       if (event.status === "reconnecting") {
         const address = targetTrackerForSession(event.sessionId).resetConnection();

@@ -16,6 +16,7 @@ import {
   COMMAND_HISTORY_MAX_LIMIT,
   COMMAND_HISTORY_MIN_LIMIT,
 } from "../terminal/commandCompletion";
+import { getHistoryReportingStatus, historyReportingChangedEvent } from "../terminal/terminalRegistry";
 import { AppLockSettings } from "./AppLockSettings";
 import type { AppLockStatus, UpdateAppLockSettingsRequest } from "../services/appLockService";
 import {
@@ -64,6 +65,7 @@ import {
 export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "security" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
+  activeHistoryTerminal?: { id: string; title: string } | null;
   commandCompletion: boolean;
   onCommandCompletionChange: (value: boolean) => void;
   commandHistoryLimit: number;
@@ -185,6 +187,7 @@ function buildFontOptions(systemFamilies: readonly string[], currentValues: read
 }
 
 export function SettingsDialog({
+  activeHistoryTerminal,
   commandCompletion,
   onCommandCompletionChange,
   commandHistoryLimit,
@@ -250,8 +253,19 @@ export function SettingsDialog({
   const [confirmClearCommandHistory, setConfirmClearCommandHistory] = useState(false);
   const [commandHistoryCleared, setCommandHistoryCleared] = useState(false);
   const [commandHistoryCount, setCommandHistoryCount] = useState(getCommandHistoryCount);
+  const [historyReportingStatus, setHistoryReportingStatus] = useState(() => getHistoryReportingStatus(activeHistoryTerminal?.id ?? null));
   useEffect(() => {
-    const refresh = () => setCommandHistoryCount(getCommandHistoryCount());
+    const refresh = () => setHistoryReportingStatus(getHistoryReportingStatus(activeHistoryTerminal?.id ?? null));
+    refresh();
+    window.addEventListener(historyReportingChangedEvent, refresh);
+    return () => window.removeEventListener(historyReportingChangedEvent, refresh);
+  }, [activeHistoryTerminal?.id]);
+  useEffect(() => {
+    const refresh = () => {
+      const count = getCommandHistoryCount();
+      setCommandHistoryCount(count);
+      if (count > 0) setCommandHistoryCleared(false);
+    };
     window.addEventListener(commandHistoryChangedEvent, refresh);
     window.addEventListener("storage", refresh);
     return () => {
@@ -590,7 +604,7 @@ export function SettingsDialog({
               <section className="settings-section" aria-label="终端设置">
                 <div className="settings-section__head">
                   <h3>命令补全</h3>
-                  <p>记住退出码为 0 的单行命令，在所有服务器和本地终端共享。输入前缀后可用 ↑ ↓ 选择，Tab 填入；未选中时 Tab 使用系统补全。历史保存在本机。</p>
+                  <p>跨服务器共享保存在本机的成功命令。</p>
                 </div>
                 <label className="checkbox-field">
                   <input
@@ -608,29 +622,53 @@ export function SettingsDialog({
                   启用全局命令补全（默认关闭）
                 </label>
                 {commandCompletion ? (
-                  <>
-                    <label className="settings-field settings-field--short">
-                      <span className="settings-field__label">历史命令存储上限</span>
-                      <input
-                        className="settings-number"
-                        max={COMMAND_HISTORY_MAX_LIMIT}
-                        min={COMMAND_HISTORY_MIN_LIMIT}
-                        onBlur={commitCommandHistoryLimit}
-                        onChange={(event) => setCommandHistoryLimitDraft(event.currentTarget.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") event.currentTarget.blur();
-                        }}
-                        step="1"
-                        type="number"
-                        value={commandHistoryLimitDraft}
-                      />
-                      <span className="settings-field__hint">
-                        {COMMAND_HISTORY_MIN_LIMIT}–{COMMAND_HISTORY_MAX_LIMIT} 条，默认 {COMMAND_HISTORY_DEFAULT_LIMIT} 条。调低后会立即删除超出上限的旧记录。
-                      </span>
-                    </label>
-                    <p className="settings-field__hint" role="status">当前已记住 {commandHistoryCount} / {commandHistoryLimit} 条命令（按完整命令去重）。提示只显示当前输入前缀匹配的记录。</p>
-                    <p className="settings-field__hint">仅当 shell 报告成功退出码时保存；无法确认执行结果、包含敏感信息或多行输入时不保存。</p>
-                    <div className="settings-history-clear">
+                  <div className="command-history-settings">
+                    <p className="command-history-settings__help">输入前缀后，用 <kbd>↑</kbd> <kbd>↓</kbd> 选择，<kbd>Tab</kbd> 填入；未选择时使用系统补全。</p>
+                    <div className="command-history-settings__row">
+                      <div className="command-history-settings__description">
+                        <label htmlFor="command-history-limit">存储上限</label>
+                        <span>{COMMAND_HISTORY_MIN_LIMIT}–{COMMAND_HISTORY_MAX_LIMIT} 条，默认 {COMMAND_HISTORY_DEFAULT_LIMIT} 条。降低后会删除超出的旧记录。</span>
+                      </div>
+                      <div className="command-history-settings__limit">
+                        <input
+                          id="command-history-limit"
+                          className="settings-number"
+                          max={COMMAND_HISTORY_MAX_LIMIT}
+                          min={COMMAND_HISTORY_MIN_LIMIT}
+                          onBlur={commitCommandHistoryLimit}
+                          onChange={(event) => setCommandHistoryLimitDraft(event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                          step="1"
+                          type="number"
+                          value={commandHistoryLimitDraft}
+                        />
+                        <span>条</span>
+                      </div>
+                    </div>
+                    <div className="command-history-settings__row">
+                      <div className="command-history-settings__description">
+                        <span>已记住的命令</span>
+                        <span>按完整命令去重，提示列表只显示前缀匹配项。</span>
+                      </div>
+                      <output className="command-history-settings__count" aria-live="polite">{commandHistoryCount} / {commandHistoryLimit} 条</output>
+                    </div>
+                    <div className="command-history-settings__row">
+                      <div className="command-history-settings__description">
+                        <span>当前终端：{activeHistoryTerminal?.title ?? "未打开终端"}</span>
+                        <span>全局开启后自动接入，清空历史不会关闭记录。</span>
+                      </div>
+                      <output className="command-history-settings__count" aria-live="polite">{
+                        historyReportingStatus === "ready" ? "正在记录成功命令"
+                          : historyReportingStatus === "settingUp" ? "正在自动接入…"
+                            : historyReportingStatus === "unsupported" ? "暂不支持成功判断"
+                              : historyReportingStatus === "failed" ? "未收到执行结果"
+                                : "等待空闲提示符"
+                      }</output>
+                    </div>
+                    <p className="command-history-settings__help">自动适配 Bash、Zsh、Fish、PowerShell 和兼容的 sh。只保存成功的单行命令，不保存敏感内容，不修改服务器配置文件。</p>
+                    <div className="command-history-settings__clear">
                       {confirmClearCommandHistory ? (
                         <div className="settings-history-clear__confirm" role="group" aria-label="确认清空历史命令">
                           <span>确定清空所有历史命令？此操作无法撤销。</span>
@@ -642,14 +680,14 @@ export function SettingsDialog({
                           <Button onClick={() => setConfirmClearCommandHistory(false)} variant="ghost">取消</Button>
                         </div>
                       ) : (
-                        <Button onClick={() => {
+                        <Button disabled={commandHistoryCount === 0} onClick={() => {
                           setCommandHistoryCleared(false);
                           setConfirmClearCommandHistory(true);
                         }} variant="ghost">清空所有历史命令</Button>
                       )}
                       {commandHistoryCleared ? <span className="settings-field__hint" role="status">历史命令已清空。</span> : null}
                     </div>
-                  </>
+                  </div>
                 ) : null}
                 <TerminalColorSettings
                   fontFamily={fontFamily}

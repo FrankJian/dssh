@@ -6,6 +6,7 @@ export const COMMAND_HISTORY_MIN_LIMIT = 1;
 export const COMMAND_HISTORY_MAX_LIMIT = 5000;
 const commandLimit = 500;
 export const commandHistoryChangedEvent = "dssh:command-history-changed";
+export const commandHistoryClearedEvent = "dssh:command-history-cleared";
 
 export function clampCommandHistoryLimit(value: number): number {
   return Number.isFinite(value)
@@ -81,6 +82,7 @@ export function recordCommand(value: string): void {
 
 export function clearCommandHistory(): void {
   localStorage.removeItem(historyKey);
+  window.dispatchEvent(new Event(commandHistoryClearedEvent));
   window.dispatchEvent(new Event(commandHistoryChangedEvent));
   window.dispatchEvent(new Event("dssh:command-completion-settings"));
 }
@@ -94,6 +96,7 @@ export function matchingCommands(prefix: string): string[] {
 /** Persist only a completed shell command with an explicit successful status. */
 export class CommandHistoryRecorder {
   private pending: { command: string; written: boolean; started: boolean; exitCode: number | null } | null = null;
+  private promptReporting = false;
   private readonly save: (command: string) => void;
 
   constructor(save: (command: string) => void = recordCommand) {
@@ -101,7 +104,7 @@ export class CommandHistoryRecorder {
   }
 
   submit(command: string): () => void {
-    const pending = { command, written: false, started: false, exitCode: null as number | null };
+    const pending = { command, written: false, started: this.promptReporting, exitCode: null as number | null };
     this.pending = pending;
     return () => {
       if (this.pending !== pending) return;
@@ -114,13 +117,22 @@ export class CommandHistoryRecorder {
     this.pending = null;
   }
 
+  enablePromptReporting(): void {
+    this.promptReporting = true;
+  }
+
+  resetReporting(): void {
+    this.cancel();
+    this.promptReporting = false;
+  }
+
   observeMarker(data: string): void {
     if (!this.pending) return;
     const [marker, status] = data.split(";");
     if (marker === "C") this.pending.started = true;
     if (marker === "A" && this.pending.exitCode === null) this.cancel();
     if (marker === "D") {
-      if (!this.pending.started || !/^\d+$/.test(status ?? "")) {
+      if (!this.pending.started || !/^-?\d+$/.test(status ?? "")) {
         this.cancel();
         return;
       }

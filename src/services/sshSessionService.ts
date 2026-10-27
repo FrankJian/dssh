@@ -14,6 +14,7 @@ export interface StartLocalSessionRequest {
 export interface WriteSshSessionRequest {
   sessionId: string;
   data: string;
+  historySetup?: boolean;
 }
 
 export interface ResizeSshSessionRequest {
@@ -64,6 +65,10 @@ export function readSshSessionOutput(sessionId: string) {
   return invokeCommand<string>("read_ssh_session_output", { sessionId });
 }
 
+export function detectTerminalShell(sessionId: string) {
+  return invokeCommand<"bash" | "zsh" | "fish" | "powershell" | "posix" | null>("detect_terminal_shell", { sessionId });
+}
+
 export function startSshSession(request: StartSshSessionRequest) {
   return invokeCommand<TerminalSession>("start_ssh_session", { request });
 }
@@ -74,6 +79,10 @@ export function startLocalSession(request: StartLocalSessionRequest) {
 
 export function writeSshSession(request: WriteSshSessionRequest) {
   return invokeCommand<void>("write_ssh_session", { request });
+}
+
+export function writeHistoryShellSetup(sessionId: string, data: string) {
+  return writeSshSession({ sessionId, data, historySetup: true });
 }
 
 export function respondZmodemPrompt(
