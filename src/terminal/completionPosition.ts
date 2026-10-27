@@ -21,9 +21,10 @@ export function placeCompletionMenu(
   desiredWidth: number,
   itemCount: number,
   rowHeight: number,
+  scrollbarHeight = 0,
 ): CompletionPlacement | null {
   const gap = 4;
-  const chrome = 6; // 2px padding and 1px border on each edge.
+  const chrome = 6 + scrollbarHeight; // Padding, borders and any horizontal scrollbar.
   const availableWidth = bounds.right - bounds.left - gap * 2;
   if (availableWidth < 40 || rowBottom <= bounds.top || rowTop >= bounds.bottom || itemCount < 1) return null;
 

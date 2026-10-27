@@ -22,7 +22,7 @@ import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
 import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
 import { toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
-import { CommandInputTracker, commandCompletionEnabled, commandWasEchoed, matchingCommands, recordCommand } from "./commandCompletion";
+import { CommandHistoryRecorder, CommandInputTracker, commandCompletionEnabled, matchingCommands } from "./commandCompletion";
 import { placeCompletionMenu, type CompletionBounds } from "./completionPosition";
 import "@xterm/xterm/css/xterm.css";
 
@@ -103,7 +103,7 @@ const windowsPtyOptions = isWindows ? ({ backend: "conpty" } as const) : undefin
 const FOCUS_REPORTS = new Set(["\x1b[I", "\x1b[O"]);
 // Keep in sync with --terminal-completion-row-height in global.css.
 const COMPLETION_ROW_HEIGHT = 24;
-const COMPLETION_CHROME_WIDTH = 18;
+const COMPLETION_CHROME_WIDTH = 26; // Padding, borders and vertical scrollbar allowance.
 
 interface RegistryEntry {
   handle: TerminalHandle;
@@ -201,13 +201,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const commandInput = new CommandInputTracker();
   let completionStartColumn: number | null = null;
   let completionStartRow: number | null = null;
-  let pendingCommand: {
-    command: string;
-    startRow: number;
-    submittedAt: number;
-    written: boolean;
-    echoSeen: boolean;
-  } | null = null;
+  const historyRecorder = new CommandHistoryRecorder();
   let suggestions: string[] = [];
   let selectedSuggestion: number | null = null;
   let desiredSuggestionWidth = 0;
@@ -300,31 +294,25 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     return buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? "";
   }
 
-  function commandEchoVisible(command: string, startRow: number): boolean {
-    // A command may enter an alternate-screen app (for example Vim) before
-    // its write acknowledgment arrives. The shell's echoed line stays here.
-    const buffer = terminal.buffer.normal;
-    const rows = Math.min(8, Math.ceil(command.length / terminal.cols) + 3);
+  function renderedCommand(): string | undefined {
+    if (completionStartRow === null || completionStartColumn === null) return undefined;
+    const buffer = terminal.buffer.active;
+    let endRow = buffer.baseY + buffer.cursorY;
+    // Enter submits the whole edited line even when the cursor is in its middle.
+    while (endRow - completionStartRow < 20 && buffer.getLine(endRow + 1)?.isWrapped) endRow += 1;
+    if (endRow < completionStartRow || endRow - completionStartRow > 20) return undefined;
     const lines: string[] = [];
-    for (let row = startRow; row < Math.min(buffer.length, startRow + rows); row += 1) {
-      lines.push(buffer.getLine(row)?.translateToString(false) ?? "");
+    for (let row = completionStartRow; row <= endRow; row += 1) {
+      lines.push(buffer.getLine(row)?.translateToString(false,
+        row === completionStartRow ? completionStartColumn : 0) ?? "");
     }
-    return commandWasEchoed(command, lines);
+    return lines.join("").trimEnd();
   }
 
-  function confirmPendingCommand() {
-    const pending = pendingCommand;
-    if (!pending) return;
-    if (Date.now() - pending.submittedAt > 10_000) {
-      pendingCommand = null;
-      return;
-    }
-    pending.echoSeen ||= commandEchoVisible(pending.command, pending.startRow);
-    if (pending.written && pending.echoSeen) {
-      pendingCommand = null;
-      recordCommand(pending.command);
-    }
-  }
+  const historyMarkerHandlers = [133, 633].map((identifier) => terminal.parser.registerOscHandler(identifier, (data) => {
+    if (!replaying && commandCompletionEnabled()) historyRecorder.observeMarker(data);
+    return false;
+  }));
 
   function hideSuggestions() {
     suggestions = [];
@@ -388,6 +376,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       desiredSuggestionWidth,
       suggestions.length,
       COMPLETION_ROW_HEIGHT,
+      desiredSuggestionWidth > bounds.right - bounds.left - 8 ? 8 : 0,
     );
     if (!placement) {
       hideSuggestions();
@@ -452,7 +441,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   }
 
   function renderSuggestions() {
-    suggestions = commandInput.atPrompt && terminal.buffer.active.type === "normal"
+    suggestions = commandInput.canSuggest && terminal.buffer.active.type === "normal"
       ? matchingCommands(commandInput.line) : [];
     if (!suggestions.length) {
       hideSuggestions();
@@ -464,7 +453,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     suggestionMenu.hidden = false;
     desiredSuggestionWidth = measureSuggestionWidth();
     suggestionMenu.style.width = `${desiredSuggestionWidth}px`;
-    suggestionContent.style.width = `${Math.max(0, desiredSuggestionWidth - 6)}px`;
+    suggestionContent.style.width = `${Math.max(0, desiredSuggestionWidth - 14)}px`;
     suggestionContent.style.height = `${suggestions.length * COMPLETION_ROW_HEIGHT}px`;
     suggestionMenu.scrollTop = 0;
     renderSuggestionItems();
@@ -480,6 +469,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
 
   const onCompletionSettingChange = () => {
     if (!commandCompletionEnabled()) {
+      historyRecorder.cancel();
       commandInput.reset();
       hideSuggestions();
     } else if (!suggestionMenu.hidden) {
@@ -493,26 +483,20 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     if (replaying || (suppressFocusReports && FOCUS_REPORTS.has(data))) {
       return;
     }
-    confirmPendingCommand();
-    let submitted: typeof pendingCommand = null;
+    let acknowledgeCommand: (() => void) | undefined;
     if (sessionId && commandCompletionEnabled() && terminal.buffer.active.type === "normal") {
-      const startsLine = commandInput.line.length === 0;
+      const startsLine = !commandInput.atPrompt;
       const startColumn = terminal.buffer.active.cursorX;
       const startRow = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
-      const command = commandInput.observe(data, visibleCursorLine());
-      if (startsLine && commandInput.atPrompt && commandInput.line) {
+      const command = commandInput.observe(data, visibleCursorLine(), renderedCommand());
+      if (startsLine && commandInput.atPrompt) {
         completionStartColumn = startColumn;
         completionStartRow = startRow;
       }
       if (command) {
-        pendingCommand = {
-          command,
-          startRow: completionStartRow ?? startRow,
-          submittedAt: Date.now(),
-          written: false,
-          echoSeen: false,
-        };
-        submitted = pendingCommand;
+        acknowledgeCommand = historyRecorder.submit(command);
+      } else if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
+        historyRecorder.cancel();
       }
       if (!commandInput.atPrompt) {
         completionStartColumn = null;
@@ -526,12 +510,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // Dropping keystrokes silently is what made this class of bug so hard to
     // see; a failed write must at least leave a trace.
     void Promise.resolve(props.onData?.(data)).then(() => {
-      if (submitted && pendingCommand === submitted) {
-        submitted.written = true;
-        confirmPendingCommand();
-      }
+      acknowledgeCommand?.();
     }).catch((error: unknown) => {
-      if (submitted && pendingCommand === submitted) pendingCommand = null;
+      if (acknowledgeCommand) historyRecorder.cancel();
       console.error("终端输入写入失败", key, error);
     });
     if (!sessionId) {
@@ -572,7 +553,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       return false;
     }
     if (commandInput.atPrompt && ["ArrowLeft", "ArrowRight", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)) {
-      commandInput.reset();
+      commandInput.invalidateLine();
       hideSuggestions();
     }
 
@@ -851,7 +832,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
           }
         }
         unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) => {
-          terminal.write(data, confirmPendingCommand);
+          terminal.write(data);
         });
       } else {
         terminal.write(welcomeOutput.join("\r\n"));
@@ -899,6 +880,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     bufferChangeDisposable.dispose();
     selectionDisposable.dispose();
     dataDisposable.dispose();
+    historyMarkerHandlers.forEach((handler) => handler.dispose());
     webgl?.dispose();
     webgl = null;
     terminal.dispose();

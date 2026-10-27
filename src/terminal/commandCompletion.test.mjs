@@ -11,10 +11,11 @@ globalThis.window = { dispatchEvent: () => {} };
 
 const {
   CommandInputTracker,
+  CommandHistoryRecorder,
   COMMAND_HISTORY_DEFAULT_LIMIT,
-  commandWasEchoed,
   clearCommandHistory,
   getCommandHistoryLimit,
+  getCommandHistoryCount,
   matchingCommands,
   recordCommand,
   setCommandCompletionEnabled,
@@ -50,14 +51,10 @@ test("secret-bearing commands and non-shell prompts are ignored", () => {
   assert.equal(tracker.line, "");
 });
 
-test("submission survives delayed echo and single-line bracketed paste", () => {
+test("submission accepts single-line bracketed paste and rejects multiline input", () => {
   const tracker = new CommandInputTracker();
   tracker.observe("\x1b[200~systemctl restart delayed.service\x1b[201~", "$ ");
   assert.equal(tracker.observe("\r", "$ "), "systemctl restart delayed.service");
-  assert.equal(commandWasEchoed("systemctl restart delayed.service", ["$ "]), false);
-  assert.equal(commandWasEchoed("systemctl restart delayed.service", [
-    "$ systemctl restart ", "delayed.service   right prompt",
-  ]), true);
   tracker.observe("\x1b[200~echo first\necho second\x1b[201~", "$ ");
   assert.equal(tracker.line, "");
 });
@@ -93,4 +90,77 @@ test("clearing history removes every saved command but keeps preferences", () =>
   assert.equal(getCommandHistoryLimit(), 5000);
   recordCommand("echo after-clear");
   assert.deepEqual(matchingCommands("echo after"), ["echo after-clear"]);
+});
+
+test("a five-command cap stores five unique records while matching filters by prefix", () => {
+  clearCommandHistory();
+  setCommandHistoryLimit(5);
+  for (const command of ["echo one", "echo two", "echo three", "echo four", "pwd"]) recordCommand(command);
+  assert.equal(getCommandHistoryCount(), 5);
+  assert.equal(matchingCommands("echo").length, 4);
+  recordCommand("echo one");
+  assert.equal(getCommandHistoryCount(), 5);
+  clearCommandHistory();
+  assert.equal(getCommandHistoryCount(), 0);
+});
+
+test("only explicitly successful completed commands are recorded, even with delayed write acknowledgment", () => {
+  const saved = [];
+  const recorder = new CommandHistoryRecorder((command) => saved.push(command));
+  const acknowledge = recorder.submit("sleep 20");
+  recorder.observeMarker("C");
+  assert.deepEqual(saved, []);
+  recorder.observeMarker("D;0");
+  recorder.observeMarker("A");
+  assert.deepEqual(saved, []);
+  acknowledge();
+  assert.deepEqual(saved, ["sleep 20"]);
+
+  recorder.submit("ls --invalid-option")();
+  recorder.observeMarker("C");
+  recorder.observeMarker("D;2");
+  recorder.submit("unknown-result")();
+  recorder.observeMarker("C");
+  recorder.observeMarker("D");
+  recorder.submit("no-exit-code")();
+  recorder.observeMarker("A");
+  recorder.observeMarker("D;0");
+  assert.deepEqual(saved, ["sleep 20"]);
+});
+
+test("stale completion and write callbacks cannot store a later command", () => {
+  const saved = [];
+  const recorder = new CommandHistoryRecorder((command) => saved.push(command));
+  const oldAcknowledgment = recorder.submit("echo old");
+  recorder.cancel();
+  recorder.submit("echo new")();
+  oldAcknowledgment();
+  recorder.observeMarker("D;0");
+  assert.deepEqual(saved, []);
+});
+
+test("a failed command does not consume a history slot or evict a successful command", () => {
+  clearCommandHistory();
+  setCommandHistoryLimit(1);
+  const recorder = new CommandHistoryRecorder();
+  recorder.submit("w")();
+  recorder.observeMarker("C");
+  recorder.observeMarker("D;0");
+  recorder.submit("ls --invalid-option")();
+  recorder.observeMarker("C");
+  recorder.observeMarker("D;2");
+  assert.equal(getCommandHistoryCount(), 1);
+  assert.deepEqual(matchingCommands("w"), ["w"]);
+  clearCommandHistory();
+});
+
+test("shell Tab completion and command line edits recover the final echoed input", () => {
+  const tracker = new CommandInputTracker();
+  tracker.observe("systemct", "$ ");
+  tracker.observe("\t", "$ systemct");
+  assert.equal(tracker.canSuggest, false);
+  assert.equal(tracker.observe("\r", "$ systemctl", "systemctl"), "systemctl");
+  tracker.observe("\x1b[A", "$ ");
+  assert.equal(tracker.observe("\r", "$ echo previous", "echo previous"), "echo previous");
+  assert.equal(tracker.observe("secret\r", "Password: ", "secret"), null);
 });

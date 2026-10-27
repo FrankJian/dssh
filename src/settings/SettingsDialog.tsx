@@ -10,6 +10,8 @@ import { TerminalColorSettings } from "./TerminalColorSettings";
 import {
   clampCommandHistoryLimit,
   clearCommandHistory,
+  commandHistoryChangedEvent,
+  getCommandHistoryCount,
   COMMAND_HISTORY_DEFAULT_LIMIT,
   COMMAND_HISTORY_MAX_LIMIT,
   COMMAND_HISTORY_MIN_LIMIT,
@@ -247,6 +249,16 @@ export function SettingsDialog({
   const [commandHistoryLimitDraft, setCommandHistoryLimitDraft] = useState(String(commandHistoryLimit));
   const [confirmClearCommandHistory, setConfirmClearCommandHistory] = useState(false);
   const [commandHistoryCleared, setCommandHistoryCleared] = useState(false);
+  const [commandHistoryCount, setCommandHistoryCount] = useState(getCommandHistoryCount);
+  useEffect(() => {
+    const refresh = () => setCommandHistoryCount(getCommandHistoryCount());
+    window.addEventListener(commandHistoryChangedEvent, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(commandHistoryChangedEvent, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
   useEffect(() => setCommandHistoryLimitDraft(String(commandHistoryLimit)), [commandHistoryLimit]);
   const commitCommandHistoryLimit = () => {
     const next = commandHistoryLimitDraft.trim()
@@ -578,7 +590,7 @@ export function SettingsDialog({
               <section className="settings-section" aria-label="终端设置">
                 <div className="settings-section__head">
                   <h3>命令补全</h3>
-                  <p>记住本机终端中输入并回显过的单行命令，在所有服务器和本地终端共享。输入前缀后可用 ↑ ↓ 选择，Tab 填入；历史保存在本机。</p>
+                  <p>记住退出码为 0 的单行命令，在所有服务器和本地终端共享。输入前缀后可用 ↑ ↓ 选择，Tab 填入；未选中时 Tab 使用系统补全。历史保存在本机。</p>
                 </div>
                 <label className="checkbox-field">
                   <input
@@ -598,7 +610,7 @@ export function SettingsDialog({
                 {commandCompletion ? (
                   <>
                     <label className="settings-field settings-field--short">
-                      <span className="settings-field__label">保存的历史命令条数</span>
+                      <span className="settings-field__label">历史命令存储上限</span>
                       <input
                         className="settings-number"
                         max={COMMAND_HISTORY_MAX_LIMIT}
@@ -616,6 +628,8 @@ export function SettingsDialog({
                         {COMMAND_HISTORY_MIN_LIMIT}–{COMMAND_HISTORY_MAX_LIMIT} 条，默认 {COMMAND_HISTORY_DEFAULT_LIMIT} 条。调低后会立即删除超出上限的旧记录。
                       </span>
                     </label>
+                    <p className="settings-field__hint" role="status">当前已记住 {commandHistoryCount} / {commandHistoryLimit} 条命令（按完整命令去重）。提示只显示当前输入前缀匹配的记录。</p>
+                    <p className="settings-field__hint">仅当 shell 报告成功退出码时保存；无法确认执行结果、包含敏感信息或多行输入时不保存。</p>
                     <div className="settings-history-clear">
                       {confirmClearCommandHistory ? (
                         <div className="settings-history-clear__confirm" role="group" aria-label="确认清空历史命令">

@@ -4402,7 +4402,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .terminal-completion[hidden] { display: none; }
 
-.terminal-completion::-webkit-scrollbar { width: 8px; }
+.terminal-completion::-webkit-scrollbar { width: 8px; height: 8px; }
 .terminal-completion::-webkit-scrollbar-thumb {
   border-radius: var(--radius-pill);
   background: var(--border-strong);

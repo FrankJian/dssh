@@ -27,3 +27,10 @@ test("completion moves below a top prompt and reduces visible rows when space is
 test("completion hides when not even one whole row fits", () => {
   assert.equal(placeCompletionMenu({ left: 0, top: 0, right: 100, bottom: 50 }, 10, 15, 35, 100, 10, 24), null);
 });
+
+test("five matching commands remain fully visible with a horizontal scrollbar", () => {
+  const popup = placeCompletionMenu({ left: 0, top: 0, right: 300, bottom: 400 }, 10, 250, 274, 700, 5, 24, 8);
+  assert.equal(popup.height, 134);
+  assert.equal((popup.height - 6 - 8) / 24, 5);
+  assert.ok(popup.left + popup.width <= 300);
+});
