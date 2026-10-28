@@ -1110,7 +1110,16 @@ async fn connect_and_run(
                 })
             })
             .or_else(|| input_gate.as_ref().map(ZmodemInputGate::next_wait))
-            .or_else(|| download_probe.trigger_flush_wait());
+            .or_else(|| {
+                [
+                    download_probe.trigger_flush_wait(),
+                    download_probe.star_flush_wait(),
+                    probe.star_flush_wait(),
+                ]
+                .into_iter()
+                .flatten()
+                .min()
+            });
 
         tokio::select! {
             command = rx.recv() => match command {
@@ -1712,12 +1721,12 @@ async fn connect_and_run(
                         gate.release_at = Some(Instant::now());
                     }
                 } else {
-                    let text = download_probe.flush_stale_trigger();
-                    if !text.is_empty() {
-                        let visible = probe.feed(&text).text;
-                        let visible = decode_with_carry(&mut utf8_carry, &visible);
-                        sink.push(&visible);
-                    }
+                    let mut text = download_probe.flush_stale_trigger();
+                    text.extend(download_probe.flush_stale_stars());
+                    let mut visible = probe.feed(&text).text;
+                    visible.extend(probe.flush_stale_stars());
+                    let visible = decode_with_carry(&mut utf8_carry, &visible);
+                    sink.push(&visible);
                 }
             }
         }

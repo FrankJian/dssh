@@ -45,6 +45,7 @@ const MAX_MARKER_BYTES: usize = 6;
 const FINISH_FRAME_GRACE: Duration = Duration::from_secs(2);
 const DOWNLOAD_FINISH_FRAME_GRACE: Duration = Duration::from_secs(5);
 const DOWNLOAD_TRIGGER_GRACE: Duration = Duration::from_millis(250);
+const STAR_ECHO_GRACE: Duration = Duration::from_millis(50);
 const ZFIN_HEX_MARKERS: [&[u8]; 2] = [b"**\x18B08", b"*\x18B08"];
 const LRZSZ_DOWNLOAD_TRIGGER: &[u8] = b"rz\r";
 
@@ -314,6 +315,7 @@ fn longest_zfin_marker_prefix(bytes: &[u8]) -> usize {
 pub(crate) struct ZmodemProbe {
     pending: Vec<u8>,
     suppressed: bool,
+    star_since: Option<Instant>,
 }
 
 impl ZmodemProbe {
@@ -344,6 +346,7 @@ impl ZmodemProbe {
                 Ok(Some((sender, header_len))) => {
                     let trailing = self.pending.split_off(header_len);
                     self.pending.clear();
+                    self.star_since = None;
                     return ProbeOutput {
                         text: visible,
                         detection: Some(ZmodemDetection { sender, trailing }),
@@ -359,6 +362,7 @@ impl ZmodemProbe {
             }
         }
 
+        track_star_prefix(&self.pending, &mut self.star_since);
         ProbeOutput {
             text: visible,
             detection: None,
@@ -368,14 +372,28 @@ impl ZmodemProbe {
     pub fn suppress_until_cancel(&mut self) {
         self.pending.clear();
         self.suppressed = true;
+        self.star_since = None;
     }
 
     pub fn rearm(&mut self) {
+        if !self.suppressed {
+            return;
+        }
         self.suppressed = false;
         self.pending.clear();
+        self.star_since = None;
+    }
+
+    pub fn star_flush_wait(&self) -> Option<Duration> {
+        star_flush_wait(self.star_since)
+    }
+
+    pub fn flush_stale_stars(&mut self) -> Vec<u8> {
+        flush_stale_stars(&mut self.pending, &mut self.star_since)
     }
 
     pub fn finish(&mut self) -> Vec<u8> {
+        self.star_since = None;
         std::mem::take(&mut self.pending)
     }
 }
@@ -388,6 +406,7 @@ pub(crate) struct ZmodemDownloadProbe {
     pending: Vec<u8>,
     suppressed: bool,
     trigger_since: Option<Instant>,
+    star_since: Option<Instant>,
 }
 
 impl ZmodemDownloadProbe {
@@ -427,6 +446,7 @@ impl ZmodemDownloadProbe {
                     let trailing = self.pending.split_off(header_len);
                     self.pending.clear();
                     self.trigger_since = None;
+                    self.star_since = None;
                     return DownloadProbeOutput {
                         text: visible,
                         detection: Some(ZmodemDownloadDetection { trailing }),
@@ -443,6 +463,7 @@ impl ZmodemDownloadProbe {
             self.trigger_since = None;
         }
 
+        track_star_prefix(&self.pending, &mut self.star_since);
         DownloadProbeOutput {
             text: visible,
             detection: None,
@@ -453,12 +474,25 @@ impl ZmodemDownloadProbe {
         self.pending.clear();
         self.suppressed = true;
         self.trigger_since = None;
+        self.star_since = None;
     }
 
     pub fn rearm(&mut self) {
+        if !self.suppressed {
+            return;
+        }
         self.suppressed = false;
         self.pending.clear();
         self.trigger_since = None;
+        self.star_since = None;
+    }
+
+    pub fn star_flush_wait(&self) -> Option<Duration> {
+        star_flush_wait(self.star_since)
+    }
+
+    pub fn flush_stale_stars(&mut self) -> Vec<u8> {
+        flush_stale_stars(&mut self.pending, &mut self.star_since)
     }
 
     pub fn trigger_flush_wait(&self) -> Option<Duration> {
@@ -479,7 +513,31 @@ impl ZmodemDownloadProbe {
 
     pub fn finish(&mut self) -> Vec<u8> {
         self.trigger_since = None;
+        self.star_since = None;
         std::mem::take(&mut self.pending)
+    }
+}
+
+// A bare star is both ordinary shell echo and the start of a ZMODEM header.
+// Wait briefly for framing bytes, but never hold ordinary input indefinitely.
+fn track_star_prefix(pending: &[u8], since: &mut Option<Instant>) {
+    if !pending.is_empty() && pending.iter().all(|byte| *byte == b'*') {
+        since.get_or_insert_with(Instant::now);
+    } else {
+        *since = None;
+    }
+}
+
+fn star_flush_wait(since: Option<Instant>) -> Option<Duration> {
+    since.map(|since| STAR_ECHO_GRACE.saturating_sub(since.elapsed()))
+}
+
+fn flush_stale_stars(pending: &mut Vec<u8>, since: &mut Option<Instant>) -> Vec<u8> {
+    if since.is_some_and(|since| since.elapsed() >= STAR_ECHO_GRACE) {
+        *since = None;
+        std::mem::take(pending)
+    } else {
+        Vec::new()
     }
 }
 
@@ -642,10 +700,47 @@ mod tests {
     use std::time::Instant;
 
     use super::{
-        DOWNLOAD_TRIGGER_GRACE, ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe, ZmodemFinishFilter,
-        flush_receiver_output, flush_sender_output, primed_sender,
+        DOWNLOAD_TRIGGER_GRACE, STAR_ECHO_GRACE, ZMODEM_ABORT_SEQUENCE, ZmodemDownloadProbe,
+        ZmodemFinishFilter, ZmodemProbe, flush_receiver_output, flush_sender_output, primed_sender,
     };
     use zmodem2::{Action, Event, FileInfo, Position, Receiver, Sender};
+
+    #[test]
+    fn bare_stars_are_released_without_waiting_for_another_keystroke() {
+        for stars in [b"*".as_slice(), b"**", b"***"] {
+            let mut upload = ZmodemProbe::default();
+            let mut download = ZmodemDownloadProbe::default();
+            let mut visible = download.feed(stars).text;
+            assert!(download.star_flush_wait().is_some());
+            // A subsequent input must not discard an echo still being probed.
+            download.rearm();
+            download.star_since = Some(Instant::now() - STAR_ECHO_GRACE);
+            visible.extend(download.flush_stale_stars());
+            let mut visible = upload.feed(&visible).text;
+            assert!(upload.star_flush_wait().is_some());
+            upload.rearm();
+            upload.star_since = Some(Instant::now() - STAR_ECHO_GRACE);
+            visible.extend(upload.flush_stale_stars());
+            assert_eq!(visible, stars);
+            assert!(download.star_flush_wait().is_none());
+            assert!(upload.star_flush_wait().is_none());
+            assert_eq!(upload.feed(&download.feed(b"\t").text).text, b"\t");
+        }
+    }
+
+    #[test]
+    fn framing_bytes_cancel_the_ordinary_star_echo_timeout() {
+        let mut upload = ZmodemProbe::default();
+        let mut download = ZmodemDownloadProbe::default();
+        assert!(upload.feed(b"*").text.is_empty());
+        assert!(download.feed(b"*").text.is_empty());
+        assert!(upload.feed(b"*\x18B").text.is_empty());
+        assert!(download.feed(b"*\x18B").text.is_empty());
+        assert!(upload.star_flush_wait().is_none());
+        assert!(download.star_flush_wait().is_none());
+        assert!(upload.flush_stale_stars().is_empty());
+        assert!(download.flush_stale_stars().is_empty());
+    }
 
     #[test]
     fn pending_selection_abort_matches_the_protocol_engine() {
