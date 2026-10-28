@@ -5,45 +5,9 @@ use crate::{
     error::{AppError, AppResult},
     models::terminal::{
         ResizeSshSessionRequest, StartLocalSessionRequest, StartSshSessionRequest, TerminalSession,
-        TerminalSessionKind, WriteSshSessionRequest,
+        WriteSshSessionRequest,
     },
 };
-
-#[tauri::command]
-pub async fn detect_terminal_shell(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> AppResult<Option<String>> {
-    let Some(session) = state
-        .sessions
-        .list_sessions()?
-        .into_iter()
-        .find(|session| session.id == session_id)
-    else {
-        return Ok(None);
-    };
-    if matches!(session.kind, TerminalSessionKind::Local) {
-        return Ok(state
-            .sessions
-            .local_shell_kind(&session_id)?
-            .map(str::to_owned));
-    }
-    let Some(profile) = state.profiles.get_profile(&session.profile_id)? else {
-        return Ok(None);
-    };
-    let Some(transport) = state
-        .ssh_pool
-        .try_acquire_ready(&profile, crate::ssh::ChannelOwner::Exec)
-        .await
-    else {
-        return Ok(None);
-    };
-    Ok(
-        crate::ssh::shell_integration::detect_remote_shell(&transport)
-            .await
-            .map(str::to_owned),
-    )
-}
 
 #[tauri::command]
 pub fn list_ssh_sessions(state: State<'_, AppState>) -> AppResult<Vec<TerminalSession>> {
@@ -96,11 +60,6 @@ pub fn write_ssh_session(
     state: State<'_, AppState>,
     request: WriteSshSessionRequest,
 ) -> AppResult<()> {
-    if request.history_setup {
-        return state
-            .sessions
-            .write_history_setup(&request.session_id, request.data);
-    }
     state
         .sessions
         .write_session(&request.session_id, request.data)

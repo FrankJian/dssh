@@ -106,7 +106,6 @@ struct SessionHandle {
     kind: TerminalSessionKind,
     profile_id: String,
     title: String,
-    shell_program: Option<String>,
     tx: mpsc::Sender<SessionCommand>,
     closed: watch::Receiver<bool>,
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
@@ -281,7 +280,6 @@ impl SessionManager {
                 kind: TerminalSessionKind::Ssh,
                 profile_id: profile.id.clone(),
                 title: title.clone(),
-                shell_program: None,
                 tx,
                 closed,
                 output: output.clone(),
@@ -350,7 +348,6 @@ impl SessionManager {
                 kind: TerminalSessionKind::Local,
                 profile_id: "local".to_string(),
                 title: title.clone(),
-                shell_program: Some(default_shell().program),
                 tx,
                 closed,
                 output: output.clone(),
@@ -403,25 +400,6 @@ impl SessionManager {
         let tx = self.session_tx(session_id)?;
         tx.try_send(SessionCommand::Input(data))
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
-    }
-
-    pub fn write_history_setup(&self, session_id: &str, data: String) -> AppResult<()> {
-        let handle = self
-            .sessions
-            .lock()
-            .map_err(lock_error)?
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| AppError::new("session_not_found", "终端已关闭。"))?;
-        // Hold the scrollback lock until the input is enqueued, so the marker
-        // precedes setup echo even if the PTY starts responding immediately.
-        let mut output = handle.output.lock().map_err(lock_error)?;
-        handle
-            .tx
-            .try_send(SessionCommand::Input(data))
-            .map_err(|error| AppError::new("session_send_error", error.to_string()))?;
-        output.push_str(super::shell_integration::SETUP_START);
-        Ok(())
     }
 
     pub fn respond_zmodem_prompt(
@@ -512,16 +490,6 @@ impl SessionManager {
             .collect())
     }
 
-    pub fn local_shell_kind(&self, session_id: &str) -> AppResult<Option<&'static str>> {
-        let sessions = self.sessions.lock().map_err(lock_error)?;
-        Ok(sessions.get(session_id).and_then(|handle| {
-            handle
-                .shell_program
-                .as_deref()
-                .and_then(super::shell_integration::shell_kind)
-        }))
-    }
-
     /// Return the accumulated terminal output (including ANSI sequences) for a
     /// session, so the AI agent can inspect what is currently on screen.
     pub fn read_session_output(&self, session_id: &str) -> AppResult<String> {
@@ -533,7 +501,7 @@ impl SessionManager {
             )
         })?;
         let buffer = handle.output.lock().map_err(lock_error)?;
-        Ok(super::shell_integration::strip_setup_echo(&buffer))
+        Ok(buffer.clone())
     }
 
     fn session_tx(&self, session_id: &str) -> AppResult<mpsc::Sender<SessionCommand>> {

@@ -60,14 +60,9 @@ jobs:
       - name: Type-check frontend
         run: pnpm exec tsc --noEmit
 
-      - name: Install Fish for shell integration tests
-        if: runner.os == 'macOS'
-        timeout-minutes: 5
-        run: brew install fish
-
-      - name: Test command history and shell integration
+      - name: Test command history
         timeout-minutes: 2
-        run: node --experimental-strip-types --test src/terminal/commandCompletion.test.mjs src/terminal/historyShellIntegration.test.mjs src/terminal/completionPosition.test.mjs
+        run: node --experimental-strip-types --test src/terminal/commandCompletion.test.mjs src/terminal/completionPosition.test.mjs
 
       - name: Build frontend
         run: pnpm build

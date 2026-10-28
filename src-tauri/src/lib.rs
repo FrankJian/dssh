@@ -88,7 +88,6 @@ pub fn run() {
             commands::config::read_image_data_url,
             commands::sessions::list_ssh_sessions,
             commands::sessions::read_ssh_session_output,
-            commands::sessions::detect_terminal_shell,
             commands::sessions::start_local_session,
             commands::sessions::start_ssh_session,
             commands::sessions::write_ssh_session,

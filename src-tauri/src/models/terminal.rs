@@ -52,8 +52,6 @@ pub struct StartSshSessionRequest {
 pub struct WriteSshSessionRequest {
     pub session_id: String,
     pub data: String,
-    #[serde(default)]
-    pub history_setup: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

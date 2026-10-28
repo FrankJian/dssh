@@ -22,10 +22,7 @@ import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
 import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
 import { toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
-import { CommandHistoryRecorder, CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands } from "./commandCompletion";
-import { historyShellIntegrationFor, readHistorySetupOutput } from "./historyShellIntegration";
-import { detectTerminalShell, writeHistoryShellSetup } from "../services/sshSessionService";
-import { TerminalCommandActivityTracker } from "./commandActivity";
+import { CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands, recordCommand } from "./commandCompletion";
 import { placeCompletionMenu, type CompletionBounds } from "./completionPosition";
 import "@xterm/xterm/css/xterm.css";
 
@@ -77,19 +74,6 @@ export interface TerminalHandle {
   focus(): void;
   /** Capture the rendered state before moving a workspace to another window. */
   serialize(): TerminalSnapshot | null;
-  historyReportingStatus(): HistoryReportingStatus;
-  resetHistoryReporting(): void;
-}
-
-export const historyReportingChangedEvent = "dssh:history-reporting-changed";
-export type HistoryReportingStatus = "waiting" | "settingUp" | "ready" | "unsupported" | "failed";
-
-export function getHistoryReportingStatus(sessionId: string | null): HistoryReportingStatus {
-  return sessionId ? instances.get(sessionId)?.handle.historyReportingStatus() ?? "waiting" : "waiting";
-}
-
-export function resetHistoryReporting(sessionId: string): void {
-  instances.get(sessionId)?.handle.resetHistoryReporting();
 }
 
 /** The session-less welcome terminal shown before anything is connected. */
@@ -217,14 +201,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const commandInput = new CommandInputTracker();
   let completionStartColumn: number | null = null;
   let completionStartRow: number | null = null;
-  const historyRecorder = new CommandHistoryRecorder();
-  let reportingStatus: HistoryReportingStatus = "waiting";
-  let reportingAttempted = false;
-  let reportingEnabled = commandCompletionEnabled();
-  let hasSubmittedInput = false;
-  const shellActivity = new TerminalCommandActivityTracker();
-  let shellBusy = false;
-  let reportingSetup: { timer: number; output: string; queuedInput: string[]; stage: "detecting" | "installing" | "finishing" } | null = null;
   let suggestions: string[] = [];
   let selectedSuggestion: number | null = null;
   let desiredSuggestionWidth = 0;
@@ -330,114 +306,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
         row === completionStartRow ? completionStartColumn : 0) ?? "");
     }
     return lines.join("").trimEnd();
-  }
-
-  const historyMarkerHandlers = [133, 633].map((identifier) => terminal.parser.registerOscHandler(identifier, (data) => {
-    if (replaying) return false;
-    if (commandCompletionEnabled()) {
-      if (/^D;-?\d+(?:;|$)/.test(data)) {
-        historyRecorder.enablePromptReporting();
-        setReportingStatus("ready");
-      }
-      historyRecorder.observeMarker(data);
-    }
-    return false;
-  }));
-
-  function setReportingStatus(status: HistoryReportingStatus) {
-    if (reportingStatus === status) return;
-    reportingStatus = status;
-    window.dispatchEvent(new Event(historyReportingChangedEvent));
-  }
-
-  function finishReportingSetup(status: HistoryReportingStatus, output: string, clearPrompt: boolean) {
-    const pending = reportingSetup;
-    if (!pending || pending.stage === "finishing") return;
-    pending.stage = "finishing";
-    if (status === "ready") historyRecorder.enablePromptReporting();
-    setReportingStatus(status);
-    terminal.write(`${clearPrompt ? "\r\x1b[2K" : ""}${output}`, () => {
-      if (reportingSetup !== pending) return;
-      shellBusy = shellActivity.observeOutput(output) === "running";
-      releaseQueuedHistoryInput(status !== "ready");
-    });
-  }
-
-  function releaseQueuedHistoryInput(force = false) {
-    const pending = reportingSetup;
-    if (!pending || pending.stage !== "finishing") return;
-    if (!force && !/(?:[$#%>❯➜])\s*$/.test(visibleCursorLine())) return;
-    window.clearTimeout(pending.timer);
-    reportingSetup = null;
-    // The acknowledgment can arrive before the prompt in a separate PTY chunk.
-    // Track typeahead only after that prompt has actually been painted.
-    for (const data of pending.queuedInput) handleTerminalData(data);
-  }
-
-  function maybeStartHistoryReporting() {
-    if (!sessionId || !commandCompletionEnabled() || reportingAttempted || reportingSetup
-      || reportingStatus === "ready" || shellBusy || replaying || !opened
-      || (hasSubmittedInput && !terminal.modes.bracketedPasteMode)
-      || terminal.buffer.active.type !== "normal" || commandInput.line
-      || !/(?:[$#%>❯➜])\s*$/.test(visibleCursorLine())) return;
-    reportingAttempted = true;
-    setReportingStatus("settingUp");
-    historyRecorder.cancel();
-    commandInput.reset();
-    hideSuggestions();
-    const timer = window.setTimeout(() => {
-      if (reportingSetup?.stage === "finishing") releaseQueuedHistoryInput(true);
-      else if (reportingSetup) finishReportingSetup("failed", reportingSetup.output, false);
-    }, 5000);
-    const pending = { timer, output: "", queuedInput: [] as string[], stage: "detecting" as "detecting" | "installing" | "finishing" };
-    reportingSetup = pending;
-    void detectTerminalShell(sessionId).then(async (shell) => {
-      if (reportingSetup !== pending || pending.stage !== "detecting") return;
-      if (!commandCompletionEnabled() || !shell) {
-        finishReportingSetup(shell ? "waiting" : "unsupported", "", false);
-        return;
-      }
-      pending.stage = "installing";
-      await writeHistoryShellSetup(sessionId, `${historyShellIntegrationFor(shell)}\r`);
-    }).catch(() => {
-      if (reportingSetup === pending) finishReportingSetup("failed", pending.output, false);
-    });
-  }
-
-  function writeLiveOutput(data: string) {
-    if (reportingSetup?.stage === "installing") {
-      reportingSetup.output += data;
-      const ready = readHistorySetupOutput(reportingSetup.output);
-      if (ready) {
-        finishReportingSetup("ready", ready.output, true);
-      } else if (reportingSetup.output.length > 64 * 1024) {
-        finishReportingSetup("failed", reportingSetup.output, false);
-      }
-      return;
-    }
-    const activity = shellActivity.observeOutput(data);
-    if (activity !== null) shellBusy = activity === "running";
-    terminal.write(data, () => {
-      releaseQueuedHistoryInput();
-      maybeStartHistoryReporting();
-    });
-  }
-
-  function resetInstanceHistoryReporting() {
-    historyRecorder.resetReporting();
-    reportingAttempted = false;
-    setReportingStatus("waiting");
-    if (reportingSetup) {
-      window.clearTimeout(reportingSetup.timer);
-      // A disconnected PTY must not receive initialization typeahead on a new shell.
-      const output = reportingSetup.output;
-      const hadInput = reportingSetup.queuedInput.length > 0;
-      reportingSetup = null;
-      terminal.write(output + (hadInput ? "\r\n连接已中断，请重新输入刚才的命令。\r\n" : ""));
-    }
-    commandInput.reset();
-    shellBusy = false;
-    hasSubmittedInput = false;
   }
 
   function hideSuggestions() {
@@ -594,22 +462,16 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   window.addEventListener("resize", positionSuggestions);
 
   const onCompletionSettingChange = () => {
-    const wasEnabled = reportingEnabled;
-    reportingEnabled = commandCompletionEnabled();
-    if (!reportingEnabled) {
-      historyRecorder.cancel();
+    if (!commandCompletionEnabled()) {
       commandInput.reset();
       hideSuggestions();
     } else {
       if (!suggestionMenu.hidden) renderSuggestions();
-      if (!wasEnabled) reportingAttempted = false;
-      maybeStartHistoryReporting();
     }
   };
   window.addEventListener("dssh:command-completion-settings", onCompletionSettingChange);
   window.addEventListener("storage", onCompletionSettingChange);
   const onHistoryCleared = () => {
-    historyRecorder.cancel();
     hideSuggestions();
   };
   window.addEventListener(commandHistoryClearedEvent, onHistoryCleared);
@@ -618,15 +480,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     if (replaying || (suppressFocusReports && FOCUS_REPORTS.has(data))) {
       return;
     }
-    maybeStartHistoryReporting();
-    if (reportingSetup) {
-      reportingSetup.queuedInput.push(data);
-      return;
-    }
-    if (data.includes("\r") || data.includes("\n")) hasSubmittedInput = true;
-    const activity = shellActivity.observeInput(data);
-    if (activity !== null) shellBusy = activity === "running";
-    let acknowledgeCommand: (() => void) | undefined;
     if (sessionId && commandCompletionEnabled() && terminal.buffer.active.type === "normal") {
       const startsLine = !commandInput.atPrompt;
       const startColumn = terminal.buffer.active.cursorX;
@@ -637,9 +490,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
         completionStartRow = startRow;
       }
       if (command) {
-        acknowledgeCommand = historyRecorder.submit(command);
-      } else if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
-        historyRecorder.cancel();
+        recordCommand(command);
       }
       if (!commandInput.atPrompt) {
         completionStartColumn = null;
@@ -652,10 +503,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     }
     // Dropping keystrokes silently is what made this class of bug so hard to
     // see; a failed write must at least leave a trace.
-    void Promise.resolve(props.onData?.(data)).then(() => {
-      acknowledgeCommand?.();
-    }).catch((error: unknown) => {
-      if (acknowledgeCommand) historyRecorder.cancel();
+    void Promise.resolve(props.onData?.(data)).catch((error: unknown) => {
       console.error("终端输入写入失败", key, error);
     });
     if (!sessionId) {
@@ -958,7 +806,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
             replaying = false;
             restoringSnapshot = false;
             scheduleFit();
-            maybeStartHistoryReporting();
           });
         } else {
           const backlog = setup.getBacklog?.(sessionId) ?? "";
@@ -973,12 +820,11 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
             replaying = true;
             terminal.write(backlog, () => {
               replaying = false;
-              maybeStartHistoryReporting();
             });
           }
         }
         unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) => {
-          writeLiveOutput(data);
+          terminal.write(data);
         });
       } else {
         terminal.write(welcomeOutput.join("\r\n"));
@@ -1023,15 +869,10 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     window.removeEventListener("dssh:command-completion-settings", onCompletionSettingChange);
     window.removeEventListener("storage", onCompletionSettingChange);
     window.removeEventListener(commandHistoryClearedEvent, onHistoryCleared);
-    if (reportingSetup) {
-      window.clearTimeout(reportingSetup.timer);
-      reportingSetup = null;
-    }
     unsubscribeOutput?.();
     bufferChangeDisposable.dispose();
     selectionDisposable.dispose();
     dataDisposable.dispose();
-    historyMarkerHandlers.forEach((handler) => handler.dispose());
     webgl?.dispose();
     webgl = null;
     terminal.dispose();
@@ -1041,8 +882,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   return {
     handle: {
       terminal,
-      historyReportingStatus: () => reportingStatus,
-      resetHistoryReporting: resetInstanceHistoryReporting,
       update,
       attach,
       detach,

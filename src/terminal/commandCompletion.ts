@@ -93,66 +93,6 @@ export function matchingCommands(prefix: string): string[] {
     .filter((command) => command.startsWith(prefix));
 }
 
-/** Persist only a completed shell command with an explicit successful status. */
-export class CommandHistoryRecorder {
-  private pending: { command: string; written: boolean; started: boolean; exitCode: number | null } | null = null;
-  private promptReporting = false;
-  private readonly save: (command: string) => void;
-
-  constructor(save: (command: string) => void = recordCommand) {
-    this.save = save;
-  }
-
-  submit(command: string): () => void {
-    const pending = { command, written: false, started: this.promptReporting, exitCode: null as number | null };
-    this.pending = pending;
-    return () => {
-      if (this.pending !== pending) return;
-      pending.written = true;
-      this.confirm();
-    };
-  }
-
-  cancel(): void {
-    this.pending = null;
-  }
-
-  enablePromptReporting(): void {
-    this.promptReporting = true;
-  }
-
-  resetReporting(): void {
-    this.cancel();
-    this.promptReporting = false;
-  }
-
-  observeMarker(data: string): void {
-    if (!this.pending) return;
-    const [marker, status] = data.split(";");
-    if (marker === "C") this.pending.started = true;
-    if (marker === "A" && this.pending.exitCode === null) this.cancel();
-    if (marker === "D") {
-      if (!this.pending.started || !/^-?\d+$/.test(status ?? "")) {
-        this.cancel();
-        return;
-      }
-      this.pending.exitCode = Number(status);
-      this.confirm();
-    }
-  }
-
-  private confirm(): void {
-    const pending = this.pending;
-    if (!pending || pending.exitCode === null) return;
-    if (pending.exitCode !== 0) {
-      this.cancel();
-    } else if (pending.written) {
-      this.cancel();
-      this.save(pending.command);
-    }
-  }
-}
-
 export class CommandInputTracker {
   line = "";
   atPrompt = false;
@@ -183,7 +123,10 @@ export class CommandInputTracker {
       }
     }
     if (!this.line && data && !this.atPrompt) {
-      this.atPrompt = /(?:[$#%>❯➜])\s*$/.test(visibleLine) && visibleLine.trim().length > 0;
+      // Track input directly. Prompt formats vary, and the first keystroke can
+      // arrive before xterm has painted the prompt (or after its first echo).
+      // Only known credential prompts should suppress input capture.
+      this.atPrompt = !/(?:password|passphrase|verification code|one.time (?:password|code)|密码|口令|验证码)\s*[:：]\s*$/i.test(visibleLine);
     }
     if (!this.atPrompt) return null;
     for (const char of data) {

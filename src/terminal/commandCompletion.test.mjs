@@ -11,7 +11,6 @@ globalThis.window = new EventTarget();
 
 const {
   CommandInputTracker,
-  CommandHistoryRecorder,
   COMMAND_HISTORY_DEFAULT_LIMIT,
   clearCommandHistory,
   getCommandHistoryLimit,
@@ -106,56 +105,6 @@ test("a five-command cap stores five unique records while matching filters by pr
   assert.equal(getCommandHistoryCount(), 0);
 });
 
-test("only explicitly successful completed commands are recorded, even with delayed write acknowledgment", () => {
-  const saved = [];
-  const recorder = new CommandHistoryRecorder((command) => saved.push(command));
-  const acknowledge = recorder.submit("sleep 20");
-  recorder.observeMarker("C");
-  assert.deepEqual(saved, []);
-  recorder.observeMarker("D;0");
-  recorder.observeMarker("A");
-  assert.deepEqual(saved, []);
-  acknowledge();
-  assert.deepEqual(saved, ["sleep 20"]);
-
-  recorder.submit("ls --invalid-option")();
-  recorder.observeMarker("C");
-  recorder.observeMarker("D;2");
-  recorder.submit("unknown-result")();
-  recorder.observeMarker("C");
-  recorder.observeMarker("D");
-  recorder.submit("no-exit-code")();
-  recorder.observeMarker("A");
-  recorder.observeMarker("D;0");
-  assert.deepEqual(saved, ["sleep 20"]);
-});
-
-test("stale completion and write callbacks cannot store a later command", () => {
-  const saved = [];
-  const recorder = new CommandHistoryRecorder((command) => saved.push(command));
-  const oldAcknowledgment = recorder.submit("echo old");
-  recorder.cancel();
-  recorder.submit("echo new")();
-  oldAcknowledgment();
-  recorder.observeMarker("D;0");
-  assert.deepEqual(saved, []);
-});
-
-test("a failed command does not consume a history slot or evict a successful command", () => {
-  clearCommandHistory();
-  setCommandHistoryLimit(1);
-  const recorder = new CommandHistoryRecorder();
-  recorder.submit("w")();
-  recorder.observeMarker("C");
-  recorder.observeMarker("D;0");
-  recorder.submit("ls --invalid-option")();
-  recorder.observeMarker("C");
-  recorder.observeMarker("D;2");
-  assert.equal(getCommandHistoryCount(), 1);
-  assert.deepEqual(matchingCommands("w"), ["w"]);
-  clearCommandHistory();
-});
-
 test("shell Tab completion and command line edits recover the final echoed input", () => {
   const tracker = new CommandInputTracker();
   tracker.observe("systemct", "$ ");
@@ -167,22 +116,70 @@ test("shell Tab completion and command line edits recover the final echoed input
   assert.equal(tracker.observe("secret\r", "Password: ", "secret"), null);
 });
 
-test("clearing history cancels the old candidate and keeps session reporting active", () => {
+test("submitted commands are stored immediately without output or exit-code reporting", () => {
   setCommandCompletionEnabled(true);
   setCommandHistoryLimit(5);
-  const recorder = new CommandHistoryRecorder();
-  recorder.enablePromptReporting();
-  const onClear = () => recorder.cancel();
+  clearCommandHistory();
+  const tracker = new CommandInputTracker();
+  for (const command of ["echo hello", "ls --invalid-option"]) {
+    tracker.observe(command, "$ ");
+    const submitted = tracker.observe("\r", `$ ${command}`);
+    assert.equal(submitted, command);
+    recordCommand(submitted);
+    assert.deepEqual(matchingCommands(command), [command]);
+  }
+  assert.equal(getCommandHistoryCount(), 2);
+});
+
+test("input recording does not depend on a painted or recognizable shell prompt", () => {
+  setCommandCompletionEnabled(true);
+  setCommandHistoryLimit(5);
+  clearCommandHistory();
+  let changes = 0;
+  const onChange = () => { changes += 1; };
+  window.addEventListener("dssh:command-history-changed", onChange);
+  try {
+    for (const visibleLine of ["", "➜  ~ ", "custom prompt λ ", "[user@host ~]$ e"]) {
+      const tracker = new CommandInputTracker();
+      tracker.observe("echo hello", visibleLine);
+      assert.equal(tracker.canSuggest, true);
+      const command = tracker.observe("\r", "echo hello");
+      assert.equal(command, "echo hello");
+      recordCommand(command);
+      assert.equal(getCommandHistoryCount(), 1);
+      assert.deepEqual(matchingCommands("echo"), ["echo hello"]);
+    }
+    assert.equal(changes, 4);
+  } finally {
+    window.removeEventListener("dssh:command-history-changed", onChange);
+  }
+});
+
+test("credential prompts still exclude hidden input without requiring shell integration", () => {
+  for (const prompt of ["Password: ", "Enter passphrase: ", "验证码："]) {
+    const tracker = new CommandInputTracker();
+    tracker.observe("private-value", prompt);
+    assert.equal(tracker.observe("\r", prompt), null);
+    tracker.observe("pwd", "custom λ ");
+    assert.equal(tracker.observe("\r", "custom λ pwd"), "pwd");
+  }
+});
+
+test("clearing history keeps input recording active without reconnecting or setup", () => {
+  setCommandCompletionEnabled(true);
+  setCommandHistoryLimit(5);
+  const tracker = new CommandInputTracker();
+  let clearedEvents = 0;
+  const onClear = () => { clearedEvents += 1; };
   window.addEventListener(commandHistoryClearedEvent, onClear);
   try {
-    recorder.submit("echo before-clear")();
+    tracker.observe("echo before-clear", "$ ");
+    recordCommand(tracker.observe("\r", "$ echo before-clear"));
     clearCommandHistory();
-    recorder.observeMarker("D;0");
     assert.equal(getCommandHistoryCount(), 0);
-    recorder.submit("echo after-clear")();
-    recorder.observeMarker("D;0");
-    recorder.submit("ls --invalid-option")();
-    recorder.observeMarker("D;2");
+    assert.equal(clearedEvents, 1);
+    tracker.observe("echo after-clear", "$ ");
+    recordCommand(tracker.observe("\r", "$ echo after-clear"));
     assert.deepEqual(matchingCommands("echo"), ["echo after-clear"]);
     assert.equal(getCommandHistoryCount(), 1);
     assert.equal(getCommandHistoryLimit(), 5);

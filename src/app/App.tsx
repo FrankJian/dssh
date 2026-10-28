@@ -2201,7 +2201,6 @@ function MainApp() {
       ) : null}
       {isSettingsOpen ? (
         <SettingsDialog
-          activeHistoryTerminal={activeSession ? { id: activeSession.id, title: terminalName(activeSession) } : null}
           commandCompletion={commandCompletion}
           onCommandCompletionChange={setCommandCompletion}
           commandHistoryLimit={commandHistoryLimit}
