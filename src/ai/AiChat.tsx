@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AiServerContext } from "../models/ai";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { Button } from "../ui/Button";
 import { SelectMenu } from "../ui/SelectMenu";
-import { listAiModels } from "../services/aiService";
 import { Markdown } from "./Markdown";
 import type { ChatItem } from "./useAiChat";
 import type { AiChat as AiChatController } from "./useAiChat";
@@ -33,81 +33,16 @@ export function AiChat({
 }: AiChatProps) {
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
-  const { activeProvider, copilotLoggedIn, isConfigured, options, providers, updateProvider } =
-    config;
+  const { activeProvider, isConfigured, options, providers } = config;
   const { answerQuestion, approve, cancel, clear, isHistoryReady, isRunning, items, send } = chat;
-
-  // Models available for in-chat switching come from the provider's fetched
-  // list ("获取模型" in settings). A manually-typed model (empty list) is kept
-  // selectable as the sole option, so switching is only offered when the
-  // fetched list actually holds more than one model.
-  const modelOptions = useMemo(() => {
-    const list = [...(activeProvider?.models ?? [])];
-    if (activeProvider?.model && !list.includes(activeProvider.model)) {
-      list.unshift(activeProvider.model);
-    }
-    return list;
-  }, [activeProvider?.models, activeProvider?.model]);
-  const canSwitchModel = modelOptions.length > 1;
-
-  // Auto-refresh the model list when the assistant opens so switching works
-  // after a restart without having to re-run "获取模型" in settings. The fetch
-  // is silent: on failure we keep any previously persisted list.
-  const autoFetchedRef = useRef<Set<string>>(new Set());
-  const providerId = activeProvider?.id;
-  const providerKind = activeProvider?.kind ?? "openai";
-  const providerBaseUrl = activeProvider?.baseUrl ?? "";
-  const providerApiKey = activeProvider?.apiKey ?? "";
-  const providerProxyUrl = activeProvider?.proxyUrl ?? "";
-  const providerHasModel = Boolean(activeProvider?.model);
-  // Copilot resolves its endpoint server-side, so it can fetch once logged in;
-  // OpenAI-compatible providers need a base URL.
-  const canAutoFetch =
-    providerKind === "copilot" ? copilotLoggedIn : Boolean(providerBaseUrl.trim());
-  useEffect(() => {
-    if (locked || !providerId || !canAutoFetch) {
-      return;
-    }
-    const signature = `${providerId}|${providerKind}|${providerBaseUrl}|${providerApiKey}|${providerProxyUrl}`;
-    if (autoFetchedRef.current.has(signature)) {
-      return;
-    }
-    autoFetchedRef.current.add(signature);
-    let cancelled = false;
-    listAiModels({
-      baseUrl: providerBaseUrl,
-      apiKey: providerApiKey,
-      proxyUrl: providerProxyUrl,
-      kind: providerKind,
-    })
-      .then((models) => {
-        if (cancelled || models.length === 0) {
-          return;
-        }
-        const patch: { models: string[]; model?: string } = { models };
-        if (!providerHasModel) {
-          patch.model = models[0];
-        }
-        updateProvider(providerId, patch);
-      })
-      .catch(() => {
-        // Allow a retry the next time the assistant is opened.
-        autoFetchedRef.current.delete(signature);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    locked,
-    providerId,
-    providerKind,
-    canAutoFetch,
-    providerBaseUrl,
-    providerApiKey,
-    providerProxyUrl,
-    providerHasModel,
-    updateProvider,
-  ]);
+  const currentModel = activeProvider?.models.find((model) => model.id === activeProvider.model);
+  const modelOptions = useMemo(() => providers.flatMap((provider) => {
+    const models = provider.models;
+    return models.map((model) => ({
+      label: `${provider.label} / ${model.displayName}${model.displayName !== model.id ? ` (${model.id})` : ""}`,
+      value: JSON.stringify([provider.id, model.id]),
+    }));
+  }), [providers]);
 
   useEffect(() => {
     const node = listRef.current;
@@ -155,17 +90,6 @@ export function AiChat({
           <span>AI 助手</span>
         </div>
         <div className="ai-chat__header-actions">
-          {providers.length > 0 ? (
-            <div className="ai-chat__provider-select">
-              <SelectMenu
-                ariaLabel="选择模型后端"
-                disabled={isRunning}
-                onChange={config.setActiveProviderId}
-                options={providers.map((provider) => ({ label: provider.label, value: provider.id }))}
-                value={config.activeProviderId ?? ""}
-              />
-            </div>
-          ) : null}
           <IconButton
             label="清空全部聊天记录"
             disabled={!isHistoryReady || isRunning || items.length === 0}
@@ -216,6 +140,7 @@ export function AiChat({
       </div>
 
       <div className="ai-chat__composer">
+        {config.error ? <div className="ai-provider__error" role="alert">{config.error}</div> : null}
         <textarea
           aria-label="向 AI 提问"
           className="ai-chat__input"
@@ -227,22 +152,31 @@ export function AiChat({
           value={draft}
         />
         <div className="ai-chat__composer-actions">
-          {activeProvider && canSwitchModel ? (
-            <ModelPicker
-              disabled={isRunning}
-              model={activeProvider.model}
-              models={modelOptions}
-              onSelect={(model) => config.updateProvider(activeProvider.id, { model })}
-              providerLabel={activeProvider.label}
+          {modelOptions.length ? (
+            <SelectMenu
+              ariaLabel="切换厂商与模型"
+              className="ai-chat__model-select"
+              disabled={isRunning || !config.isReady}
+              searchable
+              searchPlaceholder="搜索厂商或模型…"
+              value={activeProvider ? JSON.stringify([activeProvider.id, activeProvider.model]) : ""}
+              options={[{ label: "选择模型", value: "", disabled: true }, ...modelOptions]}
+              onChange={(value) => {
+                const [id, model] = JSON.parse(value) as [string, string];
+                config.selectModel(id, model);
+              }}
             />
-          ) : activeProvider && activeProvider.model ? (
-            <span className="ai-chat__model" title={`当前模型：${activeProvider.model}`}>
-              <Icon name="bot" height="13" width="13" />
-              <span className="ai-chat__model-value">{activeProvider.model}</span>
-            </span>
           ) : (
-            <span />
+            <Button className="ai-chat__configure" onClick={onOpenConfig} title="打开模型配置">
+              <Icon name="settings" height="16" width="16" />配置模型
+            </Button>
           )}
+          {activeProvider && currentModel?.reasoningLevels.length ? (
+            <SelectMenu ariaLabel="选择推理档位" className="ai-chat__reasoning-select" disabled={isRunning}
+              value={currentModel.reasoningEffort ?? currentModel.reasoningLevels[0].level}
+              options={currentModel.reasoningLevels.map((row) => ({ value: row.level, label: row.level }))}
+              onChange={(level) => config.selectReasoningLevel(activeProvider.id, currentModel.id, level)} />
+          ) : null}
           {isRunning ? (
             <button className="ai-chat__send is-stop" onClick={cancel} type="button">
               <Icon name="stop" height="16" width="16" />
@@ -257,93 +191,6 @@ export function AiChat({
         </div>
       </div>
     </section>
-  );
-}
-
-function ModelPicker({
-  disabled,
-  model,
-  models,
-  onSelect,
-  providerLabel,
-}: {
-  disabled: boolean;
-  model: string;
-  models: string[];
-  onSelect: (model: string) => void;
-  providerLabel: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handlePointer = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointer);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) {
-      setOpen(false);
-    }
-  }, [disabled]);
-
-  return (
-    <div className="ai-model-picker" ref={rootRef}>
-      <button
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        className={`ai-chat__model ai-chat__model--select${open ? " is-open" : ""}`}
-        disabled={disabled}
-        onClick={() => setOpen((prev) => !prev)}
-        title={`切换模型（${providerLabel}）`}
-        type="button"
-      >
-        <Icon name="bot" height="13" width="13" />
-        <span className="ai-chat__model-value">{model}</span>
-        <Icon name="chevron-down" height="13" width="13" />
-      </button>
-      {open ? (
-        <ul className="ai-model-picker__menu" role="listbox">
-          {models.map((option) => {
-            const selected = option === model;
-            return (
-              <li key={option}>
-                <button
-                  aria-selected={selected}
-                  className={`ai-model-picker__option${selected ? " is-selected" : ""}`}
-                  onClick={() => {
-                    onSelect(option);
-                    setOpen(false);
-                  }}
-                  role="option"
-                  type="button"
-                >
-                  <span className="ai-model-picker__option-value">{option}</span>
-                  {selected ? <Icon name="check" height="14" width="14" /> : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </div>
   );
 }
 
@@ -438,6 +285,9 @@ function ToolCardView({
   const label = TOOL_LABELS[item.toolName] ?? item.toolName;
   const command = useMemo(() => extractCommand(item.args), [item.args]);
   const sshConnection = useMemo(() => extractSshConnection(item.args), [item.args]);
+  const terminalInput = item.toolName === "write_terminal" && typeof item.args.input === "string"
+    ? { input: item.args.input, terminal: typeof item.args.terminal === "string" ? item.args.terminal : "当前终端", sessionId: typeof item.args.session_id === "string" ? item.args.session_id : "" }
+    : null;
   const userQuestion = useMemo(() => extractUserQuestion(item.args), [item.args]);
   // Commands and their output are collapsed by default so the conversation
   // stays focused on the prompt and the final answer. Pending approvals stay
@@ -459,7 +309,7 @@ function ToolCardView({
       >
         <Icon name={item.toolName === "open_ssh_session" ? "ssh" : "terminalTool"} height="15" width="15" />
         <span className="ai-tool__name">{label}</span>
-        {sshConnection ? (
+        {terminalInput ? <span className="ai-tool__preview">{terminalInput.terminal} · {terminalInput.input} ↵</span> : sshConnection ? (
           <span className="ai-tool__preview">{sshConnection.username}@{sshConnection.host}:{sshConnection.port}</span>
         ) : userQuestion ? <span className="ai-tool__preview">{userQuestion.question}</span>
           : command ? <span className="ai-tool__preview">{command}</span> : null}
@@ -477,7 +327,7 @@ function ToolCardView({
       </button>
       {expanded ? (
         <>
-          {!userQuestion && command ? <pre className="ai-tool__command">{command}</pre> : null}
+          {terminalInput ? <pre className="ai-tool__command">{terminalInput.input}{"\n↵ 回车"}</pre> : !userQuestion && command ? <pre className="ai-tool__command">{command}</pre> : null}
           {userQuestion ? (
             <UserQuestionChoices
               answered={item.result !== null}
@@ -489,7 +339,9 @@ function ToolCardView({
           {needsApproval ? (
             <div className="ai-tool__approval">
               <span className="ai-tool__approval-hint">
-                {sshConnection
+                {terminalInput
+                  ? `是否允许向终端“${terminalInput.terminal}”（${terminalInput.sessionId}）输入以上内容并按回车？`
+                  : sshConnection
                   ? `是否允许打开 SSH 连接“${sshConnection.name}”（${sshConnection.username}@${sshConnection.host}:${sshConnection.port}）？`
                   : "是否允许执行该命令？"}
               </span>
@@ -597,6 +449,8 @@ const TOOL_LABELS: Record<string, string> = {
   control_app: "应用快捷操作",
   ask_user_question: "需要你的选择",
   read_terminal: "读取终端输出",
+  list_terminal_sessions: "列出活动终端",
+  write_terminal: "输入到交互终端",
 };
 
 const STATUS_LABELS: Record<string, string> = {

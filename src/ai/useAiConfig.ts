@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AiOptions, AiProvider } from "../models/ai";
-import { getCopilotStatus } from "../services/aiService";
+import { deleteAiProvider, loadAiProviders, saveAiProvider } from "../services/aiService";
 import {
-  COPILOT_PROVIDER_ID,
-  DEFAULT_AI_OPTIONS,
-  loadActiveProviderId,
-  loadOptions,
-  loadProviders,
-  saveActiveProviderId,
-  saveOptions,
-  saveProviders,
+  AI_PROVIDERS_KEY, loadActiveProviderId, loadLegacyProviders,
+  loadOptions, saveActiveProviderId, saveOptions,
 } from "./aiConfig";
 
 export interface AiConfig {
@@ -18,111 +12,133 @@ export interface AiConfig {
   activeProvider: AiProvider | null;
   options: AiOptions;
   isConfigured: boolean;
-  /** Whether the user is logged in to GitHub Copilot (backend-tracked). */
-  copilotLoggedIn: boolean;
-  refreshCopilotStatus: () => Promise<void>;
-  addProvider: (provider: AiProvider) => void;
-  updateProvider: (id: string, patch: Partial<AiProvider>) => void;
-  removeProvider: (id: string) => void;
+  isReady: boolean;
+  error: string | null;
+  reload: () => void;
+  saveProvider: (provider: AiProvider) => Promise<AiProvider>;
+  removeProvider: (id: string) => Promise<void>;
+  selectModel: (id: string, model: string) => void;
   setActiveProviderId: (id: string) => void;
+  selectReasoningLevel: (id: string, model: string, level: string) => void;
   setOptions: (patch: Partial<AiOptions>) => void;
 }
 
-export function useAiConfig(): AiConfig {
-  const [providers, setProviders] = useState<AiProvider[]>(() => loadProviders());
-  const [activeProviderId, setActiveProviderIdState] = useState<string | null>(() =>
-    loadActiveProviderId(),
-  );
-  const [options, setOptionsState] = useState<AiOptions>(() => loadOptions());
-  const [copilotLoggedIn, setCopilotLoggedIn] = useState(false);
-
-  const refreshCopilotStatus = useCallback(async () => {
-    try {
-      setCopilotLoggedIn(await getCopilotStatus());
-    } catch {
-      setCopilotLoggedIn(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshCopilotStatus();
-  }, [refreshCopilotStatus]);
-
-  useEffect(() => {
-    saveProviders(providers);
-  }, [providers]);
-
-  useEffect(() => {
-    saveActiveProviderId(activeProviderId);
-  }, [activeProviderId]);
-
-  useEffect(() => {
-    saveOptions(options);
-  }, [options]);
-
-  // Keep the active selection valid as providers are added/removed.
-  useEffect(() => {
-    if (providers.length === 0) {
-      if (activeProviderId !== null) {
-        setActiveProviderIdState(null);
+// Share bootstrap across React StrictMode's effect replay. Migration is idempotent;
+// never overwrite a newer Rust descriptor with an old browser copy.
+let bootstrap: Promise<AiProvider[]> | null = null;
+function loadConfiguration() {
+  if (!bootstrap) {
+    bootstrap = (async () => {
+      const stored = await loadAiProviders();
+      for (const provider of loadLegacyProviders()) {
+        if (!stored.some((item) => item.id === provider.id)) {
+          stored.push(await saveAiProvider(provider));
+        }
       }
-      return;
+      localStorage.removeItem(AI_PROVIDERS_KEY);
+      return stored;
+    })().catch((error: unknown) => { bootstrap = null; throw error; });
+  }
+  return bootstrap;
+}
+
+export function useAiConfig(): AiConfig {
+  const [providers, setProviders] = useState<AiProvider[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState<string | null>(loadActiveProviderId);
+  const [options, setOptionsState] = useState<AiOptions>(loadOptions);
+  const [isReady, setIsReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    void loadConfiguration().then((items) => {
+      if (!cancelled) {
+        let selected: Record<string, string> = {};
+        try { selected = JSON.parse(localStorage.getItem("dssh.ai.selectedModels") ?? "{}"); } catch { /* Use saved defaults. */ }
+        let reasoning: Record<string, string> = {};
+        try { reasoning = JSON.parse(localStorage.getItem("dssh.ai.selectedReasoningLevels") ?? "{}"); } catch { /* Use saved defaults. */ }
+        setProviders(items.map((p) => ({
+          ...p,
+          model: selected?.[p.id] && p.models.some((m) => m.id === selected[p.id]) ? selected[p.id] : p.model,
+          models: p.models.map((model) => {
+            const level = reasoning?.[JSON.stringify([p.id, model.id])];
+            return model.reasoningLevels.some((row) => row.level === level) ? { ...model, reasoningEffort: level } : model;
+          }),
+        })));
+        setIsReady(true);
+      }
+    }).catch(async (cause: unknown) => {
+      // A damaged legacy entry must not hide usable backend configurations or
+      // prevent adding a replacement. The original browser data stays intact.
+      try {
+        const stored = await loadAiProviders();
+        if (!cancelled) { setProviders(stored); setIsReady(true); }
+      } catch { /* Backend unavailable; leave the retry action visible. */ }
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "模型配置加载失败，旧版配置已保留。");
+    });
+    return () => { cancelled = true; };
+  }, [revision]);
+
+  useEffect(() => { if (isReady) saveActiveProviderId(activeProviderId); }, [activeProviderId, isReady]);
+  useEffect(() => { saveOptions(options); }, [options]);
+  useEffect(() => {
+    if (isReady) localStorage.setItem("dssh.ai.selectedModels", JSON.stringify(Object.fromEntries(providers.map((p) => [p.id, p.model]))));
+  }, [providers, isReady]);
+  useEffect(() => {
+    if (isReady && !providers.some((p) => p.id === activeProviderId)) {
+      setActiveProviderId(providers[0]?.id ?? null);
     }
-    if (!activeProviderId || !providers.some((provider) => provider.id === activeProviderId)) {
-      setActiveProviderIdState(providers[0].id);
-    }
-  }, [providers, activeProviderId]);
+  }, [providers, activeProviderId, isReady]);
 
-  const addProvider = useCallback((provider: AiProvider) => {
-    setProviders((prev) => [...prev, provider]);
-    setActiveProviderIdState(provider.id);
+  const saveProvider = useCallback(async (provider: AiProvider) => {
+    const saved = await saveAiProvider(provider);
+    bootstrap = null;
+    setProviders((previous) => previous.some((p) => p.id === saved.id)
+      ? previous.map((p) => p.id === saved.id ? saved : p) : [...previous, saved]);
+    setActiveProviderId((current) => current ?? saved.id);
+    setError(null);
+    return saved;
   }, []);
 
-  const updateProvider = useCallback((id: string, patch: Partial<AiProvider>) => {
-    setProviders((prev) =>
-      prev.map((provider) => (provider.id === id ? { ...provider, ...patch } : provider)),
-    );
+  const removeProvider = useCallback(async (id: string) => {
+    await deleteAiProvider(id);
+    bootstrap = null;
+    setProviders((previous) => previous.filter((p) => p.id !== id));
   }, []);
 
-  const removeProvider = useCallback((id: string) => {
-    // The fixed Copilot entry can't be deleted.
-    if (id === COPILOT_PROVIDER_ID) {
-      return;
-    }
-    setProviders((prev) => prev.filter((provider) => provider.id !== id));
+  const selectModel = useCallback((id: string, model: string) => {
+    // Requests carry the chosen model separately; switching doesn't need to wait
+    // for a settings write, and never changes an already-running request.
+    setProviders((previous) => previous.map((p) => p.id === id ? { ...p, model } : p));
+    setActiveProviderId(id);
   }, []);
 
-  const setActiveProviderId = useCallback((id: string) => {
-    setActiveProviderIdState(id);
+  const selectReasoningLevel = useCallback((id: string, modelId: string, level: string) => {
+    setProviders((previous) => previous.map((provider) => provider.id === id ? {
+      ...provider, models: provider.models.map((model) => model.id === modelId && model.reasoningLevels.some((row) => row.level === level)
+        ? { ...model, reasoningEffort: level } : model),
+    } : provider));
   }, []);
+  useEffect(() => {
+    if (isReady) localStorage.setItem("dssh.ai.selectedReasoningLevels", JSON.stringify(Object.fromEntries(providers.flatMap((provider) =>
+      provider.models.filter((model) => model.reasoningEffort).map((model) => [JSON.stringify([provider.id, model.id]), model.reasoningEffort])))));
+  }, [providers, isReady]);
 
   const setOptions = useCallback((patch: Partial<AiOptions>) => {
-    setOptionsState((prev) => ({ ...prev, ...patch }));
+    setOptionsState((previous) => {
+      const next = { ...previous, ...patch };
+      return next;
+    });
   }, []);
-
-  const activeProvider = useMemo(
-    () => providers.find((provider) => provider.id === activeProviderId) ?? null,
-    [providers, activeProviderId],
-  );
-
-  const isConfigured = Boolean(
-    activeProvider &&
-      activeProvider.model.trim() &&
-      (activeProvider.kind === "copilot" ? copilotLoggedIn : activeProvider.baseUrl.trim()),
-  );
+  const activeProvider = useMemo(() => providers.find((p) => p.id === activeProviderId) ?? null,
+    [providers, activeProviderId]);
 
   return {
-    providers,
-    activeProviderId,
-    activeProvider,
-    options: options ?? DEFAULT_AI_OPTIONS,
-    isConfigured,
-    copilotLoggedIn,
-    refreshCopilotStatus,
-    addProvider,
-    updateProvider,
-    removeProvider,
-    setActiveProviderId,
-    setOptions,
+    providers, activeProviderId, activeProvider, options, isReady, error,
+    isConfigured: isReady && Boolean(activeProvider?.model.trim() && activeProvider.baseUrl.trim()),
+    reload: () => { bootstrap = null; setRevision((r) => r + 1); },
+    saveProvider, removeProvider, selectModel, selectReasoningLevel, setActiveProviderId, setOptions,
   };
 }

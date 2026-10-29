@@ -1,4 +1,4 @@
-import { isMacOS } from "../platform";
+import { isMacOS } from "../platform.ts";
 
 /**
  * Application shortcuts are intentionally defined in one place. The same
@@ -6,7 +6,22 @@ import { isMacOS } from "../platform";
  * custom key handler, so changing a binding never leaves a stale shortcut in
  * the terminal.
  */
-export type ShortcutId =
+export const ACTION_SHORTCUT_IDS = [
+  "openSettings", "newLocalTerminal", "newConnection", "showConnections",
+  "toggleSidebar", "toggleAssistant", "toggleZenMode", "focusTerminal",
+  "splitHorizontal", "splitVertical", "nextPane", "previousPane", "closePane",
+  "nextTab", "previousTab", "closeTab",
+] as const;
+export type ActionShortcutId = typeof ACTION_SHORTCUT_IDS[number];
+
+export function cycleItem(ids: readonly string[], current: string | null, step: number): string | null {
+  if (!ids.length) return null;
+  const index = current === null ? -1 : ids.indexOf(current);
+  if (index < 0) return step < 0 ? ids[ids.length - 1] : ids[0];
+  return ids[((index + step) % ids.length + ids.length) % ids.length];
+}
+
+export type ShortcutId = ActionShortcutId
   | "commandPalette"
   | "lockApp"
   | "toggleTerminalFullscreen"
@@ -18,7 +33,7 @@ export type ShortcutId =
   | "pasteTerminalClipboard"
   | "adjustTerminalFontWheel";
 
-export type ShortcutCategory = "全局" | "终端";
+export type ShortcutCategory = "全局" | "工作区" | "分屏" | "终端";
 export type ShortcutInput = "key" | "wheel";
 
 export interface ShortcutBinding {
@@ -122,6 +137,27 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     input: "wheel",
     defaultBinding: { alt: false, key: "Wheel", primary: true, shift: false },
   },
+  ...([
+    ["openSettings", "全局", "打开设置", "打开应用设置。", ",", false, false],
+    ["newLocalTerminal", "工作区", "新建本地终端", "在主窗口新建本地 shell。", "t", true, false],
+    ["newConnection", "工作区", "新建 SSH 连接", "打开连接配置表单。", "n", true, false],
+    ["showConnections", "工作区", "打开连接管理", "显示全部连接。", "m", true, false],
+    ["toggleSidebar", "工作区", "显示 / 隐藏侧栏", "切换左侧栏。", "b", true, false],
+    ["toggleAssistant", "工作区", "显示 / 隐藏 AI 助手", "切换右侧 AI 助手面板。", "a", true, false],
+    ["toggleZenMode", "工作区", "进入 / 退出禅模式", "隐藏界面，保留终端分屏。", "z", true, false],
+    ["focusTerminal", "工作区", "聚焦当前终端", "从其他面板返回终端。", "j", true, false],
+    ["nextTab", "工作区", "下一个标签", "按标签排列顺序循环切换，包含 SFTP。", "ArrowDown", false, true],
+    ["previousTab", "工作区", "上一个标签", "按标签排列顺序循环切换，包含 SFTP。", "ArrowUp", false, true],
+    ["closeTab", "工作区", "关闭当前标签", "关闭整个终端标签或 SFTP；运行中的任务仍需确认。", "w", true, false],
+    ["splitHorizontal", "分屏", "左右分屏", "在当前面板旁新建同一主机的终端。", "e", true, false],
+    ["splitVertical", "分屏", "上下分屏", "在当前面板下方新建同一主机的终端。", "o", true, false],
+    ["nextPane", "分屏", "下一个面板", "按面板排列顺序循环聚焦。", "ArrowRight", false, true],
+    ["previousPane", "分屏", "上一个面板", "按面板排列顺序反向聚焦。", "ArrowLeft", false, true],
+    ["closePane", "分屏", "关闭当前面板", "仅关闭当前终端；运行中的任务仍需确认。", "x", true, false],
+  ] as const).map(([id, category, label, description, key, shift, alt]): ShortcutDefinition => ({
+    id, category, label, description, input: "key",
+    defaultBinding: { primary: true, key, shift, alt },
+  })),
 ];
 
 const definitionById = new Map(SHORTCUT_DEFINITIONS.map((definition) => [definition.id, definition]));
@@ -235,16 +271,42 @@ function matchesModifiers(event: Pick<KeyboardEvent | WheelEvent, "altKey" | "ct
 }
 
 export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
+  if (event.isComposing) return false;
   const definition = definitionById.get(id);
   if (!definition || definition.input !== "key") return false;
-  const binding = getShortcutBinding(id);
-  return matchesModifiers(event, binding) && normalizeKey(event.key) === binding.key;
+  const overrides = readOverrides();
+  const binding = overrides[id] ?? definition.defaultBinding;
+  if (!matchesModifiers(event, binding) || normalizeKey(event.key) !== binding.key) return false;
+  // A new default must never take an existing customized binding away from
+  // its owner, including terminal-only copy/paste/font actions.
+  const customOwner = SHORTCUT_DEFINITIONS.find((candidate) => {
+    const custom = overrides[candidate.id];
+    return candidate.input === "key" && custom &&
+      matchesModifiers(event, custom) && normalizeKey(event.key) === custom.key;
+  });
+  return !customOwner || customOwner.id === id;
 }
 
 export function matchesWheelShortcut(event: WheelEvent, id: ShortcutId): boolean {
   const definition = definitionById.get(id);
   if (!definition || definition.input !== "wheel") return false;
   return matchesModifiers(event, getShortcutBinding(id));
+}
+
+/** Resolve only actions that the current surface can actually perform. */
+export function resolveActionShortcut(
+  event: KeyboardEvent,
+  available: readonly ActionShortcutId[],
+  context: { blocked?: boolean; editing?: boolean } = {},
+): ActionShortcutId | null {
+  if (context.blocked || event.defaultPrevented || event.isComposing || event.repeat) return null;
+  return ACTION_SHORTCUT_IDS.find((id) => {
+    if (!available.includes(id) || !matchesShortcut(event, id)) return false;
+    // Navigation back to the terminal remains available from the assistant's
+    // text box; ordinary typing and editor commands keep their normal meaning.
+    return !context.editing || ((event.ctrlKey || event.metaKey) &&
+      ["openSettings", "focusTerminal", "toggleSidebar", "toggleAssistant"].includes(id));
+  }) ?? null;
 }
 
 export function bindingFromKeyboardEvent(event: KeyboardEvent): ShortcutBinding | null {
@@ -272,6 +334,8 @@ export function bindingFromWheelEvent(event: WheelEvent): ShortcutBinding {
 }
 
 function displayKey(key: string): string {
+  const arrows: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
+  if (arrows[key]) return arrows[key];
   if (key === "Enter") return isMacOS ? "↵" : "Enter";
   if (key === "Escape") return isMacOS ? "Esc" : "Esc";
   if (key === "Space") return "Space";
@@ -320,5 +384,6 @@ export function isAppShortcut(event: KeyboardEvent): boolean {
   return isCommandPaletteShortcut(event) ||
     isLockAppShortcut(event) ||
     isTerminalFullscreenShortcut(event) ||
-    isFocusModeExitShortcut(event);
+    isFocusModeExitShortcut(event) ||
+    ACTION_SHORTCUT_IDS.some((id) => matchesShortcut(event, id));
 }

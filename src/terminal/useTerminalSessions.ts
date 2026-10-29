@@ -12,6 +12,7 @@ import {
   cancelReconnect as cancelReconnectCommand,
   listSshSessions,
   onTerminalOutput,
+  onTerminalInputObserved,
   onTerminalStatus,
   onTerminalTransferPrompt,
   onTerminalTransferConflict,
@@ -280,6 +281,10 @@ export function useTerminalSessions() {
   }, [targetTrackerForSession]);
 
   useEffect(() => {
+    const inputPromise = onTerminalInputObserved((event) => {
+      updateCommandActivity(event.sessionId, trackerForSession(event.sessionId).observeInput(event.data));
+      targetTrackerForSession(event.sessionId).observeInput(event.data);
+    });
     const outputPromise = onTerminalOutput((event) => {
       pushOutput(event.sessionId, event.data);
     });
@@ -317,9 +322,10 @@ export function useTerminalSessions() {
 
     return () => {
       void outputPromise.then((unlisten) => unlisten());
+      void inputPromise.then((unlisten) => unlisten());
       void statusPromise.then((unlisten) => unlisten());
     };
-  }, [pushOutput, targetTrackerForSession, updateCommandActivity]);
+  }, [pushOutput, targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   useEffect(() => {
     const promptPromise = onTerminalTransferPrompt((event) => {

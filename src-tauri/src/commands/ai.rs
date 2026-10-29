@@ -2,72 +2,87 @@ use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use crate::{
-    ai::{
-        client::{build_reqwest_client, build_reqwest_client_with, normalize_base_url},
-        copilot, run_agent,
-    },
+    ai::{client::build_reqwest_client, run_agent},
     app::AppState,
     error::{AppError, AppResult},
     models::ai::{
-        AiAnswerQuestionRequest, AiApproveToolRequest, AiListModelsRequest, AiSendMessageRequest,
-        CopilotDeviceInfo,
+        AiAnswerQuestionRequest, AiApproveToolRequest, AiListModelsRequest, AiProtocol,
+        AiProviderConfig, AiSendMessageRequest,
     },
 };
 
-/// Fetch the list of available model ids from an OpenAI-compatible endpoint
-/// (`GET {base_url}/models`). Works for OpenAI, DeepSeek, OpenRouter, Ollama,
-/// LM Studio, vLLM, and other compatible servers. For Copilot, resolves the
-/// account's API base and session token first, then queries with the required
-/// editor-identity headers.
+#[tauri::command]
+pub fn ai_load_providers(state: State<'_, AppState>) -> AppResult<Vec<AiProviderConfig>> {
+    state.profiles.list_ai_providers()
+}
+
+#[tauri::command]
+pub fn ai_save_provider(
+    state: State<'_, AppState>,
+    provider: AiProviderConfig,
+) -> AppResult<AiProviderConfig> {
+    state.profiles.save_ai_provider(provider)
+}
+
+#[tauri::command]
+pub fn ai_delete_provider(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.profiles.delete_ai_provider(&id)
+}
+
+/// Test the unsaved draft; only resolve an existing key when no replacement was supplied.
+#[tauri::command]
+pub async fn ai_test_connection(
+    state: State<'_, AppState>,
+    mut provider: AiProviderConfig,
+) -> AppResult<crate::ai::connection::AiConnectionTestResult> {
+    if provider.api_key.is_none() {
+        provider.api_key = state
+            .profiles
+            .get_secret(&format!("ai.provider.{}", provider.id))?;
+    }
+    crate::ai::connection::test_connection(provider).await
+}
+
+/// Discovery uses the saved descriptor and resolves its key only in Rust.
 #[tauri::command]
 pub async fn ai_list_models(
     state: State<'_, AppState>,
     request: AiListModelsRequest,
 ) -> AppResult<Vec<String>> {
-    let (url, client, bearer) = if request.kind == "copilot" {
-        let (api_base, token) =
-            copilot::ensure_session_token(state.inner(), &request.proxy_url).await?;
-        let base = normalize_base_url(&api_base);
-        let client = build_reqwest_client_with(&request.proxy_url, Some(copilot::api_headers()))?;
-        (format!("{base}models"), client, Some(token))
-    } else {
-        let base = normalize_base_url(&request.base_url);
-        if base.is_empty() {
-            return Err(AppError::new("ai_config_error", "请先填写 API 地址。"));
+    let provider = state.profiles.get_ai_provider(&request.provider_id)?;
+    let base = crate::ai::providers::endpoint(&provider)?;
+    let client = build_reqwest_client(&provider.proxy_url)?;
+    let mut builder = client.get(format!("{base}models"));
+    if provider.kind == AiProtocol::Anthropic {
+        builder = builder.header("anthropic-version", "2023-06-01");
+        if let Some(key) = provider.api_key.as_deref() {
+            builder = builder.header("x-api-key", key);
         }
-        let client = build_reqwest_client(&request.proxy_url)?;
-        let key = request.api_key.trim();
-        let bearer = if key.is_empty() {
-            None
-        } else {
-            Some(key.to_string())
-        };
-        (format!("{base}models"), client, bearer)
-    };
-
-    let mut builder = client.get(&url);
-    if let Some(bearer) = bearer {
-        builder = builder.bearer_auth(bearer);
+    } else if let Some(key) = provider.api_key.as_deref() {
+        builder = builder.bearer_auth(key);
     }
 
-    let response = builder
-        .send()
-        .await
-        .map_err(|error| AppError::new("ai_request_error", error.to_string()))?;
+    let response = builder.send().await.map_err(|_| {
+        AppError::new(
+            "ai_request_error",
+            "无法获取模型列表，请检查连接与协议，或手动添加模型。",
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
         return Err(AppError::new(
             "ai_request_error",
-            format!("获取模型列表失败（HTTP {status}）：{body}"),
+            format!("获取模型列表失败（HTTP {status}），请检查密钥和 API 地址，或手动添加模型。"),
         ));
     }
 
-    let payload: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|error| AppError::new("ai_request_error", error.to_string()))?;
+    let payload: serde_json::Value = response.json().await.map_err(|_| {
+        AppError::new(
+            "ai_request_error",
+            "无法获取模型列表，请检查连接与协议，或手动添加模型。",
+        )
+    })?;
 
     let mut models = extract_model_ids(&payload);
     models.sort();
@@ -131,37 +146,6 @@ pub fn ai_save_chat_history(state: State<'_, AppState>, items: Vec<Value>) -> Ap
 #[tauri::command]
 pub fn ai_clear_chat_history(state: State<'_, AppState>) -> AppResult<()> {
     state.profiles.clear_ai_chat_history()
-}
-
-/// Begin the GitHub Copilot device-login flow. Returns the code/URL to show the
-/// user; completion is reported asynchronously via `copilot-auth` events.
-#[tauri::command]
-pub async fn ai_copilot_start_login(
-    app_handle: AppHandle,
-    state: State<'_, AppState>,
-    proxy_url: Option<String>,
-) -> AppResult<CopilotDeviceInfo> {
-    let state = state.inner().clone();
-    copilot::start_login(app_handle, state, proxy_url.unwrap_or_default()).await
-}
-
-/// Cancel an in-flight Copilot device-login poll (e.g. the dialog was closed).
-#[tauri::command]
-pub fn ai_copilot_cancel_login(state: State<'_, AppState>) -> AppResult<()> {
-    copilot::cancel_login(state.inner());
-    Ok(())
-}
-
-/// Whether the user is currently logged in to GitHub Copilot.
-#[tauri::command]
-pub fn ai_copilot_status(state: State<'_, AppState>) -> AppResult<bool> {
-    copilot::status(state.inner())
-}
-
-/// Log out of GitHub Copilot, clearing the stored token and cached session.
-#[tauri::command]
-pub async fn ai_copilot_logout(state: State<'_, AppState>) -> AppResult<()> {
-    copilot::logout(state.inner()).await
 }
 
 fn extract_model_ids(payload: &serde_json::Value) -> Vec<String> {

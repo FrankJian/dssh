@@ -28,7 +28,7 @@ interface TerminalViewProps {
   /** True for a local shell; SSH sessions always talk to a remote Unix PTY. */
   isLocalShell?: boolean;
   /**
-   * Take keyboard focus when mounted. Split panes must pass this per pane:
+   * Take keyboard focus when mounted or selected. Split panes pass this per pane:
    * otherwise every pane grabs focus as it attaches and the last one in tree
    * order wins, rather than the pane the user is working in.
    */
@@ -143,6 +143,10 @@ export function TerminalView({
       handleRef.current = null;
     };
   }, [currentSessionId, isLocalShell, transparent]);
+
+  useEffect(() => {
+    if (autoFocus) handleRef.current?.handle.focus();
+  }, [autoFocus, currentSessionId]);
 
   return (
     <div

@@ -139,6 +139,10 @@ export function hasTerminalInstance(sessionId: string): boolean {
   return instances.has(sessionId);
 }
 
+export function focusTerminalSession(sessionId: string) {
+  instances.get(sessionId)?.handle.focus();
+}
+
 export function terminalSize(sessionId: string): TerminalSize | null {
   const terminal = instances.get(sessionId)?.handle.terminal;
   return terminal ? { cols: terminal.cols, rows: terminal.rows } : null;

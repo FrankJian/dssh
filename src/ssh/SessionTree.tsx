@@ -115,7 +115,7 @@ export function SessionTree({
 }: SessionTreeProps) {
   const nodes = buildNodes(sessions, profiles);
   const favorites = profiles.filter((profile) => profile.favorite);
-  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
@@ -129,7 +129,7 @@ export function SessionTree({
   }, [paneLayouts]);
 
   function toggleNode(key: string) {
-    setCollapsedNodes((current) => {
+    setExpandedNodes((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -169,7 +169,7 @@ export function SessionTree({
         <div className="session-tree" role="tree" aria-label="活动会话">
           <div className="session-tree__eyebrow">活动会话</div>
           {nodes.map((node) => {
-            const collapsed = collapsedNodes.has(node.key);
+            const collapsed = !expandedNodes.has(node.key);
             const terminalWindows = node.sessions.filter((session) => {
               const layout = paneLayoutBySession.get(session.id);
               return !layout || layout.tabSessionId === session.id;
@@ -188,12 +188,14 @@ export function SessionTree({
                     </span>
                     <span className="session-node__status" data-status={node.status} />
                     <span className="session-node__label">
-                      <span className="session-node__title">{node.title}</span>
+                      <span className="session-node__heading">
+                        <span className="session-node__title">{node.title}</span>
+                        <span className="session-node__count" title={`${terminalWindows.length} 个终端窗口`} aria-label={`${terminalWindows.length} 个终端窗口`}>{terminalWindows.length}</span>
+                      </span>
                       {node.subtitle ? (
                         <span className="session-node__sub">{node.subtitle}</span>
                       ) : null}
                     </span>
-                    <span className="session-node__count">{terminalWindows.length}</span>
                   </button>
                 </div>
 

@@ -1,27 +1,167 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-fn default_kind() -> String {
-    "openai".to_string()
+/// Explicit wire protocol; model names must never determine the adapter.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum AiProtocol {
+    #[default]
+    #[serde(rename = "openai-completions", alias = "openai")]
+    Completions,
+    #[serde(rename = "openai-responses")]
+    Responses,
+    #[serde(rename = "anthropic-messages")]
+    Anthropic,
 }
 
-/// OpenAI-compatible model backend the agent talks to. Provided by the
-/// frontend on every request so no API keys need to be persisted server-side.
-#[derive(Debug, Clone, Deserialize)]
+pub const DEFAULT_MODEL_CONTEXT_WINDOW: u32 = 256_000;
+
+pub const DEFAULT_MODEL_MAX_OUTPUT_TOKENS: u32 = 32_000;
+
+fn default_input_types() -> Vec<String> {
+    vec!["text".into()]
+}
+
+fn default_context_window() -> u32 {
+    DEFAULT_MODEL_CONTEXT_WINDOW
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReasoningLevel {
+    pub level: String,
+    #[serde(default)]
+    pub api_value: String,
+}
+
+pub fn default_reasoning_levels() -> Vec<AiReasoningLevel> {
+    ["off", "low", "medium", "high"]
+        .into_iter()
+        .map(|level| AiReasoningLevel {
+            level: level.into(),
+            api_value: if level == "off" {
+                String::new()
+            } else {
+                level.into()
+            },
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "StoredAiModel", rename_all = "camelCase")]
+pub struct AiModelConfig {
+    pub id: String,
+    pub display_name: String,
+    pub context_window: u32,
+    pub max_output_tokens: u32,
+    pub input_types: Vec<String>,
+    pub reasoning_effort: Option<String>,
+    pub reasoning_levels: Vec<AiReasoningLevel>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredAiModel {
+    Id(String),
+    Config {
+        id: String,
+        #[serde(default, rename = "displayName")]
+        display_name: String,
+        #[serde(default = "default_context_window", rename = "contextWindow")]
+        context_window: u32,
+        #[serde(default, rename = "maxOutputTokens")]
+        max_output_tokens: Option<u32>,
+        #[serde(default = "default_input_types", rename = "inputTypes")]
+        input_types: Vec<String>,
+        #[serde(default, rename = "reasoningEffort")]
+        reasoning_effort: Option<String>,
+        #[serde(default, rename = "reasoningLevels")]
+        reasoning_levels: Option<Vec<AiReasoningLevel>>,
+    },
+}
+
+impl From<StoredAiModel> for AiModelConfig {
+    fn from(value: StoredAiModel) -> Self {
+        match value {
+            StoredAiModel::Id(id) => Self::from_id(id),
+            StoredAiModel::Config {
+                id,
+                display_name,
+                context_window,
+                max_output_tokens,
+                input_types,
+                reasoning_effort,
+                reasoning_levels,
+            } => {
+                let levels = reasoning_levels.unwrap_or_else(|| {
+                    if reasoning_effort.is_some() {
+                        default_reasoning_levels()
+                    } else {
+                        vec![]
+                    }
+                });
+                let selected = reasoning_effort
+                    .filter(|level| levels.iter().any(|row| &row.level == level))
+                    .or_else(|| {
+                        levels
+                            .iter()
+                            .find(|row| row.level == "medium")
+                            .or_else(|| levels.first())
+                            .map(|row| row.level.clone())
+                    });
+                Self {
+                    display_name: if display_name.trim().is_empty() {
+                        id.clone()
+                    } else {
+                        display_name
+                    },
+                    id,
+                    context_window,
+                    max_output_tokens: max_output_tokens
+                        .unwrap_or(DEFAULT_MODEL_MAX_OUTPUT_TOKENS.min(context_window / 4)),
+                    input_types,
+                    reasoning_effort: selected,
+                    reasoning_levels: levels,
+                }
+            }
+        }
+    }
+}
+
+impl AiModelConfig {
+    pub fn from_id(id: String) -> Self {
+        Self {
+            display_name: id.clone(),
+            id,
+            context_window: DEFAULT_MODEL_CONTEXT_WINDOW,
+            max_output_tokens: DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+            input_types: default_input_types(),
+            reasoning_effort: None,
+            reasoning_levels: vec![],
+        }
+    }
+}
+
+/// Stored descriptor. Secrets are accepted on writes and never serialized.
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderConfig {
-    /// Base URL of the OpenAI-compatible API, e.g. `https://api.openai.com/v1/`.
-    pub base_url: String,
     #[serde(default)]
-    pub api_key: String,
+    pub preset_id: Option<String>,
+    pub id: String,
+    pub label: String,
+    pub base_url: String,
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: bool,
     pub model: String,
-    /// Optional proxy URL (http/https/socks5) used to reach the API.
+    #[serde(default)]
+    pub models: Vec<AiModelConfig>,
     #[serde(default)]
     pub proxy_url: String,
-    /// Provider kind: `"openai"` (default) for a generic OpenAI-compatible
-    /// endpoint, or `"copilot"` for GitHub Copilot (server-side device auth).
-    #[serde(default = "default_kind")]
-    pub kind: String,
+    #[serde(default)]
+    pub kind: AiProtocol,
 }
 
 /// Runtime knobs for a single agent run.
@@ -36,14 +176,6 @@ pub struct AiRunOptions {
     pub temperature: Option<f64>,
     #[serde(default)]
     pub max_steps: Option<u32>,
-    /// History compaction knobs (character budgets). `None` falls back to the
-    /// built-in defaults in the agent.
-    #[serde(default)]
-    pub history_max_chars: Option<usize>,
-    #[serde(default)]
-    pub history_recent_chars: Option<usize>,
-    #[serde(default)]
-    pub history_chunk_chars: Option<usize>,
 }
 
 fn default_true() -> bool {
@@ -56,9 +188,6 @@ impl Default for AiRunOptions {
             require_approval: true,
             temperature: None,
             max_steps: None,
-            history_max_chars: None,
-            history_recent_chars: None,
-            history_chunk_chars: None,
         }
     }
 }
@@ -75,35 +204,7 @@ pub struct AiChatMessage {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiListModelsRequest {
-    #[serde(default)]
-    pub base_url: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub proxy_url: String,
-    #[serde(default = "default_kind")]
-    pub kind: String,
-}
-
-/// Device-flow info returned to the UI when GitHub Copilot login starts.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CopilotDeviceInfo {
-    pub user_code: String,
-    pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
-}
-
-/// Streamed to the frontend under the `copilot-auth` event as the background
-/// device-flow poll progresses.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum CopilotAuthEvent {
-    /// Login completed and the GitHub token was stored.
-    Success,
-    /// Login failed, timed out, or was denied.
-    Error { message: String },
+    pub provider_id: String,
 }
 
 /// The server the user is currently connected to in the active terminal,
@@ -127,7 +228,10 @@ pub struct CurrentServer {
 #[serde(rename_all = "camelCase")]
 pub struct AiSendMessageRequest {
     pub run_id: String,
-    pub provider: AiProviderConfig,
+    pub provider_id: String,
+    pub model: String,
+    #[serde(default)]
+    pub reasoning_level: Option<String>,
     #[serde(default)]
     pub options: AiRunOptions,
     #[serde(default)]

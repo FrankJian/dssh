@@ -1,44 +1,29 @@
 import { listen } from "@tauri-apps/api/event";
 import type {
   AiEvent,
-  AiProviderKind,
+  AiProvider,
   AiSendMessageRequest,
-  CopilotAuthEvent,
-  CopilotDeviceInfo,
 } from "../models/ai";
 import { invokeCommand } from "./tauri";
 
-export interface ListModelsRequest {
-  baseUrl: string;
-  apiKey: string;
-  proxyUrl: string;
-  kind?: AiProviderKind;
+export function listAiModels(providerId: string) {
+  return invokeCommand<string[]>("ai_list_models", { request: { providerId } });
 }
 
-export function listAiModels(request: ListModelsRequest) {
-  return invokeCommand<string[]>("ai_list_models", {
-    request: { kind: "openai", ...request },
-  });
+export function loadAiProviders() {
+  return invokeCommand<AiProvider[]>("ai_load_providers");
 }
 
-export function startCopilotLogin(proxyUrl?: string) {
-  return invokeCommand<CopilotDeviceInfo>("ai_copilot_start_login", { proxyUrl });
+export function saveAiProvider(provider: AiProvider) {
+  return invokeCommand<AiProvider>("ai_save_provider", { provider });
 }
 
-export function cancelCopilotLogin() {
-  return invokeCommand<void>("ai_copilot_cancel_login");
+export function testAiConnection(provider: AiProvider) {
+  return invokeCommand<{ model: string; elapsedMs: number }>("ai_test_connection", { provider });
 }
 
-export function getCopilotStatus() {
-  return invokeCommand<boolean>("ai_copilot_status");
-}
-
-export function logoutCopilot() {
-  return invokeCommand<void>("ai_copilot_logout");
-}
-
-export function onCopilotAuthEvent(handler: (event: CopilotAuthEvent) => void) {
-  return listen<CopilotAuthEvent>("copilot-auth", (event) => handler(event.payload));
+export function deleteAiProvider(id: string) {
+  return invokeCommand<void>("ai_delete_provider", { id });
 }
 
 export function sendAiMessage(request: AiSendMessageRequest) {

@@ -10,7 +10,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
-import { serializeTerminal } from "../terminal/terminalRegistry";
+import { focusTerminalSession, serializeTerminal } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
@@ -27,12 +27,14 @@ import { DetachedCloseDialog } from "./DetachedCloseDialog";
 import { AppLockScreen } from "./AppLockScreen";
 import { useAppLock } from "./useAppLock";
 import {
+  cycleItem,
   formatShortcut,
   getShortcutBinding,
   isFocusModeExitShortcut,
   isLockAppShortcut,
   isTerminalFullscreenShortcut,
 } from "./shortcuts";
+import { useActionShortcuts } from "./useActionShortcuts";
 
 interface DetachedWorkspaceProps {
   workspace: DetachedWorkspace;
@@ -99,6 +101,8 @@ function DetachedSftpWindow({ workspace }: DetachedWorkspaceProps) {
         toast(error instanceof Error ? error.message : "关闭独立 SFTP 窗口失败。", "error");
       });
   }
+
+  useActionShortcuts({ closeTab: closeSftpWorkspace }, appLock.status?.locked);
 
   return (
     <div className="detached-workspace">
@@ -395,6 +399,27 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     terminal.setActiveSessionId(remaining[0] ?? null);
   }, [closeWindow, panes, terminal, terminalFullscreenPaneId, workspace.label]);
 
+  function switchPane(step: number) {
+    if (!layout) return;
+    const id = cycleItem(paneSessionIds(layout), layout.focusedPaneId, step);
+    if (!id) return;
+    panes.focusPane(id);
+    terminal.setActiveSessionId(id);
+    if (terminalFullscreenPaneId) setTerminalFullscreenPaneId(id);
+  }
+  useActionShortcuts({
+    splitHorizontal: activeSession ? () => split("h") : undefined,
+    splitVertical: activeSession ? () => split("v") : undefined,
+    nextPane: layout ? () => switchPane(1) : undefined,
+    previousPane: layout ? () => switchPane(-1) : undefined,
+    focusTerminal: activeSession ? () => focusTerminalSession(activeSession.id) : undefined,
+    closePane: activeSession ? async () => {
+      if (!layout) { await closeTab(); return; }
+      if (await confirmClose([activeSession.id], activeSession.title)) await handleShellExited(activeSession.id);
+    } : undefined,
+    closeTab: () => closeTab(),
+  }, appLock.status?.locked || isCloseConfirmOpen);
+
   useEffect(() => {
     if (!terminal.isSessionsLoaded || !appliedInitialLayout.current) return;
     for (const session of visibleSessions) {
@@ -472,8 +497,8 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           </button>
         </div>
         <span className="detached-workspace__tab-spacer" />
-        <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title="左右分屏（同一主机）" type="button"><Icon name="splitH" height="15" width="15" /></button>
-        <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title="上下分屏（同一主机）" type="button"><Icon name="splitV" height="15" width="15" /></button>
+        <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`} type="button"><Icon name="splitH" height="15" width="15" /></button>
+        <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`} type="button"><Icon name="splitV" height="15" width="15" /></button>
         {hasSessionBar ? (
           <button
             aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}

@@ -238,7 +238,7 @@ export function SelectMenu({
             })}
           </ul>
           {searchable && filteredOptions.length === 0 ? (
-            <div className="select-menu__empty">未找到匹配字体</div>
+            <div className="select-menu__empty">未找到匹配项</div>
           ) : null}
         </div>
       ) : null}

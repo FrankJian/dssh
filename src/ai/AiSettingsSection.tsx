@@ -1,280 +1,162 @@
 import { useState } from "react";
-import type { AiProvider } from "../models/ai";
-import { listAiModels, logoutCopilot } from "../services/aiService";
+import type { AiProvider, AiProviderKind } from "../models/ai";
+import { listAiModels, testAiConnection } from "../services/aiService";
 import { Button } from "../ui/Button";
-import { ComboBox } from "../ui/ComboBox";
+import { SelectMenu } from "../ui/SelectMenu";
+import { AiModelCatalog } from "./AiModelCatalog";
 import { Icon } from "../ui/Icon";
-import { createEmptyProvider, ENDPOINT_PRESETS } from "./aiConfig";
-import { CopilotLoginModal } from "./CopilotLoginModal";
+import { API_PROTOCOLS, createEmptyProvider, ENDPOINT_PRESETS, inferPresetId } from "./aiConfig";
 import type { AiConfig } from "./useAiConfig";
 
-const ENDPOINT_OPTIONS = ENDPOINT_PRESETS.map((preset) => ({
-  value: preset.baseUrl,
-  label: preset.label,
-}));
+export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
+  const { providers, activeProviderId, options, setOptions } = aiConfig;
+  const [draft, setDraft] = useState<AiProvider | null>(null);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [modelPending, setModelPending] = useState(false);
+  const [modelEditorRevision, setModelEditorRevision] = useState(0);
+  const [presetId, setPresetId] = useState("custom");
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
 
-interface AiSettingsSectionProps {
-  aiConfig: AiConfig;
-}
-
-export function AiSettingsSection({ aiConfig }: AiSettingsSectionProps) {
-  const {
-    activeProviderId,
-    addProvider,
-    copilotLoggedIn,
-    options,
-    providers,
-    refreshCopilotStatus,
-    removeProvider,
-    setActiveProviderId,
-    setOptions,
-    updateProvider,
-  } = aiConfig;
-
-  const [fetchingId, setFetchingId] = useState<string | null>(null);
-  const [errorById, setErrorById] = useState<Record<string, string | null>>({});
-  const [loginOpen, setLoginOpen] = useState(false);
-
-  async function handleFetchModels(provider: AiProvider) {
-    const id = provider.id;
-    setFetchingId(id);
-    setErrorById((prev) => ({ ...prev, [id]: null }));
-    try {
-      const models = await listAiModels({
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-        proxyUrl: provider.proxyUrl,
-        kind: provider.kind,
-      });
-      // Persist the fetched list on the provider so the chat page can offer
-      // model switching. A successful fetch with 0 models leaves the list empty.
-      updateProvider(id, { models });
-      if (models.length === 0) {
-        setErrorById((prev) => ({ ...prev, [id]: "未获取到模型，请手动填写模型名称。" }));
-      }
-    } catch (error) {
-      setErrorById((prev) => ({
-        ...prev,
-        [id]: error instanceof Error ? error.message : "获取模型列表失败。",
-      }));
-    } finally {
-      setFetchingId(null);
-    }
+  function edit(provider: AiProvider) {
+    if ((dirty || modelPending) && !window.confirm("放弃尚未保存的模型配置？")) return;
+    setDraft({ ...provider });
+    setDiscoveredModels([]); setModelPending(false); setModelEditorRevision((value) => value + 1);
+    setPresetId(inferPresetId(provider));
+    setDirty(false); setError(null); setNotice(null);
   }
-
-  async function handleCopilotLogout() {
+  function patch(value: Partial<AiProvider>) {
+    setDraft((previous) => previous ? { ...previous, ...value } : null);
+    setDirty(true); setNotice(null); setError(null);
+  }
+  async function testConnection() {
+    if (!draft || modelPending) return;
+    setBusy(true); setTesting(true); setError(null); setNotice(null);
     try {
-      await logoutCopilot();
-    } finally {
-      await refreshCopilotStatus();
-    }
+      const result = await testAiConnection(draft);
+      setNotice(`连接成功 · ${result.model} · ${(result.elapsedMs / 1000).toFixed(2)} 秒`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "连接测试失败，请检查配置。");
+    } finally { setBusy(false); setTesting(false); }
+  }
+  async function save(fetchModels = false) {
+    if (!draft || modelPending) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const saved = await aiConfig.saveProvider(draft);
+      setDraft(saved); setDirty(false);
+      if (fetchModels) {
+        const discovered = await listAiModels(saved.id);
+        setDiscoveredModels([...new Set(discovered)]);
+        setNotice(discovered.length ? `已获取 ${discovered.length} 个模型，可在“模型 ID”中搜索后逐个添加。` : "未返回模型，请手动添加模型 ID。");
+      } else setNotice("模型配置已保存。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存模型配置失败。");
+    } finally { setBusy(false); }
+  }
+  async function remove() {
+    if (!draft || !window.confirm(`删除“${draft.label}”及其已保存的 API 密钥？此操作无法撤销。`)) return;
+    setBusy(true); setError(null);
+    try {
+      await aiConfig.removeProvider(draft.id);
+      setDraft(null); setDirty(false); setNotice(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "删除失败。"); }
+    finally { setBusy(false); }
   }
 
   return (
-    <section className="settings-section ai-settings" aria-label="AI 模型后端">
+    <section className="settings-section ai-settings" aria-label="AI 模型服务">
       <div className="settings-section__head">
-        <h3>模型后端</h3>
-        <p>配置兼容 OpenAI 接口的模型服务（API 地址、密钥、模型），供 AI 助手使用。</p>
+        <h3>模型服务</h3>
+        <p>预置厂商只需填写 API Key；自定义 API 可配置地址与协议。在对话输入区可切换模型。</p>
       </div>
-
-      {providers.length === 0 ? (
-        <div className="ai-settings__empty">尚未添加任何模型后端。</div>
-      ) : (
-        <div className="ai-settings__list">
-          {providers.map((provider) => {
-            const isActive = provider.id === activeProviderId;
-            const models = provider.models ?? [];
-            const error = errorById[provider.id];
-
-            if (provider.kind === "copilot") {
-              return (
-                <div
-                  className={`ai-provider ${isActive ? "is-active" : ""}`.trim()}
-                  key={provider.id}
-                >
-                  <div className="ai-provider__top">
-                    <div className="ai-provider__name">
-                      <Icon name="bot" height="16" width="16" />
-                      <span>{provider.label}</span>
-                      <span
-                        className={`ai-provider__status ${
-                          copilotLoggedIn ? "is-on" : ""
-                        }`.trim()}
-                      >
-                        {copilotLoggedIn ? "已登录" : "未登录"}
-                      </span>
-                    </div>
-                    <div className="ai-provider__top-actions">
-                      {isActive ? (
-                        <span className="ai-provider__badge">当前使用</span>
-                      ) : (
-                        <Button
-                          onClick={() => setActiveProviderId(provider.id)}
-                          variant="ghost"
-                        >
-                          设为当前
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="settings-field__hint">
-                    通过 GitHub 设备登录授权，使用你的 GitHub Copilot 订阅。凭据保存在本地，不含 API 密钥。
-                  </p>
-
-                  <label className="field">
-                    代理（可选，支持 http/https/socks5）
-                    <input
-                      autoComplete="off"
-                      onChange={(event) =>
-                        updateProvider(provider.id, { proxyUrl: event.currentTarget.value })
+      {aiConfig.error ? <div className="ai-provider__error" role="alert">{aiConfig.error} <Button onClick={aiConfig.reload} variant="ghost">重试</Button></div> : null}
+      {!aiConfig.isReady ? <p className="settings-field__hint">正在加载模型配置…</p> : (
+        <div className="ai-settings__workspace">
+          <nav className="ai-settings__sidebar" aria-label="模型服务列表">
+            <Button disabled={busy} onClick={() => edit(createEmptyProvider())} variant="ghost">
+              <Icon name="plus" height="16" width="16" />添加服务
+            </Button>
+            {providers.map((provider) => (
+              <button type="button" key={provider.id} disabled={busy}
+                className={`ai-settings__provider${draft?.id === provider.id ? " is-selected" : ""}`}
+                onClick={() => edit(provider)}>
+                <span>{provider.label}</span>
+                <small>{provider.id === activeProviderId ? "当前使用 · " : ""}{provider.models.length} 个模型</small>
+              </button>
+            ))}
+            {!providers.length ? <p className="settings-field__hint">添加首个模型服务以开始使用。</p> : null}
+          </nav>
+          <div className="ai-settings__editor">
+            {draft ? (
+              <fieldset className="ai-settings__form" disabled={busy}>
+                <div className="field ai-settings__field-wide">
+                  <span>厂商预设</span>
+                  <SelectMenu ariaLabel="厂商预设" searchable searchPlaceholder="搜索厂商…" value={presetId}
+                    options={[{ value: "custom", label: "自定义 API / 中转网关" }, ...ENDPOINT_PRESETS.map((p) => ({ value: p.id, label: p.label }))]}
+                    onChange={(id) => {
+                      setPresetId(id);
+                      const preset = ENDPOINT_PRESETS.find((p) => p.id === id);
+                      if (preset) {
+                        patch({ presetId: preset.id, label: preset.label, baseUrl: preset.baseUrl, kind: preset.kind, apiKey: "", hasApiKey: false, model: "", models: [] });
+                        setDiscoveredModels([]); setModelPending(false); setModelEditorRevision((value) => value + 1);
+                      } else {
+                        patch({ presetId: "custom", label: "", baseUrl: "" });
                       }
-                      placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
-                      value={provider.proxyUrl}
-                    />
-                  </label>
-
-                  <div className="ai-provider__actions">
-                    {copilotLoggedIn ? (
-                      <Button onClick={() => void handleCopilotLogout()} variant="ghost">
-                        退出登录
-                      </Button>
-                    ) : (
-                      <Button onClick={() => setLoginOpen(true)} variant="ghost">
-                        登录 GitHub Copilot
-                      </Button>
-                    )}
-                  </div>
-
-                  <label className="field">
-                    模型
-                    <div className="ai-provider__model-row">
-                      <ComboBox
-                        ariaLabel="模型"
-                        onChange={(next) => updateProvider(provider.id, { model: next })}
-                        options={models.map((model) => ({ value: model }))}
-                        placeholder="gpt-4o"
-                        value={provider.model}
-                      />
-                      <Button
-                        disabled={fetchingId === provider.id || !copilotLoggedIn}
-                        onClick={() => handleFetchModels(provider)}
-                        variant="ghost"
-                      >
-                        {fetchingId === provider.id ? "获取中…" : "获取模型"}
-                      </Button>
-                    </div>
-                  </label>
-
-                  {error ? <div className="ai-provider__error">{error}</div> : null}
+                    }} />
                 </div>
-              );
-            }
-
-            return (
-              <div
-                className={`ai-provider ${isActive ? "is-active" : ""}`.trim()}
-                key={provider.id}
-              >
-                <div className="ai-provider__top">
-                  <input
-                    aria-label="后端名称"
-                    className="ai-provider__label-input"
-                    onChange={(event) =>
-                      updateProvider(provider.id, { label: event.currentTarget.value })
-                    }
-                    placeholder="后端名称"
-                    value={provider.label}
-                  />
-                  <div className="ai-provider__top-actions">
-                    {isActive ? (
-                      <span className="ai-provider__badge">当前使用</span>
-                    ) : (
-                      <Button onClick={() => setActiveProviderId(provider.id)} variant="ghost">
-                        设为当前
-                      </Button>
-                    )}
-                    <button
-                      aria-label="删除后端"
-                      className="icon-button"
-                      onClick={() => removeProvider(provider.id)}
-                      type="button"
-                    >
-                      <Icon name="trash" height="16" width="16" />
-                    </button>
-                  </div>
+                {presetId === "custom" ? <>
+                <label className="field">显示名称
+                  <input value={draft.label} onChange={(e) => patch({ label: e.currentTarget.value })} />
+                </label>
+                <label className="field">API 协议
+                  <select className="settings-select" value={draft.kind} onChange={(e) => patch({ kind: e.currentTarget.value as AiProviderKind })}>
+                    {API_PROTOCOLS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  </select>
+                </label>
+                <label className="field ai-settings__field-wide">API 地址
+                  <input autoComplete="off" placeholder="https://gateway.example.com/v1/" value={draft.baseUrl}
+                    onChange={(e) => { patch({ baseUrl: e.currentTarget.value, presetId: "custom" }); setPresetId("custom"); }} />
+                  <span className="settings-field__hint">填写基础地址，也可粘贴完整的协议接口地址；网关路径会保留。</span>
+                </label>
+                </> : null}
+                <label className="field ai-settings__field-wide">API 密钥
+                  <input autoComplete="new-password" type="password" value={draft.apiKey ?? ""}
+                    placeholder={draft.hasApiKey ? "已保存，留空保持现有密钥" : "输入 API Key（本地服务可留空）"}
+                    onChange={(e) => patch({ apiKey: e.currentTarget.value || (draft.hasApiKey ? undefined : "") })} />
+                  <span className="settings-field__hint">保存后仅由本机后端读取，不回显密钥。</span>
+                </label>
+                {draft.hasApiKey ? <Button onClick={() => patch({ apiKey: "", hasApiKey: false })} variant="ghost">清除已保存密钥（保存后生效）</Button> : null}
+                <AiModelCatalog key={`${draft.id}:${modelEditorRevision}`} models={draft.models} defaultModel={draft.model}
+                  discovered={discoveredModels} onPendingChange={setModelPending}
+                  onDiscover={() => void save(true)} canDiscover={!modelPending && Boolean(draft.label.trim() && draft.baseUrl.trim())}
+                  onChange={(models, model) => patch({ models, model })} />
+                {presetId === "custom" ? <details>
+                  <summary>连接选项</summary>
+                  <label className="field">代理（可选）
+                    <input autoComplete="off" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                      value={draft.proxyUrl} onChange={(e) => patch({ proxyUrl: e.currentTarget.value })} />
+                  </label>
+                </details> : null}
+                <div className="ai-settings__actions">
+                  <Button disabled={modelPending || !draft.label.trim() || !draft.baseUrl.trim()} onClick={() => void save()}>{busy && !testing ? "处理中…" : "保存配置"}</Button>
+                  <Button disabled={modelPending || !draft.baseUrl.trim() || !draft.model.trim()} onClick={() => void testConnection()}>{testing ? "测试中…" : "测试连接"}</Button>
+                  {providers.some((p) => p.id === draft.id) ? <Button onClick={() => void remove()} variant="ghost">删除服务</Button> : null}
                 </div>
-
-                <label className="field">
-                  API 地址
-                  <ComboBox
-                    ariaLabel="API 地址"
-                    onChange={(next) => updateProvider(provider.id, { baseUrl: next })}
-                    options={ENDPOINT_OPTIONS}
-                    placeholder="https://api.openai.com/v1/"
-                    value={provider.baseUrl}
-                  />
-                </label>
-
-                <label className="field">
-                  API 密钥
-                  <input
-                    autoComplete="off"
-                    onChange={(event) =>
-                      updateProvider(provider.id, { apiKey: event.currentTarget.value })
-                    }
-                    placeholder="sk-..."
-                    type="password"
-                    value={provider.apiKey}
-                  />
-                </label>
-
-                <label className="field">
-                  代理（可选，支持 http/https/socks5）
-                  <input
-                    autoComplete="off"
-                    onChange={(event) =>
-                      updateProvider(provider.id, { proxyUrl: event.currentTarget.value })
-                    }
-                    placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
-                    value={provider.proxyUrl}
-                  />
-                </label>
-
-                <label className="field">
-                  模型
-                  <div className="ai-provider__model-row">
-                    <ComboBox
-                      ariaLabel="模型"
-                      onChange={(next) => updateProvider(provider.id, { model: next })}
-                      options={models.map((model) => ({ value: model }))}
-                      placeholder="gpt-4o-mini"
-                      value={provider.model}
-                    />
-                    <Button
-                      disabled={fetchingId === provider.id || !provider.baseUrl.trim()}
-                      onClick={() => handleFetchModels(provider)}
-                      variant="ghost"
-                    >
-                      {fetchingId === provider.id ? "获取中…" : "获取模型"}
-                    </Button>
-                  </div>
-                </label>
-
-                {error ? <div className="ai-provider__error">{error}</div> : null}
-              </div>
-            );
-          })}
+                {dirty ? <span className="settings-field__hint">有未保存的修改</span> : null}
+              </fieldset>
+            ) : <div className="ai-settings__empty">从左侧选择服务，或添加厂商预设 / 自定义 API。</div>}
+            {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
+            {testing ? <p className="settings-field__hint" role="status">正在测试默认模型连接，最长等待 30 秒…</p> : null}
+            {notice ? <p className="settings-field__hint" role="status">{notice}</p> : null}
+          </div>
         </div>
       )}
-
-      <div>
-        <Button onClick={() => addProvider(createEmptyProvider())} variant="ghost">
-          <Icon name="plus" height="16" width="16" />
-          添加模型后端
-        </Button>
-      </div>
-
+      <details className="ai-settings__behavior">
+        <summary>助手行为</summary>
       <div className="settings-section__head">
         <h3>行为</h3>
         <p>控制 AI 助手执行 SSH 操作时的安全与推理设置。</p>
@@ -320,84 +202,7 @@ export function AiSettingsSection({ aiConfig }: AiSettingsSectionProps) {
         />
       </label>
 
-      <div className="settings-section__head">
-        <h3>历史上下文压缩</h3>
-        <p>
-          控制多轮对话的上下文长度。对话较短时原样发送；超过阈值后，较早的对话会自动压缩成摘要，
-          最近的对话保持原文，以在不超出模型上下文窗口的前提下保留关键信息。
-        </p>
-      </div>
-
-      <label className="settings-field">
-        <span className="settings-field__label">历史压缩触发阈值（historyMaxChars）</span>
-        <input
-          className="settings-select"
-          max={200000}
-          min={2000}
-          step={1000}
-          onChange={(event) =>
-            setOptions({
-              historyMaxChars: Math.min(200000, Math.max(2000, Number(event.currentTarget.value) || 2000)),
-            })
-          }
-          type="number"
-          value={options.historyMaxChars}
-        />
-        <span className="settings-field__hint">
-          对话历史累计字符数超过该值后，才开始压缩更早的内容；未超过时完全不压缩。默认 16000。
-        </span>
-      </label>
-
-      <label className="settings-field">
-        <span className="settings-field__label">保留原文的近期长度（historyRecentChars）</span>
-        <input
-          className="settings-select"
-          max={200000}
-          min={1000}
-          step={1000}
-          onChange={(event) =>
-            setOptions({
-              historyRecentChars: Math.max(1000, Number(event.currentTarget.value) || 1000),
-            })
-          }
-          type="number"
-          value={options.historyRecentChars}
-        />
-        <span className="settings-field__hint">
-          最近多少字符的对话保持原文、不做压缩，保证近期上下文精确。应小于触发阈值，否则不会发生压缩。默认 8000。
-        </span>
-      </label>
-
-      <label className="settings-field">
-        <span className="settings-field__label">摘要分块大小（historyChunkChars）</span>
-        <input
-          className="settings-select"
-          max={20000}
-          min={500}
-          step={500}
-          onChange={(event) =>
-            setOptions({
-              historyChunkChars: Math.min(20000, Math.max(500, Number(event.currentTarget.value) || 500)),
-            })
-          }
-          type="number"
-          value={options.historyChunkChars}
-        />
-        <span className="settings-field__hint">
-          压缩更早对话时每块的字符数。块越小摘要越细致但调用次数越多；分块摘要会按内容缓存，避免重复压缩。默认 3000。
-        </span>
-      </label>
-
-      {loginOpen ? (
-        <CopilotLoginModal
-          proxyUrl={providers.find((provider) => provider.kind === "copilot")?.proxyUrl ?? ""}
-          onClose={() => setLoginOpen(false)}
-          onSuccess={() => {
-            setLoginOpen(false);
-            void refreshCopilotStatus();
-          }}
-        />
-      ) : null}
+      </details>
     </section>
   );
 }

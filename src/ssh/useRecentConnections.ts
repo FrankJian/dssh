@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
+import { normalizeRecentConnectionsLimit, recentConnectionsLimitKey, RECENT_CONNECTIONS_DEFAULT_LIMIT, RECENT_CONNECTIONS_MAX_LIMIT } from "../settings/settings";
 
 const RECENT_KEY = "dssh.recentConnections";
-const RECENT_MAX = 12;
+const RECENT_MAX = RECENT_CONNECTIONS_MAX_LIMIT;
 
 function load(): string[] {
   try {
@@ -20,6 +21,15 @@ function load(): string[] {
  */
 export function useRecentConnections() {
   const [recentIds, setRecentIds] = useState<string[]>(() => load());
+  const [displayLimit, setDisplayLimit] = useState(() => {
+    const stored = localStorage.getItem(recentConnectionsLimitKey);
+    return stored?.trim() ? normalizeRecentConnectionsLimit(Number(stored)) : RECENT_CONNECTIONS_DEFAULT_LIMIT;
+  });
+  const changeDisplayLimit = useCallback((value: number) => {
+    const next = normalizeRecentConnectionsLimit(value);
+    localStorage.setItem(recentConnectionsLimitKey, String(next));
+    setDisplayLimit(next);
+  }, []);
 
   const recordUse = useCallback((profileId: string) => {
     setRecentIds((current) => {
@@ -29,5 +39,5 @@ export function useRecentConnections() {
     });
   }, []);
 
-  return { recentIds, recordUse };
+  return { recentIds, recordUse, displayLimit, setDisplayLimit: changeDisplayLimit };
 }

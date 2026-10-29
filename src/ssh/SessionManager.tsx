@@ -16,7 +16,6 @@ type SortKey = "recent" | "name" | "host";
 const VIEW_KEY = "dssh.sessionManager.view";
 const SORT_KEY = "dssh.sessionManager.sort";
 const TYPE_FILTER_KEY = "dssh.sessionManager.typeFilter";
-const RECENT_SECTION_MAX = 6;
 
 type ConnectionTypeFilter = "all" | ConnectionType;
 
@@ -55,6 +54,7 @@ function loadTypeFilter(): ConnectionTypeFilter {
 interface SessionManagerProps {
   profiles: SshProfile[];
   recentIds: string[];
+  recentLimit: number;
   activeSessionCount: number;
   isLoading: boolean;
   errorMessage: string | null;
@@ -68,6 +68,7 @@ interface SessionManagerProps {
 export function SessionManager({
   profiles,
   recentIds,
+  recentLimit,
   activeSessionCount,
   isLoading,
   errorMessage,
@@ -143,8 +144,8 @@ export function SessionManager({
         }
         return typeFilter === "all" || connectionTypeForProfile(profile) === typeFilter;
       })
-      .slice(0, RECENT_SECTION_MAX);
-  }, [recentIds, profiles, isSearching, typeFilter]);
+      .slice(0, recentLimit);
+  }, [recentIds, profiles, isSearching, typeFilter, recentLimit]);
 
   const tagGroups = useMemo(() => groupProfiles(sorted), [sorted]);
 

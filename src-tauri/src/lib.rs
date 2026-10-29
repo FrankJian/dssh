@@ -142,6 +142,10 @@ pub fn run() {
             commands::forwarding::list_port_forwards,
             commands::hosttools::host_tools_snapshot,
             commands::ai::ai_list_models,
+            commands::ai::ai_test_connection,
+            commands::ai::ai_load_providers,
+            commands::ai::ai_save_provider,
+            commands::ai::ai_delete_provider,
             commands::ai::ai_send_message,
             commands::ai::ai_approve_tool,
             commands::ai::ai_answer_question,
@@ -149,10 +153,6 @@ pub fn run() {
             commands::ai::ai_load_chat_history,
             commands::ai::ai_save_chat_history,
             commands::ai::ai_clear_chat_history,
-            commands::ai::ai_copilot_start_login,
-            commands::ai::ai_copilot_cancel_login,
-            commands::ai::ai_copilot_status,
-            commands::ai::ai_copilot_logout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

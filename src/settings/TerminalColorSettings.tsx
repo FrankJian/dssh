@@ -186,11 +186,8 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
     <section aria-label="终端配色方案" className="settings-section terminal-color-settings">
       <div className="settings-section__head">
         <h3>配色方案</h3>
-        <p>{store.preferences.followAppearance
-          ? `当前应用为${appearanceKind === "light" ? "浅色" : "深色"}外观，终端只显示相同明暗的方案。`
-          : "当前使用固定终端配色，可与应用外观不同。"}</p>
       </div>
-      <label className="checkbox-field terminal-color-settings__follow">
+      <label className="checkbox-field terminal-color-settings__follow" title="开启后仅显示与应用深浅外观一致的方案，关闭后可固定使用任意配色。">
         <input
           checked={store.preferences.followAppearance}
           onChange={(event) => {
@@ -234,7 +231,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
           }}
           variant="ghost"
         >
-          恢复当前外观默认
+          恢复默认
         </Button>
         {"sourcePresetId" in active ? (
           <>
@@ -268,16 +265,17 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       ) : null}
       {editorError ? <div className="terminal-color-settings__error" role="alert">{editorError}</div> : null}
 
-      <div
+      <details className="terminal-color-settings__preview" open={draft ? true : undefined}>
+        <summary>配色预览</summary>
+        <div
         aria-label="终端配色预览"
         className="terminal-color-preview"
         style={{ height: `${Math.max(142, fontSize * 12 + 12)}px` }}
       >
         <TerminalColorPreview colors={previewColors} fontFamily={fontFamily} fontSize={fontSize} />
-      </div>
-      <p className="settings-field__hint">
-        默认文字色不会覆盖程序指定的 ANSI 色或真彩色；ANSI 16–255 和程序自行设置的 RGB 保持原样。预览使用不透明背景，透明度与壁纸仍由终端背景设置控制。
-      </p>
+        </div>
+        <p className="settings-field__hint" title="默认文字色不覆盖程序指定的 ANSI 色或真彩色。背景透明度与壁纸由背景设置控制。">预览使用不透明背景，不影响程序自定义颜色。</p>
+      </details>
 
       {draft ? (
         <div className="terminal-color-editor">

@@ -87,7 +87,7 @@ function ShortcutRecorder({
   );
 }
 
-const categories = ["全局", "终端"] as const;
+const categories = ["全局", "工作区", "分屏", "终端"] as const;
 
 export function ShortcutSettingsSection() {
   const [bindings, setBindings] = useState(getShortcutBindings);

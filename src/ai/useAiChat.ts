@@ -241,13 +241,9 @@ export function useAiChat(): AiChat {
       try {
         await sendAiMessage({
           runId,
-          provider: {
-            baseUrl: provider.baseUrl,
-            apiKey: provider.apiKey,
-            model: provider.model,
-            proxyUrl: provider.proxyUrl,
-            kind: provider.kind,
-          },
+          providerId: provider.id,
+          model: provider.model,
+          reasoningLevel: provider.models.find((model) => model.id === provider.model)?.reasoningEffort ?? null,
           options,
           history,
           message: trimmed,

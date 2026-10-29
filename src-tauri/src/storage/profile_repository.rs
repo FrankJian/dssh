@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::{
     error::{AppError, AppResult},
+    models::ai::{AiModelConfig, AiProviderConfig},
     models::app_lock::StoredAppLockSettings,
     models::s3::{
         CreateS3ProfileRequest, S3Bookmark, S3Credentials, S3Profile, UpdateS3ProfileRequest,
@@ -497,6 +498,7 @@ impl ProfileRepository {
                 updated_at TEXT NOT NULL
             );",
         )?;
+        connection.execute_batch(include_str!("../../migrations/009_ai_providers.sql"))?;
         ensure_columns(&connection)?;
         Ok(())
     }
@@ -566,6 +568,164 @@ impl ProfileRepository {
     pub fn delete_secret(&self, key: &str) -> AppResult<()> {
         let connection = self.connection()?;
         connection.execute("DELETE FROM app_secrets WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    pub fn list_ai_providers(&self) -> AppResult<Vec<AiProviderConfig>> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT config_json FROM ai_providers ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            serde_json::from_str(&row?)
+                .map_err(|_| AppError::new("storage_error", "模型配置无法读取。"))
+        })
+        .collect()
+    }
+
+    /// This secret-bearing descriptor is only used inside Rust.
+    pub fn get_ai_provider(&self, id: &str) -> AppResult<AiProviderConfig> {
+        let mut provider = self
+            .list_ai_providers()?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| AppError::new("ai_config_error", "模型服务不存在，请重新选择。"))?;
+        crate::ai::providers::resolve_preset(&mut provider)?;
+        provider.api_key = self.get_secret(&format!("ai.provider.{id}"))?;
+        Ok(provider)
+    }
+
+    pub fn save_ai_provider(&self, mut provider: AiProviderConfig) -> AppResult<AiProviderConfig> {
+        if provider.id.is_empty()
+            || provider.id.len() > 128
+            || !provider
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            || provider.label.trim().is_empty()
+            || provider.models.len() > 2000
+        {
+            return Err(AppError::new(
+                "ai_config_error",
+                "模型服务名称或模型列表无效。",
+            ));
+        }
+        provider.label = provider.label.trim().to_string();
+        crate::ai::providers::resolve_preset(&mut provider)?;
+        provider.base_url = crate::ai::providers::endpoint(&provider)?;
+        crate::ai::client::build_reqwest_client(&provider.proxy_url)?;
+        provider.model = provider.model.trim().to_string();
+        for model in &mut provider.models {
+            model.id = model.id.trim().to_string();
+            model.display_name = model.display_name.trim().to_string();
+            if model.id.is_empty()
+                || model.id.len() > 512
+                || !(4096..=10_000_000).contains(&model.context_window)
+            {
+                return Err(AppError::new(
+                    "ai_config_error",
+                    "模型 ID 不能为空，上下文窗口须在 4096 到 10000000 tokens 之间。",
+                ));
+            }
+            if model.max_output_tokens == 0
+                || model.max_output_tokens >= model.context_window
+                || !model.input_types.iter().any(|t| t == "text")
+                || model
+                    .input_types
+                    .iter()
+                    .any(|t| !matches!(t.as_str(), "text" | "image"))
+            {
+                return Err(AppError::new(
+                    "ai_config_error",
+                    "最大输出 token 数必须小于上下文窗口，请检查输入类型。",
+                ));
+            }
+            let mut levels = HashSet::new();
+            if model.reasoning_levels.len() > 8 {
+                return Err(AppError::new("ai_config_error", "推理档位过多。"));
+            }
+            for row in &mut model.reasoning_levels {
+                row.api_value = row.api_value.trim().to_string();
+                if !matches!(
+                    row.level.as_str(),
+                    "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+                ) || !levels.insert(row.level.clone())
+                    || row.api_value.len() > 128
+                    || row.api_value.chars().any(char::is_control)
+                {
+                    return Err(AppError::new(
+                        "ai_config_error",
+                        "推理档位重复或 API 参数值无效。",
+                    ));
+                }
+                if row.level != "off" && row.api_value.is_empty() {
+                    row.api_value.clone_from(&row.level);
+                }
+            }
+            if model.reasoning_levels.is_empty() {
+                model.reasoning_effort = None;
+            } else if !model
+                .reasoning_levels
+                .iter()
+                .any(|row| Some(&row.level) == model.reasoning_effort.as_ref())
+            {
+                model.reasoning_effort = model
+                    .reasoning_levels
+                    .iter()
+                    .find(|row| row.level == "medium")
+                    .or_else(|| model.reasoning_levels.first())
+                    .map(|row| row.level.clone());
+            }
+            if model.display_name.is_empty() {
+                model.display_name = model.id.clone();
+            }
+        }
+        if !provider.model.is_empty() && !provider.models.iter().any(|m| m.id == provider.model) {
+            provider
+                .models
+                .insert(0, AiModelConfig::from_id(provider.model.clone()));
+        }
+        let mut seen = HashSet::new();
+        provider.models.retain(|m| seen.insert(m.id.clone()));
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let secret_ref = format!("ai.provider.{}", provider.id);
+        if let Some(key) = provider.api_key.take() {
+            if key.trim().is_empty() {
+                transaction.execute("DELETE FROM app_secrets WHERE key = ?1", [&secret_ref])?;
+            } else {
+                transaction.execute(
+                    "INSERT INTO app_secrets (key, value, updated_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                    params![secret_ref, key.trim(), timestamp()],
+                )?;
+            }
+        }
+        provider.has_api_key = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM app_secrets WHERE key = ?1)",
+            [&secret_ref],
+            |row| row.get(0),
+        )?;
+        let config = serde_json::to_string(&provider)
+            .map_err(|_| AppError::new("storage_error", "模型配置无法保存。"))?;
+        transaction.execute(
+            "INSERT INTO ai_providers (id, config_json) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET config_json = excluded.config_json",
+            params![provider.id, config],
+        )?;
+        transaction.commit()?;
+        Ok(provider)
+    }
+
+    pub fn delete_ai_provider(&self, id: &str) -> AppResult<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM ai_providers WHERE id = ?1", [id])?;
+        transaction.execute(
+            "DELETE FROM app_secrets WHERE key = ?1",
+            [format!("ai.provider.{id}")],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -1222,6 +1382,153 @@ impl From<&AuthMethod> for AuthFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_mappings_persist_and_duplicate_levels_fail_without_changing_credentials() {
+        let directory =
+            std::env::temp_dir().join(format!("dssh-reasoning-mapping-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let mut provider: AiProviderConfig = serde_json::from_value(serde_json::json!({
+            "id":"reasoning", "label":"Custom", "presetId":"custom", "baseUrl":"https://gateway.test/v1/", "model":"model",
+            "models":[{"id":"model", "reasoningEffort":"high", "reasoningLevels":[
+                {"level":"off","apiValue":"legacy-off"},{"level":"high","apiValue":"custom-effort"}
+            ]}]
+        })).unwrap();
+        let saved = repository.save_ai_provider(provider.clone()).unwrap();
+        assert_eq!(saved.models[0].reasoning_levels[0].api_value, "legacy-off");
+        let loaded = repository.get_ai_provider("reasoning").unwrap();
+        assert_eq!(
+            loaded.models[0].reasoning_levels[1].api_value,
+            "custom-effort"
+        );
+        let duplicate = provider.models[0].reasoning_levels[0].clone();
+        provider.models[0].reasoning_levels.push(duplicate);
+        assert!(repository.save_ai_provider(provider).is_err());
+        assert_eq!(
+            repository.get_ai_provider("reasoning").unwrap().models[0]
+                .reasoning_levels
+                .len(),
+            2
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_model_catalog_keeps_metadata_and_rejects_invalid_context_without_writes() {
+        let directory = std::env::temp_dir().join(format!("dssh-ai-catalog-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        // Simulate an existing database written before model metadata existed.
+        let legacy = serde_json::json!({
+            "id":"catalog", "label":"Models", "baseUrl":"https://gateway.test/v1/", "model":"old", "models":["old"]
+        });
+        repository
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO ai_providers (id, config_json) VALUES (?1, ?2)",
+                params!["catalog", legacy.to_string()],
+            )
+            .unwrap();
+        let mut provider = repository.get_ai_provider("catalog").unwrap();
+        assert_eq!(provider.models[0].display_name, "old");
+        assert_eq!(
+            provider.models[0].context_window,
+            crate::models::ai::DEFAULT_MODEL_CONTEXT_WINDOW
+        );
+        provider.models[0].display_name = "My model".into();
+        provider.models[0].context_window = 32768;
+        repository.save_ai_provider(provider.clone()).unwrap();
+        let stored = repository.get_ai_provider("catalog").unwrap();
+        assert_eq!(stored.models[0].display_name, "My model");
+        assert_eq!(stored.models[0].context_window, 32768);
+        provider.models[0].context_window = 0;
+        assert!(repository.save_ai_provider(provider).is_err());
+        assert_eq!(
+            repository.get_ai_provider("catalog").unwrap().models[0].context_window,
+            32768
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_provider_credentials_are_write_only_and_survive_updates() {
+        let directory = std::env::temp_dir().join(format!("dssh-ai-storage-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let input = serde_json::json!({
+            "id": "custom-test", "label": "Gateway", "baseUrl": "https://gateway.example.test/v1/responses",
+            "kind": "openai-responses", "apiKey": "synthetic-local-credential", "model": "manual-model",
+            "models": ["manual-model", "second-model", "manual-model"]
+        });
+        let provider: AiProviderConfig = serde_json::from_value(input).unwrap();
+        let mut saved = repository.save_ai_provider(provider).unwrap();
+        assert!(saved.api_key.is_none());
+        assert!(saved.has_api_key);
+        assert_eq!(
+            saved
+                .models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            ["manual-model", "second-model"]
+        );
+        let descriptor = serde_json::to_value(&saved).unwrap();
+        assert!(descriptor.get("apiKey").is_none());
+        let connection = repository.connection().unwrap();
+        let metadata: String = connection
+            .query_row("SELECT config_json FROM ai_providers", [], |r| r.get(0))
+            .unwrap();
+        assert!(!metadata.contains("synthetic-local-credential"));
+        saved.label = "Renamed gateway".into();
+        repository.save_ai_provider(saved.clone()).unwrap();
+        assert!(
+            repository
+                .get_ai_provider(&saved.id)
+                .unwrap()
+                .api_key
+                .is_some()
+        );
+        // Reinitialization is idempotent and preserves descriptors and credentials.
+        let reopened = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        assert_eq!(reopened.list_ai_providers().unwrap().len(), 1);
+        assert!(
+            reopened
+                .get_ai_provider(&saved.id)
+                .unwrap()
+                .api_key
+                .is_some()
+        );
+        saved.api_key = Some(String::new());
+        let cleared = repository.save_ai_provider(saved.clone()).unwrap();
+        assert!(!cleared.has_api_key);
+        assert!(
+            repository
+                .get_ai_provider(&saved.id)
+                .unwrap()
+                .api_key
+                .is_none()
+        );
+        saved.api_key = Some("synthetic-replacement".into());
+        repository.save_ai_provider(saved.clone()).unwrap();
+        repository.delete_ai_provider(&saved.id).unwrap();
+        assert!(repository.list_ai_providers().unwrap().is_empty());
+        assert!(
+            repository
+                .get_secret(&format!("ai.provider.{}", saved.id))
+                .unwrap()
+                .is_none()
+        );
+        repository
+            .set_secret("copilot.github_token", "synthetic-retired-credential")
+            .unwrap();
+        repository.migrate().unwrap();
+        assert!(
+            repository
+                .get_secret("copilot.github_token")
+                .unwrap()
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn ssh_profile_icon_is_persisted_and_rejects_unknown_icons() {

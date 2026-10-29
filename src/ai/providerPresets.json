@@ -1,0 +1,101 @@
+[
+  {
+    "id": "deepseek",
+    "label": "DeepSeek",
+    "baseUrl": "https://api.deepseek.com/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://api-docs.deepseek.com/",
+    "verifiedOn": "2026-10-29",
+    "legacyBaseUrls": [
+      "https://api.deepseek.com/v1/"
+    ]
+  },
+  {
+    "id": "openai",
+    "label": "OpenAI",
+    "baseUrl": "https://api.openai.com/v1/",
+    "kind": "openai-responses",
+    "sourceUrl": "https://developers.openai.com/api/reference/resources/responses/methods/create",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "anthropic",
+    "label": "Anthropic",
+    "baseUrl": "https://api.anthropic.com/v1/",
+    "kind": "anthropic-messages",
+    "sourceUrl": "https://platform.claude.com/docs/en/api/overview",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "openrouter",
+    "label": "OpenRouter",
+    "baseUrl": "https://openrouter.ai/api/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://openrouter.ai/docs/quickstart",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "moonshot",
+    "label": "Moonshot / Kimi（中国大陆）",
+    "baseUrl": "https://api.moonshot.cn/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://github.com/MoonshotAI/moonpalace/blob/main/endpoint.go",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "dashscope",
+    "label": "阿里云百炼（北京）",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://help.aliyun.com/en/model-studio/base-url",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "siliconflow",
+    "label": "硅基流动（中国大陆）",
+    "baseUrl": "https://api.siliconflow.cn/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://api-docs.siliconflow.cn/docs/api/chat-completions-post",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "gemini",
+    "label": "Google Gemini",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://ai.google.dev/gemini-api/docs/openai",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "zhipu",
+    "label": "智谱 / GLM（中国大陆）",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://docs.bigmodel.cn/cn/guide/develop/openai/introduction",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "minimax",
+    "label": "MiniMax（中国大陆）",
+    "baseUrl": "https://api.minimax.cn/anthropic/v1/",
+    "kind": "anthropic-messages",
+    "sourceUrl": "https://platform.minimax.cn/docs/api-reference/text-anthropic-api",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "ollama",
+    "label": "Ollama（本地默认端口）",
+    "baseUrl": "http://localhost:11434/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://docs.ollama.com/api/openai-compatibility",
+    "verifiedOn": "2026-10-29"
+  },
+  {
+    "id": "lmstudio",
+    "label": "LM Studio（本地默认端口）",
+    "baseUrl": "http://localhost:1234/v1/",
+    "kind": "openai-completions",
+    "sourceUrl": "https://lmstudio.ai/docs/developer/openai-compat",
+    "verifiedOn": "2026-10-29"
+  }
+]

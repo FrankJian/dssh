@@ -34,6 +34,9 @@ import { SelectMenu } from "../ui/SelectMenu";
 import type { NavigationIconId } from "../app/ActivityBar";
 import {
   FONT_FAMILY_OPTIONS,
+  RECENT_CONNECTIONS_DEFAULT_LIMIT,
+  RECENT_CONNECTIONS_MIN_LIMIT,
+  RECENT_CONNECTIONS_MAX_LIMIT,
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
@@ -52,7 +55,6 @@ import {
   TERMINAL_LINE_HEIGHT_DEFAULT,
   TERMINAL_LINE_HEIGHT_MAX,
   TERMINAL_LINE_HEIGHT_MIN,
-  TERMINAL_LINE_HEIGHT_STEP,
   TERMINAL_WORKSPACE_INSET_MAX,
   TERMINAL_WORKSPACE_INSET_MIN,
   type EditorRenderWhitespace,
@@ -64,6 +66,8 @@ import {
 export type SettingsCategory = "appearance" | "terminal" | "editor" | "shortcuts" | "security" | "s3" | "ai" | "config" | "about";
 
 interface SettingsDialogProps {
+  recentConnectionsLimit: number;
+  onRecentConnectionsLimitChange: (value: number) => void;
   commandCompletion: boolean;
   onCommandCompletionChange: (value: boolean) => void;
   commandHistoryLimit: number;
@@ -119,7 +123,7 @@ export const SETTINGS_CATEGORIES: Array<{
   icon: "sun" | "monitor" | "fileCode" | "command" | "shield" | "bucket" | "file" | "bot" | "info";
   keywords: string;
 }> = [
-  { icon: "sun", id: "appearance", label: "外观", keywords: "appearance theme 主题 深色 浅色 跟随系统 左侧导航栏 导航图标" },
+  { icon: "sun", id: "appearance", label: "外观", keywords: "appearance theme 主题 深色 浅色 跟随系统 左侧导航栏 导航图标 会话首页 最近连接 显示数量" },
   { icon: "monitor", id: "terminal", label: "终端", keywords: "terminal 命令补全 历史命令 清空历史 存储上限 字体 字号 行高 字间距 鼠标 右键 选中复制 GPU 渲染 背景图 磨砂 透明度 边距 配色" },
   { icon: "fileCode", id: "editor", label: "文件编辑器", keywords: "editor monaco 字体 字号 显示 编辑 自动换行 行号 小地图 Tab宽度 空白字符 缩进" },
   { icon: "command", id: "shortcuts", label: "快捷键", keywords: "shortcut keybinding hotkey 按键 组合键 自定义 重置" },
@@ -185,6 +189,8 @@ function buildFontOptions(systemFamilies: readonly string[], currentValues: read
 }
 
 export function SettingsDialog({
+  recentConnectionsLimit,
+  onRecentConnectionsLimitChange,
   commandCompletion,
   onCommandCompletionChange,
   commandHistoryLimit,
@@ -205,7 +211,6 @@ export function SettingsDialog({
   onFontFamilyChange,
   onFontSizeChange,
   onLetterSpacingChange,
-  onLineHeightChange,
   onLineHeightStep,
   onResetLetterSpacing,
   onResetLineHeight,
@@ -553,6 +558,19 @@ export function SettingsDialog({
                   ))}
                 </div>
 
+                <label className="settings-field settings-field--short" title={`默认 ${RECENT_CONNECTIONS_DEFAULT_LIMIT} 个，调整后立即生效，不会删除连接记录。`}>
+                  <span className="settings-field__label">最近连接显示数量</span>
+                  <SelectMenu
+                    ariaLabel="最近连接显示数量"
+                    value={String(recentConnectionsLimit)}
+                    options={Array.from({ length: RECENT_CONNECTIONS_MAX_LIMIT - RECENT_CONNECTIONS_MIN_LIMIT + 1 }, (_, index) => {
+                      const count = index + RECENT_CONNECTIONS_MIN_LIMIT;
+                      return { value: String(count), label: `${count} 个${count === RECENT_CONNECTIONS_DEFAULT_LIMIT ? "（默认）" : ""}` };
+                    })}
+                    onChange={(value) => onRecentConnectionsLimitChange(Number(value))}
+                  />
+                </label>
+
                 <div className="settings-section__head">
                   <h3>左侧导航栏</h3>
                   <p>选择要在左侧活动栏显示的入口。设置始终保留。</p>
@@ -591,355 +609,186 @@ export function SettingsDialog({
             ) : null}
 
             {category === "terminal" ? (
-              <section className="settings-section" aria-label="终端设置">
+              <section className="settings-section terminal-settings" aria-label="终端设置">
                 <div className="settings-section__head">
-                  <h3>命令补全</h3>
-                  <p>输入命令并回车后自动记住，在所有服务器和本地终端共享。</p>
+                  <h3>终端</h3>
+                  <p>修改即时生效</p>
                 </div>
-                <label className="checkbox-field">
-                  <input
-                    checked={commandCompletion}
-                    onChange={(event) => {
-                      const enabled = event.currentTarget.checked;
-                      if (!enabled) {
-                        setConfirmClearCommandHistory(false);
-                        setCommandHistoryCleared(false);
-                      }
-                      onCommandCompletionChange(enabled);
-                    }}
-                    type="checkbox"
+                <section className="terminal-settings__group" aria-label="终端字体设置">
+                  <h4>字体</h4>
+                  <SelectMenu
+                    ariaLabel="终端字体"
+                    className="settings-select-menu"
+                    onChange={onFontFamilyChange}
+                    options={fontOptions}
+                    searchable
+                    searchPlaceholder="搜索字体名称"
+                    value={fontFamily}
                   />
-                  启用全局命令补全（默认关闭）
-                </label>
-                {commandCompletion ? (
-                  <div className="command-history-settings">
-                    <p className="command-history-settings__help">输入前缀后，用 <kbd>↑</kbd> <kbd>↓</kbd> 选择，<kbd>Tab</kbd> 填入；未选择时使用系统补全。</p>
-                    <div className="command-history-settings__row">
-                      <div className="command-history-settings__description">
-                        <label htmlFor="command-history-limit">存储上限</label>
-                        <span>{COMMAND_HISTORY_MIN_LIMIT}–{COMMAND_HISTORY_MAX_LIMIT} 条，默认 {COMMAND_HISTORY_DEFAULT_LIMIT} 条。降低后会删除超出的旧记录。</span>
+                  <div className="terminal-settings__metrics">
+                    {[
+                      { label: "字号", value: `${fontSize}px`, min: fontSize <= FONT_SIZE_MIN, max: fontSize >= FONT_SIZE_MAX,
+                        decrease: () => onFontSizeChange(fontSize - 1), increase: () => onFontSizeChange(fontSize + 1),
+                        reset: onResetFontSize, isDefault: fontSize === FONT_SIZE_DEFAULT, hint: "字号快捷键和滚轮组合可在快捷键设置中修改。" },
+                      { label: "行高", value: lineHeight.toFixed(2), min: lineHeight <= TERMINAL_LINE_HEIGHT_MIN, max: lineHeight >= TERMINAL_LINE_HEIGHT_MAX,
+                        decrease: () => onLineHeightStep(-1), increase: () => onLineHeightStep(1),
+                        reset: onResetLineHeight, isDefault: lineHeight === TERMINAL_LINE_HEIGHT_DEFAULT, hint: "行高按字号倍数计算。" },
+                      { label: "字间距", value: `${letterSpacing}px`, min: letterSpacing <= TERMINAL_LETTER_SPACING_MIN, max: letterSpacing >= TERMINAL_LETTER_SPACING_MAX,
+                        decrease: () => onLetterSpacingChange(letterSpacing - 1), increase: () => onLetterSpacingChange(letterSpacing + 1),
+                        reset: onResetLetterSpacing, isDefault: letterSpacing === TERMINAL_LETTER_SPACING_DEFAULT, hint: "按整像素增加每个字符格的宽度。" },
+                    ].map((metric) => (
+                      <div className="terminal-settings__metric" key={metric.label} role="group" aria-label={metric.label}>
+                        <span className="settings-field__label" title={metric.hint}>{metric.label}</span>
+                        <div className="settings-stepper">
+                          <button aria-label={`减小${metric.label}`} className="settings-stepper__button" disabled={metric.min} onClick={metric.decrease} type="button">
+                            <Icon name="minimize" height="14" width="14" />
+                          </button>
+                          <output className="settings-stepper__value">{metric.value}</output>
+                          <button aria-label={`增大${metric.label}`} className="settings-stepper__button" disabled={metric.max} onClick={metric.increase} type="button">
+                            <Icon name="plus" height="14" width="14" />
+                          </button>
+                          <Button className="terminal-settings__reset" aria-label={`重置${metric.label}`} title={`重置${metric.label}`} disabled={metric.isDefault} onClick={metric.reset} variant="ghost">
+                            <Icon name="refresh" height="14" width="14" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="command-history-settings__limit">
-                        <input
-                          id="command-history-limit"
-                          className="settings-number"
-                          max={COMMAND_HISTORY_MAX_LIMIT}
-                          min={COMMAND_HISTORY_MIN_LIMIT}
-                          onBlur={commitCommandHistoryLimit}
-                          onChange={(event) => setCommandHistoryLimitDraft(event.currentTarget.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") event.currentTarget.blur();
-                          }}
-                          step="1"
-                          type="number"
-                          value={commandHistoryLimitDraft}
-                        />
-                        <span>条</span>
-                      </div>
-                    </div>
-                    <div className="command-history-settings__row">
-                      <div className="command-history-settings__description">
-                        <span>已记住 <output className="command-history-settings__count" aria-live="polite">{commandHistoryCount} / {commandHistoryLimit}</output> 条命令</span>
-                        <span>重复命令只保留一条，最近输入的排在前面。</span>
-                      </div>
-                      <Button disabled={commandHistoryCount === 0 || confirmClearCommandHistory} onClick={() => {
-                        setCommandHistoryCleared(false);
-                        setConfirmClearCommandHistory(true);
-                      }} variant="ghost">清空历史</Button>
-                    </div>
-                    {confirmClearCommandHistory ? (
-                      <div className="settings-history-clear__confirm" role="group" aria-label="确认清空历史命令">
-                        <span>确定清空所有历史命令？此操作无法撤销。</span>
-                        <Button autoFocus onClick={() => {
-                          clearCommandHistory();
-                          setConfirmClearCommandHistory(false);
-                          setCommandHistoryCleared(true);
-                        }}>确认清空</Button>
-                        <Button onClick={() => setConfirmClearCommandHistory(false)} variant="ghost">取消</Button>
-                      </div>
-                    ) : null}
-                    {commandHistoryCleared ? <p className="command-history-settings__help" role="status">历史已清空，之后输入的命令会继续记录。</p> : null}
-                    <p className="command-history-settings__help">历史保存在本机，提示只显示前缀匹配项。包含敏感信息或多行输入时不记录。</p>
+                    ))}
                   </div>
-                ) : null}
+                </section>
+
+                <section className="terminal-settings__group" aria-label="终端交互设置">
+                  <h4>交互与渲染</h4>
+                  <div className="terminal-settings__toggles">
+                    <label className="checkbox-field">
+                      <input checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} type="checkbox" />选中即复制
+                    </label>
+                    <label className="checkbox-field" title="使用 WebGL 加速，不支持时自动回退。选中文字的抗锯齿效果可能略有不同，可关闭此项。">
+                      <input checked={gpuAcceleration} onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)} type="checkbox" />GPU 加速
+                    </label>
+                  </div>
+                  <label className="terminal-settings__inline-field">
+                    <span className="settings-field__label">右键操作</span>
+                    <SelectMenu ariaLabel="右键点击" className="settings-select-menu" onChange={(value) => onRightClickChange(value as RightClickAction)} options={RIGHT_CLICK_OPTIONS} value={rightClick} />
+                  </label>
+                </section>
+
+                <section className="terminal-settings__group" aria-label="命令补全设置">
+                  <h4>命令补全</h4>
+                  <label className="checkbox-field" title="回车后自动记录命令，所有终端共享。历史仅保存在本机，敏感信息和多行输入不记录。">
+                    <input
+                      checked={commandCompletion}
+                      onChange={(event) => {
+                        const enabled = event.currentTarget.checked;
+                        if (!enabled) {
+                          setConfirmClearCommandHistory(false);
+                          setCommandHistoryCleared(false);
+                        }
+                        onCommandCompletionChange(enabled);
+                      }}
+                      type="checkbox"
+                    />
+                    启用命令补全
+                  </label>
+                  {commandCompletion ? (
+                    <div className="command-history-settings">
+                      <p className="command-history-settings__help">所有终端共享 · <kbd>↑</kbd> <kbd>↓</kbd> 选择，<kbd>Tab</kbd> 填入</p>
+                      <div className="command-history-settings__row">
+                        <div className="command-history-settings__limit" title={`${COMMAND_HISTORY_MIN_LIMIT}–${COMMAND_HISTORY_MAX_LIMIT} 条，默认 ${COMMAND_HISTORY_DEFAULT_LIMIT} 条。降低上限会删除超出的旧记录。`}>
+                          <label htmlFor="command-history-limit">历史上限</label>
+                          <input
+                            id="command-history-limit"
+                            className="settings-number"
+                            max={COMMAND_HISTORY_MAX_LIMIT}
+                            min={COMMAND_HISTORY_MIN_LIMIT}
+                            onBlur={commitCommandHistoryLimit}
+                            onChange={(event) => setCommandHistoryLimitDraft(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                            step="1"
+                            type="number"
+                            value={commandHistoryLimitDraft}
+                          />
+                          <span>条</span>
+                        </div>
+                        <span className="command-history-settings__help" title="重复命令只保留一条，最近输入的排在前面。">已记录 <output className="command-history-settings__count" aria-live="polite">{commandHistoryCount}</output> 条</span>
+                        <Button disabled={commandHistoryCount === 0 || confirmClearCommandHistory} onClick={() => {
+                          setCommandHistoryCleared(false);
+                          setConfirmClearCommandHistory(true);
+                        }} variant="ghost">清空历史</Button>
+                      </div>
+                      {confirmClearCommandHistory ? (
+                        <div className="settings-history-clear__confirm" role="group" aria-label="确认清空历史命令">
+                          <span>确定清空所有历史命令？此操作无法撤销。</span>
+                          <Button autoFocus onClick={() => {
+                            clearCommandHistory();
+                            setConfirmClearCommandHistory(false);
+                            setCommandHistoryCleared(true);
+                          }}>确认清空</Button>
+                          <Button onClick={() => setConfirmClearCommandHistory(false)} variant="ghost">取消</Button>
+                        </div>
+                      ) : null}
+                      {commandHistoryCleared ? <p className="command-history-settings__help" role="status">历史已清空，之后输入的命令会继续记录。</p> : null}
+                    </div>
+                  ) : null}
+                </section>
+
                 <TerminalColorSettings
                   fontFamily={fontFamily}
                   fontSize={fontSize}
                   onCloseGuardChange={(guard) => { terminalDraftGuardRef.current = guard; }}
                 />
-                <div className="settings-section__head">
-                  <h3>字体大小</h3>
-                  <p>终端内的字号快捷键和鼠标滚轮组合可在“快捷键”设置中修改。</p>
-                </div>
-                <div className="settings-stepper">
-                  <button
-                    aria-label="减小字体"
-                    className="settings-stepper__button"
-                    disabled={fontSize <= FONT_SIZE_MIN}
-                    onClick={() => onFontSizeChange(fontSize - 1)}
-                    type="button"
-                  >
-                    <Icon name="minimize" height="16" width="16" />
-                  </button>
-                  <span className="settings-stepper__value">{fontSize}px</span>
-                  <button
-                    aria-label="增大字体"
-                    className="settings-stepper__button"
-                    disabled={fontSize >= FONT_SIZE_MAX}
-                    onClick={() => onFontSizeChange(fontSize + 1)}
-                    type="button"
-                  >
-                    <Icon name="plus" height="16" width="16" />
-                  </button>
-                  <Button
-                    className="settings-stepper__reset"
-                    disabled={fontSize === FONT_SIZE_DEFAULT}
-                    onClick={onResetFontSize}
-                    variant="ghost"
-                  >
-                    重置
-                  </Button>
-                </div>
 
-                <div className="settings-section__head">
-                  <h3>字体样式</h3>
-                  <p>选择终端字体；已安装的系统字体会自动显示，建议使用等宽字体。</p>
-                </div>
-                <SelectMenu
-                  ariaLabel="终端字体"
-                  className="settings-select-menu"
-                  onChange={onFontFamilyChange}
-                  options={fontOptions}
-                  searchable
-                  searchPlaceholder="搜索字体名称"
-                  value={fontFamily}
-                />
-
-                <div className="settings-section__head">
-                  <h3>字符间距</h3>
-                  <p>行高按字号倍数计算，字间距按整像素加到每个字符格上；调大可让紧凑的等宽字体更易读。</p>
-                </div>
-                <div className="settings-stepper">
-                  <span className="settings-stepper__label">行高</span>
-                  <button
-                    aria-label="减小行高"
-                    className="settings-stepper__button"
-                    disabled={lineHeight <= TERMINAL_LINE_HEIGHT_MIN}
-                    onClick={() => onLineHeightStep(-1)}
-                    type="button"
-                  >
-                    <Icon name="minimize" height="16" width="16" />
-                  </button>
-                  <span className="settings-stepper__value">{lineHeight.toFixed(2)}</span>
-                  <button
-                    aria-label="增大行高"
-                    className="settings-stepper__button"
-                    disabled={lineHeight >= TERMINAL_LINE_HEIGHT_MAX}
-                    onClick={() => onLineHeightStep(1)}
-                    type="button"
-                  >
-                    <Icon name="plus" height="16" width="16" />
-                  </button>
-                  <input
-                    aria-label="终端行高"
-                    className="settings-range"
-                    max={TERMINAL_LINE_HEIGHT_MAX}
-                    min={TERMINAL_LINE_HEIGHT_MIN}
-                    onChange={(event) => onLineHeightChange(Number(event.currentTarget.value))}
-                    step={TERMINAL_LINE_HEIGHT_STEP}
-                    type="range"
-                    value={lineHeight}
-                  />
-                  <Button
-                    className="settings-stepper__reset"
-                    disabled={lineHeight === TERMINAL_LINE_HEIGHT_DEFAULT}
-                    onClick={onResetLineHeight}
-                    variant="ghost"
-                  >
-                    重置
-                  </Button>
-                </div>
-                <div className="settings-stepper">
-                  <span className="settings-stepper__label">字间距</span>
-                  <button
-                    aria-label="减小字间距"
-                    className="settings-stepper__button"
-                    disabled={letterSpacing <= TERMINAL_LETTER_SPACING_MIN}
-                    onClick={() => onLetterSpacingChange(letterSpacing - 1)}
-                    type="button"
-                  >
-                    <Icon name="minimize" height="16" width="16" />
-                  </button>
-                  <span className="settings-stepper__value">{letterSpacing}px</span>
-                  <button
-                    aria-label="增大字间距"
-                    className="settings-stepper__button"
-                    disabled={letterSpacing >= TERMINAL_LETTER_SPACING_MAX}
-                    onClick={() => onLetterSpacingChange(letterSpacing + 1)}
-                    type="button"
-                  >
-                    <Icon name="plus" height="16" width="16" />
-                  </button>
-                  <Button
-                    className="settings-stepper__reset"
-                    disabled={letterSpacing === TERMINAL_LETTER_SPACING_DEFAULT}
-                    onClick={onResetLetterSpacing}
-                    variant="ghost"
-                  >
-                    重置
-                  </Button>
-                </div>
-
-                <div className="settings-section__head">
-                  <h3>鼠标</h3>
-                  <p>配置终端中的右键行为与选中复制。</p>
-                </div>
-                <label className="settings-field">
-                  <span className="settings-field__label">右键点击</span>
-                  <SelectMenu
-                    ariaLabel="右键点击"
-                    className="settings-select-menu"
-                    onChange={(value) => onRightClickChange(value as RightClickAction)}
-                    options={RIGHT_CLICK_OPTIONS}
-                    value={rightClick}
-                  />
-                </label>
-                <label className="checkbox-field">
-                  <input
-                    checked={copyOnSelect}
-                    onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)}
-                    type="checkbox"
-                  />
-                  选中时复制
-                </label>
-
-                <div className="settings-section__head">
-                  <h3>渲染</h3>
-                  <p>
-                    使用 GPU（WebGL）加速终端渲染，大量输出时更流畅。若显卡或环境不支持会自动回退到普通渲染。
-                  </p>
-                  <p>
-                    注意：GPU 渲染会把背景色烘焙进字形纹理，因此<strong>选中的文字</strong>
-                    会按选中色重新抗锯齿，字重看起来可能与未选中时略有差异。若对此敏感，关闭本项即可完全一致（代价是大量输出时略慢）。
-                  </p>
-                </div>
-                <label className="checkbox-field">
-                  <input
-                    checked={gpuAcceleration}
-                    onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)}
-                    type="checkbox"
-                  />
-                  启用 GPU 渲染加速
-                </label>
-
-
-                <div className="settings-section__head">
-                  <h3>终端背景</h3>
-                  <p>
-                    调低不透明度可让终端背景变通透：启用背景图磨砂且系统支持时透出图片，否则透出应用背景。
-                    （窗口对桌面的整体透明需要系统级窗口透明，暂未开启。）
-                  </p>
-                  <p>
-                    背景图只以磨砂玻璃形式显示；关闭磨砂开关或当前系统 WebView 不支持背景模糊时，将自动隐藏图片并保留普通终端背景。
-                  </p>
-                </div>
-                <label className="settings-field">
-                  <span className="settings-field__label">
-                    背景不透明度：{terminalBgOpacity}%
-                    {terminalBgOpacity === 100 ? "（不透明）" : ""}
-                  </span>
-                  <input
-                    className="settings-range"
-                    max={TERMINAL_BG_OPACITY_MAX}
-                    min={TERMINAL_BG_OPACITY_MIN}
-                    onChange={(event) => onTerminalBgOpacityChange(Number(event.currentTarget.value))}
-                    type="range"
-                    value={terminalBgOpacity}
-                  />
-                </label>
-                <div className="settings-bg">
-                  <div className="settings-bg__row">
-                    <Button onClick={() => void pickBackgroundImage()} variant="ghost">
-                      选择图片
-                    </Button>
-                    <Button
-                      disabled={!terminalBgImage}
-                      onClick={() => onTerminalBgImageChange("")}
-                      variant="ghost"
-                    >
-                      清除
-                    </Button>
-                    <span className="settings-bg__path" title={terminalBgImage}>
-                      {terminalBgImage || "未设置"}
-                    </span>
+                <details className="terminal-settings__background">
+                  <summary>背景与留白<span>不透明度 {terminalBgOpacity}% · 留白 {terminalWorkspaceInset}px</span></summary>
+                  <div className="terminal-settings__background-body">
+                    <div className="terminal-settings__ranges">
+                      <label className="settings-field" title="调低后透出应用背景；启用磨砂图片且系统支持时透出图片。">
+                        <span className="terminal-settings__range-label">背景不透明度<output>{terminalBgOpacity}%</output></span>
+                        <input aria-label="背景不透明度" className="settings-range" max={TERMINAL_BG_OPACITY_MAX} min={TERMINAL_BG_OPACITY_MIN} onChange={(event) => onTerminalBgOpacityChange(Number(event.currentTarget.value))} type="range" value={terminalBgOpacity} />
+                      </label>
+                      <label className="settings-field" title="工作区右侧与底部的留白，不影响文字和滚动位置。">
+                        <span className="terminal-settings__range-label">终端边距<output>{terminalWorkspaceInset}px</output></span>
+                        <input aria-label="终端边距" className="settings-range" max={TERMINAL_WORKSPACE_INSET_MAX} min={TERMINAL_WORKSPACE_INSET_MIN} onChange={(event) => onTerminalWorkspaceInsetChange(Number(event.currentTarget.value))} type="range" value={terminalWorkspaceInset} />
+                      </label>
+                    </div>
+                    <div className="settings-bg__row">
+                      <Button onClick={() => void pickBackgroundImage()}>选择背景图</Button>
+                      <span className="settings-bg__path" title={terminalBgImage}>{terminalBgImage.split(/[\\/]/).pop() || "未设置图片"}</span>
+                      <Button disabled={!terminalBgImage} onClick={() => onTerminalBgImageChange("")} variant="ghost">清除</Button>
+                    </div>
+                    <label className="checkbox-field" title="背景图仅以磨砂形式显示；关闭此项或系统不支持时会隐藏图片。">
+                      <input checked={terminalBgGlassEnabled} onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)} type="checkbox" />背景图磨砂
+                    </label>
+                    <label className="settings-field">
+                      <span className="terminal-settings__range-label">模糊度<output>{terminalBgGlassBlur}px</output></span>
+                      <input aria-label="背景模糊度" className="settings-range" disabled={!terminalBgImage || !terminalBgGlassEnabled} max={TERMINAL_BG_GLASS_BLUR_MAX} min={TERMINAL_BG_GLASS_BLUR_MIN} onChange={(event) => onTerminalBgGlassBlurChange(Number(event.currentTarget.value))} type="range" value={terminalBgGlassBlur} />
+                    </label>
+                    <p className="settings-field__hint">背景图仅在支持背景模糊的系统上显示。</p>
                   </div>
-                  <label className="checkbox-field">
-                    <input
-                      checked={terminalBgGlassEnabled}
-                      onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)}
-                      type="checkbox"
-                    />
-                    启用背景图磨砂玻璃
-                  </label>
-                  <label className="settings-field">
-                    <span className="settings-field__label">
-                      磨砂模糊度：{terminalBgGlassBlur}px
-                    </span>
-                    <input
-                      className="settings-range"
-                      disabled={!terminalBgImage || !terminalBgGlassEnabled}
-                      max={TERMINAL_BG_GLASS_BLUR_MAX}
-                      min={TERMINAL_BG_GLASS_BLUR_MIN}
-                      onChange={(event) => onTerminalBgGlassBlurChange(Number(event.currentTarget.value))}
-                      type="range"
-                      value={terminalBgGlassBlur}
-                    />
-                  </label>
-                </div>
-
-                <div className="settings-section__head">
-                  <h3>终端边距</h3>
-                  <p>控制终端工作区右侧和底部的留白，不影响终端内文字与滚动位置。</p>
-                </div>
-                <label className="settings-field">
-                  <span className="settings-field__label">
-                    右侧与底部留白：{terminalWorkspaceInset}px
-                  </span>
-                  <input
-                    className="settings-range"
-                    max={TERMINAL_WORKSPACE_INSET_MAX}
-                    min={TERMINAL_WORKSPACE_INSET_MIN}
-                    onChange={(event) => onTerminalWorkspaceInsetChange(Number(event.currentTarget.value))}
-                    type="range"
-                    value={terminalWorkspaceInset}
-                  />
-                </label>
-
+                </details>
               </section>
             ) : null}
 
             {category === "editor" ? (
-              <section className="settings-section" aria-label="文件编辑器设置">
+              <section className="settings-section editor-settings" aria-label="文件编辑器设置">
                 <div className="settings-section__head">
                   <h3>文件编辑器</h3>
-                  <p>这些设置会立即应用到远程文件列表中的代码编辑器。</p>
+                  <p>修改即时生效</p>
                 </div>
 
-                <div className="settings-card">
-                  <label className="checkbox-field">
+                <div className="editor-settings__font-source">
+                  <label className="checkbox-field" title="开启后，编辑器会同步使用终端的字体和字号。">
                     <input
                       checked={editorSettings.inheritTerminal}
                       onChange={(event) => editorSettings.setInheritTerminal(event.currentTarget.checked)}
                       type="checkbox"
                     />
-                    继承终端字体与字号
+                    字体和字号跟随终端
                   </label>
-                  <p className="settings-card__hint">
-                    开启后，终端的字体样式和大小变更会同步到文件编辑器。
-                  </p>
                 </div>
 
-                <div className="form-grid">
+                <div className="editor-settings__font-fields">
                   <label className="settings-field">
                     <span className="settings-field__label">字体</span>
                     <SelectMenu
@@ -968,61 +817,62 @@ export function SettingsDialog({
                   </label>
                 </div>
 
-                <div className="settings-section__head">
-                  <h3>显示与编辑</h3>
-                  <p>仅影响文件编辑器，不改变终端行为。</p>
-                </div>
-                <div className="settings-card settings-card--fields">
-                  <label className="checkbox-field">
-                    <input
-                      checked={editorSettings.wordWrap}
-                      onChange={(event) => editorSettings.setWordWrap(event.currentTarget.checked)}
-                      type="checkbox"
-                    />
-                    自动换行
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      checked={editorSettings.lineNumbers}
-                      onChange={(event) => editorSettings.setLineNumbers(event.currentTarget.checked)}
-                      type="checkbox"
-                    />
-                    显示行号
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      checked={editorSettings.minimap}
-                      onChange={(event) => editorSettings.setMinimap(event.currentTarget.checked)}
-                      type="checkbox"
-                    />
-                    显示小地图
-                  </label>
-                  <label className="settings-field">
-                    <span className="settings-field__label">Tab 宽度</span>
-                    <input
-                      className="settings-number"
-                      max={EDITOR_TAB_SIZE_MAX}
-                      min={EDITOR_TAB_SIZE_MIN}
-                      onChange={(event) => editorSettings.setTabSize(Number(event.currentTarget.value))}
-                      type="number"
-                      value={editorSettings.tabSize}
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span className="settings-field__label">显示空白字符</span>
-                    <SelectMenu
-                      ariaLabel="显示空白字符"
-                      className="settings-select-menu"
-                      onChange={(value) => editorSettings.setRenderWhitespace(value as EditorRenderWhitespace)}
-                      options={[
-                        { value: "none", label: "不显示" },
-                        { value: "selection", label: "仅选中时显示" },
-                        { value: "boundary", label: "仅行尾显示" },
-                        { value: "all", label: "始终显示" },
-                      ]}
-                      value={editorSettings.renderWhitespace}
-                    />
-                  </label>
+                <div className="editor-settings__display">
+                  <h4>显示与缩进</h4>
+                  <div className="editor-settings__toggles">
+                    <label className="checkbox-field">
+                      <input
+                        checked={editorSettings.wordWrap}
+                        onChange={(event) => editorSettings.setWordWrap(event.currentTarget.checked)}
+                        type="checkbox"
+                      />
+                      自动换行
+                    </label>
+                    <label className="checkbox-field">
+                      <input
+                        checked={editorSettings.lineNumbers}
+                        onChange={(event) => editorSettings.setLineNumbers(event.currentTarget.checked)}
+                        type="checkbox"
+                      />
+                      显示行号
+                    </label>
+                    <label className="checkbox-field">
+                      <input
+                        checked={editorSettings.minimap}
+                        onChange={(event) => editorSettings.setMinimap(event.currentTarget.checked)}
+                        type="checkbox"
+                      />
+                      显示小地图
+                    </label>
+                  </div>
+                  <div className="editor-settings__editing-fields">
+                    <label className="settings-field">
+                      <span className="settings-field__label">Tab 宽度</span>
+                      <input
+                        className="settings-number"
+                        max={EDITOR_TAB_SIZE_MAX}
+                        min={EDITOR_TAB_SIZE_MIN}
+                        onChange={(event) => editorSettings.setTabSize(Number(event.currentTarget.value))}
+                        type="number"
+                        value={editorSettings.tabSize}
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span className="settings-field__label">显示空白字符</span>
+                      <SelectMenu
+                        ariaLabel="显示空白字符"
+                        className="settings-select-menu"
+                        onChange={(value) => editorSettings.setRenderWhitespace(value as EditorRenderWhitespace)}
+                        options={[
+                          { value: "none", label: "不显示" },
+                          { value: "selection", label: "仅选中时显示" },
+                          { value: "boundary", label: "仅行尾显示" },
+                          { value: "all", label: "始终显示" },
+                        ]}
+                        value={editorSettings.renderWhitespace}
+                      />
+                    </label>
+                  </div>
                 </div>
               </section>
             ) : null}

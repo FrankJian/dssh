@@ -111,6 +111,13 @@ struct SessionHandle {
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
     /// to answer AI `read_terminal` requests about the visible session.
     output: Arc<Mutex<String>>,
+    input_revision: u64,
+}
+
+/// Binds an AI approval to both the output and user input observed before it.
+pub(crate) struct TerminalInputSnapshot {
+    pub output: String,
+    input_revision: u64,
 }
 
 #[derive(Debug)]
@@ -283,6 +290,7 @@ impl SessionManager {
                 tx,
                 closed,
                 output: output.clone(),
+                input_revision: 0,
             },
         );
 
@@ -351,6 +359,7 @@ impl SessionManager {
                 tx,
                 closed,
                 output: output.clone(),
+                input_revision: 0,
             },
         );
 
@@ -397,9 +406,36 @@ impl SessionManager {
     }
 
     pub fn write_session(&self, session_id: &str, data: String) -> AppResult<()> {
-        let tx = self.session_tx(session_id)?;
-        tx.try_send(SessionCommand::Input(data))
-            .map_err(|error| AppError::new("session_send_error", error.to_string()))
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        queue_session_input(handle, data)
+    }
+
+    pub(crate) fn read_input_snapshot(&self, session_id: &str) -> AppResult<TerminalInputSnapshot> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        Ok(TerminalInputSnapshot {
+            output: handle.output.lock().map_err(lock_error)?.clone(),
+            input_revision: handle.input_revision,
+        })
+    }
+
+    pub(crate) fn write_approved_input(
+        &self,
+        session_id: &str,
+        snapshot: &TerminalInputSnapshot,
+        data: String,
+        on_queued: impl FnOnce(),
+    ) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        queue_approved_input(handle, snapshot, data, on_queued)
     }
 
     pub fn respond_zmodem_prompt(
@@ -3570,6 +3606,42 @@ fn local_terminal_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("local_terminal_error", error.to_string())
 }
 
+fn queue_session_input(handle: &mut SessionHandle, data: String) -> AppResult<()> {
+    if *handle.closed.borrow() {
+        return Err(AppError::new(
+            "session_closed",
+            "终端已关闭，请重新读取活动会话。",
+        ));
+    }
+    handle
+        .tx
+        .try_send(SessionCommand::Input(data))
+        .map_err(|_| AppError::new("session_send_error", "无法向终端发送输入，请稍后重试。"))?;
+    handle.input_revision = handle.input_revision.wrapping_add(1);
+    Ok(())
+}
+
+fn queue_approved_input(
+    handle: &mut SessionHandle,
+    snapshot: &TerminalInputSnapshot,
+    data: String,
+    on_queued: impl FnOnce(),
+) -> AppResult<()> {
+    let output = handle.output.clone();
+    let current = output.lock().map_err(lock_error)?;
+    if handle.input_revision != snapshot.input_revision || *current != snapshot.output {
+        return Err(AppError::new(
+            "terminal_changed",
+            "确认期间终端已有新输入或输出，未发送内容。请重新读取终端并确认。",
+        ));
+    }
+    queue_session_input(handle, data)?;
+    // Announce input while holding the output lock, so resulting PTY output
+    // cannot overtake the observer event in the UI's command/asset trackers.
+    on_queued();
+    Ok(())
+}
+
 fn lock_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("state_lock_error", error.to_string())
 }
@@ -3577,20 +3649,137 @@ fn lock_error(error: impl std::fmt::Display) -> AppError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     use super::{
         ConnOutcome, OUTPUT_FLUSH_BYTES, OUTPUT_FLUSH_INTERVAL, PendingOutput, RemoteForwardTarget,
-        SessionCommand, ZmodemDownloadFile, ZmodemFinishKind, ZmodemInputGate,
-        ZmodemPendingConflict, classify_channel_end, finish_staged_zmodem_overwrite,
-        input_requests_clean_exit, login_shell_args, normalize_input,
-        rearm_zmodem_probes_for_input, remaining_otp_attempts, resolve_remote_forward_target,
-        stage_zmodem_overwrite, wait_for_initial_local_resize, zmodem_download_file_name,
-        zmodem_stage_path,
+        SessionCommand, SessionHandle, TerminalInputSnapshot, ZmodemDownloadFile, ZmodemFinishKind,
+        ZmodemInputGate, ZmodemPendingConflict, classify_channel_end,
+        finish_staged_zmodem_overwrite, input_requests_clean_exit, login_shell_args,
+        normalize_input, queue_approved_input, queue_session_input, rearm_zmodem_probes_for_input,
+        remaining_otp_attempts, resolve_remote_forward_target, stage_zmodem_overwrite,
+        wait_for_initial_local_resize, zmodem_download_file_name, zmodem_stage_path,
     };
     use crate::models::terminal::TerminalSize;
     use crate::ssh::zmodem::{ZmodemDownloadProbe, ZmodemFinishFilter, ZmodemProbe};
     use tokio::io::AsyncWriteExt;
     use zmodem2::{Action, Receiver, Sender};
+
+    fn interactive_test_session() -> (
+        SessionHandle,
+        tokio::sync::mpsc::Receiver<SessionCommand>,
+        tokio::sync::watch::Sender<bool>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (closed_tx, closed) = tokio::sync::watch::channel(false);
+        (
+            SessionHandle {
+                kind: crate::models::terminal::TerminalSessionKind::Ssh,
+                profile_id: "gateway".into(),
+                title: "JumpServer".into(),
+                tx,
+                closed,
+                output: Arc::new(Mutex::new("Welcome to JumpServer\nOpt> ".into())),
+                input_revision: 0,
+            },
+            rx,
+            closed_tx,
+        )
+    }
+
+    fn input_snapshot(handle: &SessionHandle) -> TerminalInputSnapshot {
+        TerminalInputSnapshot {
+            output: handle.output.lock().unwrap().clone(),
+            input_revision: handle.input_revision,
+        }
+    }
+
+    #[test]
+    fn jumpserver_ip_asset_and_account_selection_use_the_same_terminal_channel() {
+        let (mut handle, mut rx, _closed_tx) = interactive_test_session();
+        for (input, output) in [
+            ("10.20.30.40", "1 app 10.20.30.40\nOpt> "),
+            ("1", "Select account:\n1 root\n2 deploy\nID> "),
+            ("2", "Connecting to 10.20.30.40\n[deploy@app ~]$ "),
+        ] {
+            let snapshot = input_snapshot(&handle);
+            queue_approved_input(&mut handle, &snapshot, format!("{input}\r"), || {}).unwrap();
+            match rx.try_recv().unwrap() {
+                SessionCommand::Input(data) => assert_eq!(data, format!("{input}\r")),
+                _ => panic!("selection must use PTY input"),
+            }
+            handle.output.lock().unwrap().push_str(output);
+        }
+        assert_eq!(handle.input_revision, 3);
+    }
+
+    #[test]
+    fn approved_input_rejects_changed_output_and_user_input_even_without_echo() {
+        let (mut handle, mut rx, _closed_tx) = interactive_test_session();
+        let snapshot = input_snapshot(&handle);
+        handle
+            .output
+            .lock()
+            .unwrap()
+            .push_str("Connection changed\n");
+        assert_eq!(
+            queue_approved_input(&mut handle, &snapshot, "10.20.30.40\r".into(), || {})
+                .unwrap_err()
+                .code,
+            "terminal_changed"
+        );
+        assert!(rx.try_recv().is_err());
+        let snapshot = input_snapshot(&handle);
+        queue_session_input(&mut handle, "manual input".into()).unwrap();
+        let _ = rx.try_recv().unwrap();
+        assert_eq!(
+            queue_approved_input(&mut handle, &snapshot, "10.20.30.40\r".into(), || {})
+                .unwrap_err()
+                .code,
+            "terminal_changed"
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn approval_cannot_be_replayed_or_sent_to_a_closed_terminal() {
+        let (mut handle, mut rx, closed_tx) = interactive_test_session();
+        let snapshot = input_snapshot(&handle);
+        queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {}).unwrap();
+        let _ = rx.try_recv().unwrap();
+        assert!(queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {}).is_err());
+        let snapshot = input_snapshot(&handle);
+        closed_tx.send(true).unwrap();
+        assert_eq!(
+            queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {})
+                .unwrap_err()
+                .code,
+            "session_closed"
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn interactive_input_observer_runs_once_before_output_can_overtake_it() {
+        let (mut handle, mut rx, _closed_tx) = interactive_test_session();
+        let snapshot = input_snapshot(&handle);
+        let output = handle.output.clone();
+        let mut notified = 0;
+        queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {
+            notified += 1;
+            assert!(output.try_lock().is_err());
+        })
+        .unwrap();
+        assert_eq!(notified, 1);
+        let _ = rx.try_recv().unwrap();
+        assert!(
+            queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {
+                notified += 1;
+            })
+            .is_err()
+        );
+        assert_eq!(notified, 1);
+    }
 
     #[test]
     fn a_shell_channel_closing_does_not_drop_other_sessions_on_live_transport() {

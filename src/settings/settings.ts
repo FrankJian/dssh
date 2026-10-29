@@ -1,6 +1,16 @@
 export const terminalFontSizeKey = "dssh.terminal.fontSize";
 export const terminalFontFamilyKey = "dssh.terminal.fontFamily";
 
+export const recentConnectionsLimitKey = "dssh.recentConnections.displayLimit";
+export const RECENT_CONNECTIONS_DEFAULT_LIMIT = 5;
+export const RECENT_CONNECTIONS_MIN_LIMIT = 1;
+export const RECENT_CONNECTIONS_MAX_LIMIT = 12;
+
+export function normalizeRecentConnectionsLimit(value: number): number {
+  if (!Number.isFinite(value)) return RECENT_CONNECTIONS_DEFAULT_LIMIT;
+  return Math.min(RECENT_CONNECTIONS_MAX_LIMIT, Math.max(RECENT_CONNECTIONS_MIN_LIMIT, Math.round(value)));
+}
+
 export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 32;
 export const FONT_SIZE_DEFAULT = 13;

@@ -50,7 +50,7 @@ import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
-import { releaseTerminal, restoreTerminalSnapshot, terminalSize } from "../terminal/terminalRegistry";
+import { focusTerminalSession, releaseTerminal, restoreTerminalSnapshot, terminalSize } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
@@ -70,6 +70,7 @@ import {
 import { AppLayout } from "./AppLayout";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
 import {
+  cycleItem,
   formatShortcut,
   getShortcutBinding,
   getShortcutDefinitions,
@@ -77,7 +78,9 @@ import {
   isFocusModeExitShortcut,
   isLockAppShortcut,
   isTerminalFullscreenShortcut,
+  type ShortcutId,
 } from "./shortcuts";
+import { useActionShortcuts } from "./useActionShortcuts";
 import { useWorkspace } from "./useWorkspace";
 import { UpdateNotification } from "./UpdateNotification";
 import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
@@ -392,7 +395,7 @@ function MainApp() {
     tabOrder,
     reorderTab,
   } = useWorkspace();
-  const { recentIds, recordUse } = useRecentConnections();
+  const { recentIds, recordUse, displayLimit: recentConnectionsLimit, setDisplayLimit: setRecentConnectionsLimit } = useRecentConnections();
   const panes = usePaneLayout();
   const { workspaces: detachedWorkspaces, addWorkspace } = useDetachedWorkspaces();
   // A compact remote tree can be docked alongside one SSH terminal. It is a
@@ -1440,6 +1443,46 @@ function MainApp() {
     }
   }
 
+  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isSftpActive && !activeRemoteFilePath);
+  const currentWorkspaceTab = workspaceTabs.find((tab) => tab.active);
+  function switchWorkspaceTab(step: number) {
+    const id = cycleItem(workspaceTabs.map((tab) => tab.id), currentWorkspaceTab?.id ?? null, step);
+    const tab = workspaceTabs.find((item) => item.id === id);
+    if (tab) {
+      setActiveActivity("sessions");
+      handleSelectTab(tab);
+    }
+  }
+  function switchPane(step: number) {
+    if (!activePaneLayout) return;
+    const id = cycleItem(paneSessionIds(activePaneLayout), activePaneLayout.focusedPaneId, step);
+    if (!id) return;
+    panes.focusPane(id);
+    setActiveSessionId(id);
+    if (terminalFullscreenPaneId) setTerminalFullscreenPaneId(id);
+  }
+  useActionShortcuts({
+    openSettings: () => openSettings("appearance"),
+    newLocalTerminal: handleStartLocalSession,
+    newConnection: openCreateProfile,
+    showConnections: () => setActiveActivity("connections"),
+    toggleSidebar,
+    toggleAssistant: () => toggleRightPanel("assistant"),
+    toggleZenMode: terminalShortcutsAvailable ? () => setZenMode((value) => !value) : undefined,
+    focusTerminal: activeSession ? () => {
+      setActiveRemoteFilePath(null); showTerminalSurface();
+      requestAnimationFrame(() => focusTerminalSession(activeSession.id));
+    } : undefined,
+    splitHorizontal: terminalShortcutsAvailable && activeCanSplit ? () => handleSplit("h") : undefined,
+    splitVertical: terminalShortcutsAvailable && activeCanSplit ? () => handleSplit("v") : undefined,
+    nextPane: terminalShortcutsAvailable && activePaneLayout ? () => switchPane(1) : undefined,
+    previousPane: terminalShortcutsAvailable && activePaneLayout ? () => switchPane(-1) : undefined,
+    closePane: terminalShortcutsAvailable && activeSession ? () => handleClosePane(activeSession.id) : undefined,
+    nextTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(1) : undefined,
+    previousTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(-1) : undefined,
+    closeTab: !isConnections && !isS3 && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
+  }, appLock.status?.locked);
+
   windowCloseRef.current = () => closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口");
   useEffect(() => {
     const appWindow = getCurrentWindow();
@@ -1584,7 +1627,7 @@ function MainApp() {
   const recentProfiles = recentIds
     .map((id) => profiles.find((profile) => profile.id === id))
     .filter((profile): profile is SshProfile => Boolean(profile))
-    .slice(0, 6);
+    .slice(0, recentConnectionsLimit);
 
   const terminalSurface = (
     <TerminalWorkspace
@@ -1633,6 +1676,7 @@ function MainApp() {
       <SessionManager
         profiles={profiles}
         recentIds={recentIds}
+        recentLimit={recentConnectionsLimit}
         activeSessionCount={visibleSessions.length}
         isLoading={isLoading}
         errorMessage={errorMessage}
@@ -2031,7 +2075,18 @@ function MainApp() {
         run: () => void s3Profiles.toggleFavorite(profile.id),
       });
     }
-    return items;
+    const shortcutByAction: Record<string, ShortcutId> = {
+      "act:new-local": "newLocalTerminal", "act:new-ssh": "newConnection",
+      "act:connections": "showConnections", "act:terminal-surface": "focusTerminal",
+      "act:focus-active-terminal": "focusTerminal", "act:assistant": "toggleAssistant",
+      "act:sidebar": "toggleSidebar", "act:zen": "toggleZenMode",
+      "act:settings-appearance": "openSettings", "act:split-h": "splitHorizontal",
+      "act:split-v": "splitVertical", "act:terminal-fullscreen": "toggleTerminalFullscreen",
+      "act:close-session": "closePane",
+    };
+    return items.map((item) => shortcutByAction[item.id]
+      ? { ...item, hint: formatShortcut(getShortcutBinding(shortcutByAction[item.id])) }
+      : item);
   }
 
   return (
@@ -2116,7 +2171,7 @@ function MainApp() {
                     className="tab-action"
                     disabled={!activeCanSplit}
                     onClick={() => void handleSplit("h")}
-                    title="左右分屏（同一主机）"
+                    title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`}
                     aria-label="左右分屏"
                     type="button"
                   >
@@ -2126,7 +2181,7 @@ function MainApp() {
                     className="tab-action"
                     disabled={!activeCanSplit}
                     onClick={() => void handleSplit("v")}
-                    title="上下分屏（同一主机）"
+                    title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`}
                     aria-label="上下分屏"
                     type="button"
                   >
@@ -2201,6 +2256,8 @@ function MainApp() {
       ) : null}
       {isSettingsOpen ? (
         <SettingsDialog
+          recentConnectionsLimit={recentConnectionsLimit}
+          onRecentConnectionsLimitChange={setRecentConnectionsLimit}
           commandCompletion={commandCompletion}
           onCommandCompletionChange={setCommandCompletion}
           commandHistoryLimit={commandHistoryLimit}

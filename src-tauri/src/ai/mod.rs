@@ -6,16 +6,19 @@ use std::{
     },
 };
 
-use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
+use tokio::sync::{Notify, mpsc};
 
 pub mod agent;
+mod anthropic;
 pub mod client;
-pub mod copilot;
+pub mod connection;
+mod context;
+pub mod providers;
+mod reasoning;
+mod terminal;
 pub mod tools;
 
 pub use agent::run_agent;
-
-use copilot::CopilotSession;
 
 /// A user decision on a pending tool call.
 #[derive(Debug, Clone)]
@@ -57,11 +60,6 @@ pub struct AiManager {
     /// text. Older chunks are stable as a conversation grows, so this keeps
     /// history compaction cheap (only newly-dropped turns get summarized).
     summaries: Arc<Mutex<HashMap<u64, String>>>,
-    /// Cached short-lived Copilot session token (resolved from the stored
-    /// GitHub token). Guarded by an async mutex so refreshes are serialized.
-    pub(crate) copilot_session: Arc<AsyncMutex<Option<CopilotSession>>>,
-    /// Set while a Copilot device-login poll is running; also used to cancel it.
-    pub(crate) copilot_login_active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for RunControl {

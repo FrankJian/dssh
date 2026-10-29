@@ -68,6 +68,14 @@ pub struct TerminalOutputEvent {
     pub data: String,
 }
 
+/// Already-sent AI input, observed by renderers for command and asset tracking.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInputEvent {
+    pub session_id: String,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalStatusEvent {

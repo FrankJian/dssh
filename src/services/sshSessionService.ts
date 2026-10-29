@@ -26,6 +26,11 @@ export interface TerminalOutputEvent {
   data: string;
 }
 
+export interface TerminalInputEvent {
+  sessionId: string;
+  data: string;
+}
+
 export interface TerminalStatusEvent {
   sessionId: string;
   status: SessionStatus;
@@ -171,6 +176,11 @@ export function onSshTransportStatus(handler: (event: SshTransportStatusEvent) =
 
 export function onTerminalOutput(handler: (event: TerminalOutputEvent) => void) {
   return listen<TerminalOutputEvent>("terminal-output", (event) => handler(event.payload));
+}
+
+/** Observe input already sent by Rust; never send it a second time. */
+export function onTerminalInputObserved(handler: (event: TerminalInputEvent) => void) {
+  return listen<TerminalInputEvent>("terminal-input-observed", (event) => handler(event.payload));
 }
 
 export function onTerminalStatus(handler: (event: TerminalStatusEvent) => void) {
