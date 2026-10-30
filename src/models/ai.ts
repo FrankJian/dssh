@@ -56,6 +56,7 @@ export interface AiHistoryMessage {
 
 export interface AiSendMessageRequest {
   runId: string;
+  conversationId: string;
   providerId: string;
   model: string;
   reasoningLevel?: string | null;
@@ -83,12 +84,6 @@ export type AiEvent =
       toolName: string;
       result: string;
       isError: boolean;
-    }
-  | {
-      kind: "openSshSession";
-      runId: string;
-      callId: string;
-      profileId: string;
     }
   | {
       kind: "appAction";

@@ -102,8 +102,8 @@ const windowsPtyOptions = isWindows ? ({ backend: "conpty" } as const) : undefin
  */
 const FOCUS_REPORTS = new Set(["\x1b[I", "\x1b[O"]);
 // Keep in sync with --terminal-completion-row-height in global.css.
-const COMPLETION_ROW_HEIGHT = 24;
-const COMPLETION_CHROME_WIDTH = 26; // Padding, borders and vertical scrollbar allowance.
+const COMPLETION_ROW_HEIGHT = 28;
+const COMPLETION_CHROME_WIDTH = 80; // Row padding, Tab hint and scrollbar allowance.
 
 interface RegistryEntry {
   handle: TerminalHandle;
@@ -325,10 +325,10 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   function measureSuggestionWidth() {
     const context = document.createElement("canvas").getContext("2d");
     if (!context) {
-      return Math.max(...suggestions.map((command) => command.length * 8)) + COMPLETION_CHROME_WIDTH;
+      return Math.max(240, Math.max(...suggestions.map((command) => command.length * 8)) + COMPLETION_CHROME_WIDTH);
     }
     context.font = window.getComputedStyle(suggestionMenu).font;
-    return Math.ceil(Math.max(...suggestions.map((command) => context.measureText(command).width)) + COMPLETION_CHROME_WIDTH);
+    return Math.max(240, Math.ceil(Math.max(...suggestions.map((command) => context.measureText(command).width)) + COMPLETION_CHROME_WIDTH));
   }
 
   function positionSuggestions() {
@@ -415,7 +415,17 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       button.setAttribute("aria-selected", String(index === selectedSuggestion));
       button.setAttribute("aria-posinset", String(index + 1));
       button.setAttribute("aria-setsize", String(suggestions.length));
-      button.textContent = command;
+      const text = document.createElement("span");
+      text.className = "terminal-completion__command";
+      const match = document.createElement("span");
+      match.className = "terminal-completion__match";
+      match.textContent = command.slice(0, commandInput.line.length);
+      text.append(match, document.createTextNode(command.slice(commandInput.line.length)));
+      const hint = document.createElement("span");
+      hint.className = "terminal-completion__key";
+      hint.setAttribute("aria-hidden", "true");
+      hint.textContent = "Tab";
+      button.append(text, hint);
       button.title = command;
       button.addEventListener("pointerdown", (event) => event.preventDefault());
       button.addEventListener("click", () => acceptSuggestion(index));

@@ -2,13 +2,15 @@ import { useEffect } from "react";
 import { Icon } from "../ui/Icon";
 import { AiSettingsSection } from "./AiSettingsSection";
 import type { AiConfig } from "./useAiConfig";
+import type { AssistantDockControls } from "../app/useAssistantDock";
 
 interface AiConfigModalProps {
   aiConfig: AiConfig;
+  assistantDock?: AssistantDockControls;
   onClose: () => void;
 }
 
-export function AiConfigModal({ aiConfig, onClose }: AiConfigModalProps) {
+export function AiConfigModal({ aiConfig, assistantDock, onClose }: AiConfigModalProps) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -29,7 +31,7 @@ export function AiConfigModal({ aiConfig, onClose }: AiConfigModalProps) {
           </button>
         </header>
         <div className="ai-config-window__body">
-          <AiSettingsSection aiConfig={aiConfig} />
+          <AiSettingsSection aiConfig={aiConfig} assistantDock={assistantDock} />
         </div>
       </section>
     </div>

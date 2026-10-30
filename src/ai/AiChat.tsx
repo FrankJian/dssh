@@ -8,11 +8,18 @@ import { Markdown } from "./Markdown";
 import type { ChatItem } from "./useAiChat";
 import type { AiChat as AiChatController } from "./useAiChat";
 import type { AiConfig } from "./useAiConfig";
+import type { TerminalSession } from "../models";
+import { AiBackgroundSessions } from "./AiBackgroundSessions";
+import type { AssistantDockPosition } from "../app/assistantDock";
+import { AiDockMenu } from "./AiDockMenu";
 
 interface AiChatProps {
   config: AiConfig;
   chat: AiChatController;
   onOpenConfig: () => void;
+  onTakeOverSession?: (session: TerminalSession) => Promise<void>;
+  dockPosition?: AssistantDockPosition;
+  onDockPositionChange?: (position: AssistantDockPosition) => void;
   /** Closes the containing right dock when the assistant is shown as a panel. */
   onClose?: () => void;
   /** "panel" = compact sidebar; "window" = wide standalone window. */
@@ -26,6 +33,9 @@ export function AiChat({
   config,
   chat,
   onOpenConfig,
+  onTakeOverSession,
+  dockPosition = "right",
+  onDockPositionChange,
   onClose,
   layout = "window",
   locked = false,
@@ -69,7 +79,7 @@ export function AiChat({
   }
 
   function handleClear() {
-    if (window.confirm("确定要永久清空全部 AI 聊天记录吗？此操作无法恢复。")) {
+    if (window.confirm("确定要永久清空全部 AI 聊天记录，并关闭尚未接管的后台会话吗？后台任务可能中断，聊天记录无法恢复。")) {
       clear();
     }
   }
@@ -83,13 +93,14 @@ export function AiChat({
       : "请先配置模型后端";
 
   return (
-    <section className={`ai-chat ai-chat--${layout}`} aria-label="AI 对话">
+    <section className={`ai-chat ai-chat--${layout}${layout === "panel" ? ` ai-chat--${dockPosition}` : ""}`} aria-label="AI 对话">
       <header className="ai-chat__header">
         <div className="ai-chat__title">
           <Icon name="bot" height="16" width="16" />
           <span>AI 助手</span>
         </div>
         <div className="ai-chat__header-actions">
+          {onDockPositionChange ? <AiDockMenu position={dockPosition} onChange={onDockPositionChange} /> : null}
           <IconButton
             label="清空全部聊天记录"
             disabled={!isHistoryReady || isRunning || items.length === 0}
@@ -107,6 +118,8 @@ export function AiChat({
           ) : null}
         </div>
       </header>
+
+      <AiBackgroundSessions conversationId={chat.conversationId} onTakeOver={onTakeOverSession} />
 
       {currentServer && !locked ? (
         <div className="ai-chat__context" title={`当前终端：${currentServer.label}`}>
@@ -342,7 +355,7 @@ function ToolCardView({
                 {terminalInput
                   ? `是否允许向终端“${terminalInput.terminal}”（${terminalInput.sessionId}）输入以上内容并按回车？`
                   : sshConnection
-                  ? `是否允许打开 SSH 连接“${sshConnection.name}”（${sshConnection.username}@${sshConnection.host}:${sshConnection.port}）？`
+                  ? `是否允许在后台建立 SSH 连接“${sshConnection.name}”（${sshConnection.username}@${sshConnection.host}:${sshConnection.port}）？`
                   : "是否允许执行该命令？"}
               </span>
               <div className="ai-tool__approval-buttons">
@@ -445,7 +458,7 @@ function UserQuestionChoices({
 const TOOL_LABELS: Record<string, string> = {
   list_servers: "列出服务器",
   run_command: "执行命令",
-  open_ssh_session: "打开 SSH 连接",
+  open_ssh_session: "后台 SSH 连接",
   control_app: "应用快捷操作",
   ask_user_question: "需要你的选择",
   read_terminal: "读取终端输出",

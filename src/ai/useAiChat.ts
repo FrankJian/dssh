@@ -5,6 +5,7 @@ import {
   approveAiTool,
   cancelAiRun,
   clearAiChatHistory,
+  closeAiConversation,
   loadAiChatHistory,
   onAiEvent,
   saveAiChatHistory,
@@ -35,6 +36,7 @@ interface SendArgs {
 }
 
 export interface AiChat {
+  conversationId: string;
   items: ChatItem[];
   isHistoryReady: boolean;
   isRunning: boolean;
@@ -42,19 +44,17 @@ export interface AiChat {
   approve: (callId: string, approved: boolean) => void;
   answerQuestion: (callId: string, optionIds: string[]) => void;
   completeAppAction: (callId: string, result: string, isError: boolean) => void;
-  completeSshSessionOpen: (callId: string, result: string, isError: boolean) => void;
   cancel: () => void;
   clear: () => void;
 }
 
 export function useAiChat(): AiChat {
+  const conversationIdRef = useRef(crypto.randomUUID());
   const [items, setItems] = useState<ChatItem[]>([]);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const runIdRef = useRef<string | null>(null);
   const seqRef = useRef(0);
-  const pendingSshSessionCallsRef = useRef(new Set<string>());
-  const sshSessionOutcomesRef = useRef(new Map<string, { result: string; isError: boolean }>());
   const pendingAppActionCallsRef = useRef(new Set<string>());
   const appActionOutcomesRef = useRef(new Map<string, { result: string; isError: boolean }>());
 
@@ -124,24 +124,6 @@ export function useAiChat(): AiChat {
           break;
         case "toolResult":
           if (
-            event.toolName === "open_ssh_session" &&
-            pendingSshSessionCallsRef.current.has(event.callId)
-          ) {
-            const outcome = sshSessionOutcomesRef.current.get(event.callId);
-            if (outcome) {
-              pendingSshSessionCallsRef.current.delete(event.callId);
-              sshSessionOutcomesRef.current.delete(event.callId);
-              setItems((prev) =>
-                prev.map((item) =>
-                  item.type === "tool" && item.callId === event.callId
-                    ? { ...item, status: outcome.isError ? "error" : "done", result: outcome.result }
-                    : item,
-                ),
-              );
-            }
-            break;
-          }
-          if (
             event.toolName === "control_app" &&
             pendingAppActionCallsRef.current.has(event.callId)
           ) {
@@ -167,16 +149,6 @@ export function useAiChat(): AiChat {
                     status: event.isError ? "error" : "done",
                     result: event.result,
                   }
-                : item,
-            ),
-          );
-          break;
-        case "openSshSession":
-          pendingSshSessionCallsRef.current.add(event.callId);
-          setItems((prev) =>
-            prev.map((item) =>
-              item.type === "tool" && item.callId === event.callId
-                ? { ...item, status: "running", result: "正在打开 SSH 终端…" }
                 : item,
             ),
           );
@@ -241,6 +213,7 @@ export function useAiChat(): AiChat {
       try {
         await sendAiMessage({
           runId,
+          conversationId: conversationIdRef.current,
           providerId: provider.id,
           model: provider.model,
           reasoningLevel: provider.models.find((model) => model.id === provider.model)?.reasoningEffort ?? null,
@@ -307,20 +280,6 @@ export function useAiChat(): AiChat {
     });
   }, []);
 
-  const completeSshSessionOpen = useCallback(
-    (callId: string, result: string, isError: boolean) => {
-      sshSessionOutcomesRef.current.set(callId, { result, isError });
-      setItems((prev) =>
-        prev.map((item) =>
-          item.type === "tool" && item.callId === callId
-            ? { ...item, status: isError ? "error" : "done", result }
-            : item,
-        ),
-      );
-    },
-    [],
-  );
-
   const completeAppAction = useCallback(
     (callId: string, result: string, isError: boolean) => {
       appActionOutcomesRef.current.set(callId, { result, isError });
@@ -349,13 +308,19 @@ export function useAiChat(): AiChat {
     if (isRunning) {
       return;
     }
+    const oldConversation = conversationIdRef.current;
+    conversationIdRef.current = crypto.randomUUID();
     setItems([]);
+    void closeAiConversation(oldConversation).catch((error) => {
+      setItems((prev) => [...prev, { id: nextId("error"), type: "error", text: error instanceof Error ? error.message : "后台会话清理失败，将在空闲后自动回收。" }]);
+    });
     void clearAiChatHistory().catch((error) => {
       console.error("Failed to clear AI chat history.", error);
     });
-  }, [isRunning]);
+  }, [isRunning, nextId]);
 
   return {
+    conversationId: conversationIdRef.current,
     items,
     isHistoryReady,
     isRunning,
@@ -363,7 +328,6 @@ export function useAiChat(): AiChat {
     approve,
     answerQuestion,
     completeAppAction,
-    completeSshSessionOpen,
     cancel,
     clear,
   };

@@ -28,9 +28,25 @@ test("completion hides when not even one whole row fits", () => {
   assert.equal(placeCompletionMenu({ left: 0, top: 0, right: 100, bottom: 50 }, 10, 15, 35, 100, 10, 24), null);
 });
 
-test("five matching commands remain fully visible with a horizontal scrollbar", () => {
+test("horizontal scrollbar space is reserved when reducing rows below the input", () => {
   const popup = placeCompletionMenu({ left: 0, top: 0, right: 300, bottom: 400 }, 10, 250, 274, 700, 5, 24, 8);
-  assert.equal(popup.height, 134);
-  assert.equal((popup.height - 6 - 8) / 24, 5);
+  assert.equal(popup.top, 278);
+  assert.equal(popup.height, 110);
+  assert.equal((popup.height - 6 - 8) / 24, 4);
   assert.ok(popup.left + popup.width <= 300);
+});
+
+test("completion prefers below even when all six rows fit above as well", () => {
+  const popup = placeCompletionMenu({ left: 0, top: 0, right: 800, bottom: 600 }, 150, 250, 278, 300, 12, 28);
+  assert.deepEqual(popup, { left: 150, top: 282, width: 300, height: 174 });
+});
+
+test("one complete row below is preferred over six rows above", () => {
+  const popup = placeCompletionMenu({ left: 0, top: 0, right: 800, bottom: 400 }, 150, 330, 358, 300, 12, 28);
+  assert.deepEqual(popup, { left: 150, top: 362, width: 300, height: 34 });
+});
+
+test("completion falls back above only when a complete row cannot fit below", () => {
+  const popup = placeCompletionMenu({ left: 0, top: 0, right: 800, bottom: 400 }, 150, 340, 368, 300, 12, 28);
+  assert.deepEqual(popup, { left: 150, top: 162, width: 300, height: 174 });
 });

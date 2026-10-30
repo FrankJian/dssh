@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "test:ai-config": "node --experimental-strip-types --test src/ai/aiConfig.test.mjs src/ai/aiSettingsValidation.test.mjs",
     "test:shortcuts": "node --experimental-strip-types --test src/app/shortcuts.test.mjs",
+    "test:assistant-dock": "node --experimental-strip-types --test src/app/assistantDock.test.mjs",
     "test:interactive-input": "node --experimental-strip-types --test src/terminal/interactiveInput.test.mjs",
     "test:terminal-themes": "node --experimental-strip-types --test src/terminal/themes/terminalThemes.test.mjs",
     "preview": "vite preview",

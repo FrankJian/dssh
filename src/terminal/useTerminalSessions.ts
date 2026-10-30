@@ -398,6 +398,16 @@ export function useTerminalSessions() {
     return session;
   }, [withLatestStatus]);
 
+  const attachSession = useCallback(async (session: TerminalSession) => {
+    const output = await readSshSessionOutput(session.id).catch(() => "");
+    buffersRef.current.set(session.id, createBacklog(output));
+    const address = targetTrackerForSession(session.id).observeOutput(output);
+    if (address !== undefined) setTargetAddresses((current) => ({ ...current, [session.id]: address }));
+    updateCommandActivity(session.id, trackerForSession(session.id).restoreFromOutput(output));
+    setSessions((previous) => previous.some((item) => item.id === session.id) ? previous : [...previous, withLatestStatus(session)]);
+    setActiveSessionId(session.id);
+  }, [targetTrackerForSession, trackerForSession, updateCommandActivity, withLatestStatus]);
+
   const reconnectSession = useCallback(
     async (sessionId: string) => {
       if (manualReconnectsRef.current.has(sessionId)) {
@@ -567,6 +577,7 @@ export function useTerminalSessions() {
     setActiveSessionId,
     startLocalSession,
     startSession,
+    attachSession,
     subscribeOutput,
     writeToActiveSession,
     writeToSession,

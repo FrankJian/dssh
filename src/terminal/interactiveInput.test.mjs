@@ -18,3 +18,13 @@ test('observed AI input marks a remote command running until its prompt returns'
   assert.equal(activity.observeInput('sleep 10\r'), 'running');
   assert.equal(activity.observeOutput('sleep 10\r\n[deploy@app ~]$ '), 'idle');
 });
+
+test('taking over a background PTY restores activity from its latest prompt', () => {
+  const idle = new TerminalCommandActivityTracker();
+  assert.equal(idle.restoreFromOutput('Opt> 1\r\nConnected\r\n[deploy@app ~]$ '), 'idle');
+  const busy = new TerminalCommandActivityTracker();
+  assert.equal(busy.restoreFromOutput('[deploy@app ~]$ sleep 10\r\nWorking...'), 'running');
+  assert.equal(busy.observeOutput('\r\n[deploy@app ~]$ '), 'idle');
+  const unknown = new TerminalCommandActivityTracker();
+  assert.equal(unknown.restoreFromOutput(''), 'running'); // Unknown state keeps the close confirmation.
+});

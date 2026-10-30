@@ -5,6 +5,23 @@ import type {
   AiSendMessageRequest,
 } from "../models/ai";
 import { invokeCommand } from "./tauri";
+import type { TerminalSession } from "../models";
+
+export function listAiBackgroundSessions(conversationId: string) {
+  return invokeCommand<TerminalSession[]>("ai_background_sessions", { conversationId });
+}
+
+export function takeOverAiSession(conversationId: string, sessionId: string) {
+  return invokeCommand<TerminalSession>("ai_take_over_session", { conversationId, sessionId });
+}
+
+export function closeAiBackgroundSession(conversationId: string, sessionId: string) {
+  return invokeCommand<void>("ai_close_background_session", { conversationId, sessionId });
+}
+
+export function closeAiConversation(conversationId: string) {
+  return invokeCommand<void>("ai_close_conversation", { conversationId });
+}
 
 export function listAiModels(providerId: string) {
   return invokeCommand<string[]>("ai_list_models", { request: { providerId } });

@@ -12,7 +12,7 @@ export interface CompletionPlacement {
   height: number;
 }
 
-/** Keep every edge inside the visible terminal rectangle and the app viewport. */
+/** Prefer below the input, reducing rows before falling back above it. */
 export function placeCompletionMenu(
   bounds: CompletionBounds,
   anchorX: number,
@@ -30,10 +30,11 @@ export function placeCompletionMenu(
 
   const width = Math.min(desiredWidth, availableWidth);
   const idealRows = Math.min(itemCount, 6);
-  const idealHeight = idealRows * rowHeight + chrome;
   const aboveSpace = rowTop - bounds.top - gap;
   const belowSpace = bounds.bottom - rowBottom - gap;
-  const above = aboveSpace >= idealHeight || (belowSpace < idealHeight && aboveSpace >= belowSpace);
+  // Preserve previous output above the prompt whenever at least one complete
+  // suggestion fits below it. Remaining matches stay available by scrolling.
+  const above = belowSpace < rowHeight + chrome;
   const availableHeight = above ? aboveSpace : belowSpace;
   const rows = Math.min(idealRows, Math.floor((availableHeight - chrome) / rowHeight));
   if (rows < 1) return null;

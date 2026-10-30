@@ -8,8 +8,10 @@ import { Icon } from "../ui/Icon";
 import { API_PROTOCOLS, createEmptyProvider, ENDPOINT_PRESETS, inferPresetId } from "./aiConfig";
 import type { AiConfig } from "./useAiConfig";
 import { settingsActionError } from "./aiSettingsValidation";
+import type { AssistantDockControls } from "../app/useAssistantDock";
+import { AiDockSettings } from "./AiDockSettings";
 
-export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
+export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiConfig; assistantDock?: AssistantDockControls }) {
   const { providers, activeProviderId, options, setOptions } = aiConfig;
   const [draft, setDraft] = useState<AiProvider | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
@@ -89,6 +91,7 @@ export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
 
   return (
     <section className="settings-section ai-settings" aria-label="AI 模型服务">
+      {assistantDock ? <AiDockSettings dock={assistantDock} /> : null}
       <div className="settings-section__head">
         <h3>模型服务</h3>
         <p>预置厂商只需填写 API Key；自定义 API 可配置地址与协议。在对话输入区可切换模型。</p>

@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AiSettingsSection } from "../ai/AiSettingsSection";
+import type { AssistantDockControls } from "../app/useAssistantDock";
 import type { AiConfig } from "../ai/useAiConfig";
 import { AboutSection } from "./AboutSection";
 import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
@@ -73,6 +74,7 @@ interface SettingsDialogProps {
   commandHistoryLimit: number;
   onCommandHistoryLimitChange: (value: number) => void;
   aiConfig: AiConfig;
+  assistantDock?: AssistantDockControls;
   appLockStatus: AppLockStatus | null;
   onAppLockSettingsChange: (request: UpdateAppLockSettingsRequest) => Promise<void>;
   initialCategory?: SettingsCategory;
@@ -129,7 +131,7 @@ export const SETTINGS_CATEGORIES: Array<{
   { icon: "command", id: "shortcuts", label: "快捷键", keywords: "shortcut keybinding hotkey 按键 组合键 自定义 重置" },
   { icon: "shield", id: "security", label: "安全与锁屏", keywords: "security lock 锁定 密码 自动锁屏 超时" },
   { icon: "bucket", id: "s3", label: "对象存储", keywords: "s3 object storage 上传 下载 传输并发" },
-  { icon: "bot", id: "ai", label: "AI", keywords: "ai api 模型 助手" },
+  { icon: "bot", id: "ai", label: "AI", keywords: "ai api 模型 助手 停靠 位置 左侧 右侧 底部 布局" },
   { icon: "file", id: "config", label: "配置文件", keywords: "config profile import export 导入 加密导出 备份" },
   { icon: "info", id: "about", label: "关于", keywords: "about version 版本 更新" },
 ];
@@ -196,6 +198,7 @@ export function SettingsDialog({
   commandHistoryLimit,
   onCommandHistoryLimitChange,
   aiConfig,
+  assistantDock,
   appLockStatus,
   copyOnSelect,
   editorSettings,
@@ -674,7 +677,7 @@ export function SettingsDialog({
 
                 <section className="terminal-settings__group" aria-label="命令补全设置">
                   <h4>命令补全</h4>
-                  <label className="checkbox-field" title="回车后自动记录命令，所有终端共享。历史仅保存在本机，敏感信息和多行输入不记录。">
+                  <label className="checkbox-field" title="正常回显的命令按回车后记录，所有终端共享。历史仅保存在本机，密码提示、隐藏或掩码输入、敏感信息和多行输入不记录。">
                     <input
                       checked={commandCompletion}
                       onChange={(event) => {
@@ -916,7 +919,7 @@ export function SettingsDialog({
               </section>
             ) : null}
 
-            {aiNavigationEnabled && category === "ai" ? <AiSettingsSection aiConfig={aiConfig} /> : null}
+            {aiNavigationEnabled && category === "ai" ? <AiSettingsSection aiConfig={aiConfig} assistantDock={assistantDock} /> : null}
 
             {category === "config" ? (
               <section className="settings-section" aria-label="配置文件">

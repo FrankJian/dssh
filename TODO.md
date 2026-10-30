@@ -64,6 +64,10 @@
 
 ### 智能助手多协议与模型配置
 
+- AI 助手三方向停靠及自适应布局已实现，隔离浏览器交互与尺寸回归通过；真实 Tauri、分屏 / SFTP、多显示器和 macOS / Windows 原生拖拽验收待完成，见 [停靠布局](features/assistant-docking.md)。
+
+- AI 后台 PTY 已实现：不打开标签 / 切换页面，支持跨轮复用、归属隔离、真实状态、接管、空闲回收与对话清理。模拟队列及输入并发回归通过；真实 JumpServer、认证 / 取消 / 回收、接管及 macOS / Windows 原生界面验收待完成，全屏 TUI 与事件驱动增量读取后续完善，见 [实现说明](features/assistant-background-sessions.md)。
+
 - 已补充 JumpServer 交互终端输入：列出活动终端、确认后向原 PTY 输入一行并回车、等待及读取后续输出；输入确认绑定终端输出与输入版本，认证提示交回用户。模拟 IP → 资产编号 → 账号编号、状态变化拦截和前端目标 / 任务跟踪回归通过；真实 JumpServer/KoKo 版本与全屏 TUI 验收待完成。见 [交互说明](features/assistant-jumpserver.md)。
 
 - 已移除 GitHub Copilot 集成；模型服务支持厂商预设、自定义基础或完整 API 地址、三种显式协议（OpenAI Chat Completions / Responses、Anthropic Messages），以及输入区跨厂商搜索切换。首个模型填好后可直接保存或测试，多个模型仍以独立条目添加；每项包含 ID、显示名称与上下文窗口（新模型默认 256K）及最大输出（默认 32K tokens），支持编辑、移除和设为默认，模型发现只提供候选。预置厂商仅输入 Key、后端固定解析官方路由，自定义 API 才显示地址 / 协议；推理档位支持增删与自定义 API 值，在输入区切换。

@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { AiChat } from "../ai/AiChat";
 import { AiConfigModal } from "../ai/AiConfigModal";
+import { useAssistantDock } from "./useAssistantDock";
 import { useAiChat } from "../ai/useAiChat";
 import { useAiConfig } from "../ai/useAiConfig";
 import { onAiEvent } from "../services/aiService";
@@ -115,7 +116,7 @@ interface ForwardTarget {
 const SIDEBAR_COLLAPSED_KEY = "dssh.sidebar.collapsed";
 const RIGHT_PANEL_KEY = "dssh.rightPanel";
 const NAVIGATION_ICONS_KEY = "dssh.navigation.icons";
-const RIGHT_PANEL_WIDTH_KEY = "dssh.ai.panelWidth";
+const RIGHT_PANEL_WIDTH_KEY = "dssh.hosttools.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
 const RIGHT_PANEL_WIDTH_DEFAULT = 360;
@@ -255,6 +256,7 @@ function MainApp() {
   }, []);
   const aiConfig = useAiConfig();
   const aiChat = useAiChat();
+  const assistantDock = useAssistantDock();
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() =>
     loadPanelWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_PANEL_WIDTH_DEFAULT),
   );
@@ -374,6 +376,7 @@ function MainApp() {
     setActiveSessionId,
     startLocalSession,
     startSession,
+    attachSession,
     subscribeOutput,
     writeToActiveSession,
     writeToSession,
@@ -621,35 +624,6 @@ function MainApp() {
 
   useEffect(() => {
     const unlistenPromise = onAiEvent((event) => {
-      if (event.kind === "openSshSession") {
-        const profile = profiles.find((item) => item.id === event.profileId);
-        if (!profile) {
-          aiChat.completeSshSessionOpen(
-            event.callId,
-            "无法打开 SSH 连接：保存的服务器配置已不存在。",
-            true,
-          );
-          return;
-        }
-        void startSession(profile)
-          .then(() => {
-            recordUse(profile.id);
-            showTerminalSurface();
-            aiChat.completeSshSessionOpen(
-              event.callId,
-              `已打开 SSH 终端：${profile.username}@${profile.host}:${profile.port}。`,
-              false,
-            );
-          })
-          .catch((error) => {
-            aiChat.completeSshSessionOpen(
-              event.callId,
-              `无法打开 SSH 连接：${error instanceof Error ? error.message : "连接失败。"}`,
-              true,
-            );
-          });
-        return;
-      }
       if (event.kind !== "appAction") {
         return;
       }
@@ -799,7 +773,6 @@ function MainApp() {
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [
-    aiChat.completeSshSessionOpen,
     aiChat.completeAppAction,
     activeSession,
     activeSessionProfile,
@@ -1604,8 +1577,11 @@ function MainApp() {
         config={aiConfig}
         currentServer={aiCurrentServer}
         layout="panel"
+        dockPosition={assistantDock.position}
+        onDockPositionChange={assistantDock.setPosition}
         onClose={() => setRightPanel(null)}
         onOpenConfig={() => setIsAiConfigOpen(true)}
+        onTakeOverSession={async (session) => { await attachSession(session); showTerminalSurface(); }}
       />
     ) : rightPanel === "hosttools" ? (
       <HostToolsPanel
@@ -1790,6 +1766,11 @@ function MainApp() {
       { id: "act:new-s3", label: "新建 S3 配置", hint: "对象存储", icon: "bucket", keywords: "object storage profile", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); setS3EditorState({ mode: "create", profile: null }); } },
       { id: "act:terminal-surface", label: "显示终端", hint: "导航", icon: "terminalTool", keywords: "terminal shell", run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); } },
       { id: "act:assistant", label: rightPanel === "assistant" ? "关闭 AI 助手" : "打开 AI 助手", hint: "面板", icon: "bot", keywords: "ai assistant", run: () => toggleRightPanel("assistant") },
+      ...(["left", "right", "bottom"] as const).map((position) => ({
+        id: `act:assistant-dock-${position}`, label: `AI 助手停靠在${position === "left" ? "左侧" : position === "right" ? "右侧" : "底部"}`,
+        hint: "布局", icon: "bot" as const, keywords: `ai assistant dock ${position} 停靠 位置`,
+        run: () => { assistantDock.setPosition(position); setRightPanel("assistant"); },
+      })),
       { id: "act:ai-config", label: "配置 AI 助手", hint: "设置", icon: "bot", keywords: "ai api model", run: () => setIsAiConfigOpen(true) },
       { id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏" : "折叠侧栏", hint: "布局", icon: "panelLeft", keywords: "sidebar", run: toggleSidebar },
       { id: "act:zen", label: zenMode ? "退出禅模式" : "进入禅模式", hint: "保留分屏", icon: "panelLeft", keywords: "zen focus 隐藏界面", run: () => setZenMode((value) => !value) },
@@ -2100,12 +2081,27 @@ function MainApp() {
         sidebarWidth={sidebarWidth}
         onSidebarWidthChange={setSidebarWidth}
         rightPanel={zenMode || terminalFullscreenPaneId ? null : rightPanelContent}
-        rightPanelWidth={rightPanelWidth}
-        onRightPanelWidthChange={setRightPanelWidth}
+        panelPosition={rightPanel === "assistant" ? assistantDock.position : "right"}
+        rightPanelWidth={rightPanel === "assistant" ? assistantDock.width : rightPanelWidth}
+        onRightPanelWidthChange={rightPanel === "assistant" ? assistantDock.setWidth : setRightPanelWidth}
+        panelHeight={assistantDock.height}
+        onPanelHeightChange={assistantDock.setHeight}
         titleBar={zenMode || terminalFullscreenPaneId ? null : (
           <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
             {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
             <div className="titlebar__drag" data-tauri-drag-region />
+            {hasSessionBar ? (
+              <button
+                aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+                aria-pressed={sessionBarHidden}
+                className={`titlebar__action${sessionBarHidden ? " is-active" : ""}`}
+                onClick={toggleSessionBar}
+                title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
+                type="button"
+              >
+                <Icon name="panelTop" height="16" width="16" />
+              </button>
+            ) : null}
             {appLock.status?.settings.enabled ? (
               <button
                 aria-label="锁定应用"
@@ -2187,18 +2183,6 @@ function MainApp() {
                   >
                     <Icon name="splitV" height="15" width="15" />
                   </button>
-                  {hasSessionBar ? (
-                    <button
-                      aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-                      aria-pressed={sessionBarHidden}
-                      className={`tab-action${sessionBarHidden ? " is-active" : ""}`}
-                      onClick={toggleSessionBar}
-                      title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-                      type="button"
-                    >
-                      <Icon name="panelTop" height="15" width="15" />
-                    </button>
-                  ) : null}
                   <button
                     aria-label={terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}
                     className="tab-action"
@@ -2263,6 +2247,7 @@ function MainApp() {
           commandHistoryLimit={commandHistoryLimit}
           onCommandHistoryLimitChange={setCommandHistoryLimit}
           aiConfig={aiConfig}
+          assistantDock={assistantDock}
           appLockStatus={appLock.status}
           editorSettings={editorSettings}
           initialCategory={settingsCategory}
@@ -2310,7 +2295,7 @@ function MainApp() {
         />
       ) : null}
       {isAiConfigOpen ? (
-        <AiConfigModal aiConfig={aiConfig} onClose={() => setIsAiConfigOpen(false)} />
+        <AiConfigModal aiConfig={aiConfig} assistantDock={assistantDock} onClose={() => setIsAiConfigOpen(false)} />
       ) : null}
       {startupUpdate ? (
         <UpdateNotification update={startupUpdate} onDismiss={dismissStartupUpdate} />

@@ -33,6 +33,14 @@ export class TerminalCommandActivityTracker {
   private ignoreNextOscCommandStart = false;
   private osc = "";
 
+  /** A newly attached PTY may already be running a command whose input was hidden. */
+  restoreFromOutput(data: string): CommandActivity {
+    this.observeOutput(data);
+    this.activity = looksLikeShellPrompt(this.currentLine) ? "idle" : "running";
+    this.sawLineBreakSinceCommand = true;
+    return this.activity;
+  }
+
   observeInput(data: string): CommandActivity | null {
     if (data.includes("\x03")) {
       this.inputLine = "";
@@ -171,7 +179,7 @@ function looksLikeShellPrompt(line: string): boolean {
   const trimmed = line.trimEnd();
   if (trimmed.length === 0 || trimmed.length > MAX_LINE_LENGTH) return false;
 
-  return /[\w./~:@-][#$]$/.test(trimmed)
+  return /[\w./~:@\]-][#$]$/.test(trimmed)
     || /[%❯➜]$/.test(trimmed)
     || /^PS\s+.+>$/.test(trimmed);
 }

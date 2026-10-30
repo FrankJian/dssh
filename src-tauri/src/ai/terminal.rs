@@ -13,6 +13,8 @@ pub struct PreparedTerminalInput {
     input: String,
     snapshot: TerminalInputSnapshot,
     wait_ms: u64,
+    conversation: String,
+    background: bool,
 }
 
 impl PreparedTerminalInput {
@@ -24,9 +26,13 @@ impl PreparedTerminalInput {
         let data = format!("{}\r", self.input);
         if let Err(error) = state.sessions.write_approved_input(
             &self.session_id,
+            &self.conversation,
             &self.snapshot,
             data.clone(),
             || {
+                if self.background {
+                    return;
+                }
                 let _ = app.emit(
                     "terminal-input-observed",
                     TerminalInputEvent {
@@ -66,6 +72,7 @@ pub fn prepare_input(
     state: &AppState,
     args: &Value,
     current: Option<&CurrentServer>,
+    conversation: &str,
 ) -> Result<PreparedTerminalInput, String> {
     let input = validate_input(
         args.get("input")
@@ -78,14 +85,18 @@ pub fn prepare_input(
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .or_else(|| current.and_then(|c| c.session_id.as_deref()))
-        .ok_or("当前没有可输入的终端，请先打开终端，并通过 list_terminal_sessions 获取会话 ID。")?;
+        .ok_or("尚未指定终端，请用 open_ssh_session 建立后台会话，或通过 list_terminal_sessions 获取会话 ID。")?;
     let session = state
         .sessions
-        .list_sessions()
+        .list_ai_sessions(conversation)
         .map_err(|_| "无法读取活动终端。")?
         .into_iter()
         .find(|s| s.id == session_id)
         .ok_or("指定终端不存在或已关闭。")?;
+    state
+        .sessions
+        .check_ai_access(session_id, conversation, true)
+        .map_err(|error| error.message)?;
     let snapshot = state
         .sessions
         .read_input_snapshot(session_id)
@@ -102,6 +113,8 @@ pub fn prepare_input(
         input,
         snapshot,
         wait_ms,
+        conversation: conversation.into(),
+        background: state.sessions.is_background(session_id),
     })
 }
 

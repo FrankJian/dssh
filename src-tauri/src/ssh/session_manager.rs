@@ -18,7 +18,7 @@ use russh::{
     client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse},
     keys::{PrivateKeyWithHashAlg, decode_secret_key},
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -112,6 +112,103 @@ struct SessionHandle {
     /// to answer AI `read_terminal` requests about the visible session.
     output: Arc<Mutex<String>>,
     input_revision: u64,
+    status: SessionStatus,
+    background: Option<BackgroundOwner>,
+}
+
+#[derive(Debug, Clone)]
+struct BackgroundOwner {
+    conversation: String,
+    taken_over: bool,
+    closing: bool,
+    touched: Instant,
+}
+
+impl SessionHandle {
+    fn hidden(&self) -> bool {
+        self.background
+            .as_ref()
+            .is_some_and(|owner| !owner.taken_over)
+    }
+
+    fn visible_to_ai(&self, conversation: &str) -> bool {
+        !self.hidden()
+            || self
+                .background
+                .as_ref()
+                .is_some_and(|owner| owner.conversation == conversation)
+    }
+
+    fn begin_background_close(&mut self, conversation: &str) -> AppResult<()> {
+        let owner = self
+            .background
+            .as_mut()
+            .filter(|owner| owner.conversation == conversation && !owner.taken_over)
+            .ok_or_else(|| {
+                AppError::new("ai_session_owner", "不能关闭用户已接管或其他对话的会话。")
+            })?;
+        owner.closing = true;
+        self.status = SessionStatus::Disconnecting;
+        self.input_revision = self.input_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    fn begin_idle_close(&mut self) -> bool {
+        let Some(owner) = &self.background else {
+            return false;
+        };
+        if owner.taken_over || owner.touched.elapsed() < Duration::from_secs(15 * 60) {
+            return false;
+        }
+        let conversation = owner.conversation.clone();
+        self.begin_background_close(&conversation).is_ok()
+    }
+
+    fn descriptor(&self, id: &str) -> TerminalSession {
+        TerminalSession {
+            id: id.into(),
+            kind: self.kind.clone(),
+            profile_id: self.profile_id.clone(),
+            title: self.title.clone(),
+            status: self.status.clone(),
+        }
+    }
+
+    fn ai_access(&mut self, conversation: &str, write: bool) -> AppResult<()> {
+        if let Some(owner) = &mut self.background {
+            if owner.conversation != conversation {
+                return Err(AppError::new(
+                    "ai_session_owner",
+                    "不能操作其他对话的后台会话。",
+                ));
+            }
+            if owner.closing || (write && owner.taken_over) {
+                return Err(AppError::new(
+                    "ai_session_taken_over",
+                    "会话已被接管或正在关闭，AI 已停止输入；需要继续时请新建后台会话。",
+                ));
+            }
+            owner.touched = Instant::now();
+        }
+        Ok(())
+    }
+
+    fn take_over(&mut self, conversation: &str) -> AppResult<()> {
+        let owner = self
+            .background
+            .as_mut()
+            .filter(|b| b.conversation == conversation)
+            .ok_or_else(|| AppError::new("ai_session_owner", "后台会话不属于此对话。"))?;
+        if owner.closing {
+            return Err(AppError::new(
+                "ai_session_closing",
+                "后台会话正在关闭，无法接管。",
+            ));
+        }
+        owner.taken_over = true;
+        self.input_revision = self.input_revision.wrapping_add(1);
+        Ok(())
+    }
 }
 
 /// Binds an AI approval to both the output and user input observed before it.
@@ -275,13 +372,67 @@ impl SessionManager {
         profile: SshProfile,
         size: TerminalSize,
     ) -> AppResult<TerminalSession> {
+        self.start_owned_session(app_handle, profile, size, None)
+    }
+
+    pub fn start_background_session(
+        &self,
+        app: AppHandle,
+        profile: SshProfile,
+        conversation: &str,
+    ) -> AppResult<TerminalSession> {
+        self.start_owned_session(
+            app,
+            profile,
+            TerminalSize {
+                cols: 120,
+                rows: 40,
+            },
+            Some(conversation.to_string()),
+        )
+    }
+
+    fn start_owned_session(
+        &self,
+        app_handle: AppHandle,
+        profile: SshProfile,
+        size: TerminalSize,
+        conversation: Option<String>,
+    ) -> AppResult<TerminalSession> {
         let session_id = create_session_id();
         let profile_id = profile.id.clone();
         let title = profile.name.clone();
         let (tx, rx) = mpsc::channel(256);
         let (closed_tx, closed) = watch::channel(false);
         let output = Arc::new(Mutex::new(String::new()));
-        self.sessions.lock().map_err(lock_error)?.insert(
+        let mut registry = self.sessions.lock().map_err(lock_error)?;
+        if let Some(owner) = &conversation {
+            let hidden = registry.values().filter(|session| session.hidden());
+            if hidden.clone().count() >= 8
+                || hidden
+                    .filter(|session| {
+                        session
+                            .background
+                            .as_ref()
+                            .is_some_and(|b| &b.conversation == owner)
+                    })
+                    .count()
+                    >= 4
+            {
+                return Err(AppError::new(
+                    "ai_session_limit",
+                    "后台会话数量已达上限，请先关闭不再使用的会话。",
+                ));
+            }
+        }
+        let background = conversation.map(|conversation| BackgroundOwner {
+            conversation,
+            taken_over: false,
+            closing: false,
+            touched: Instant::now(),
+        });
+        let hidden = background.is_some();
+        registry.insert(
             session_id.clone(),
             SessionHandle {
                 kind: TerminalSessionKind::Ssh,
@@ -291,8 +442,39 @@ impl SessionManager {
                 closed,
                 output: output.clone(),
                 input_revision: 0,
+                status: SessionStatus::Connecting,
+                background,
             },
         );
+        drop(registry);
+
+        if hidden {
+            let manager = self.clone();
+            let id = session_id.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    let expired = {
+                        let Ok(mut sessions) = manager.sessions.lock() else {
+                            return;
+                        };
+                        let Some(session) = sessions.get_mut(&id) else {
+                            return;
+                        };
+                        let Some(owner) = &session.background else {
+                            return;
+                        };
+                        if owner.taken_over {
+                            return;
+                        }
+                        session.begin_idle_close()
+                    };
+                    if expired && manager.close_session(&id).await.is_ok() {
+                        return;
+                    }
+                }
+            });
+        }
 
         let sessions = self.sessions.clone();
         let pool = self.pool.clone();
@@ -360,6 +542,8 @@ impl SessionManager {
                 closed,
                 output: output.clone(),
                 input_revision: 0,
+                status: SessionStatus::Connecting,
+                background: None,
             },
         );
 
@@ -427,6 +611,7 @@ impl SessionManager {
     pub(crate) fn write_approved_input(
         &self,
         session_id: &str,
+        conversation: &str,
         snapshot: &TerminalInputSnapshot,
         data: String,
         on_queued: impl FnOnce(),
@@ -435,6 +620,7 @@ impl SessionManager {
         let handle = sessions
             .get_mut(session_id)
             .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        handle.ai_access(conversation, true)?;
         queue_approved_input(handle, snapshot, data, on_queued)
     }
 
@@ -516,14 +702,92 @@ impl SessionManager {
         let sessions = self.sessions.lock().map_err(lock_error)?;
         Ok(sessions
             .iter()
-            .map(|(id, handle)| TerminalSession {
-                id: id.clone(),
-                kind: handle.kind.clone(),
-                profile_id: handle.profile_id.clone(),
-                title: handle.title.clone(),
-                status: SessionStatus::Connected,
-            })
+            .filter(|(_, handle)| !handle.hidden())
+            .map(|(id, handle)| handle.descriptor(id))
             .collect())
+    }
+
+    pub fn is_background(&self, id: &str) -> bool {
+        self.sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| sessions.get(id).map(SessionHandle::hidden))
+            .unwrap_or(false)
+    }
+
+    /// Visible user terminals plus this conversation's private terminals.
+    pub fn list_ai_sessions(&self, conversation: &str) -> AppResult<Vec<TerminalSession>> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        Ok(sessions
+            .iter()
+            .filter(|(_, session)| session.visible_to_ai(conversation))
+            .map(|(id, session)| session.descriptor(id))
+            .collect())
+    }
+
+    pub fn background_sessions(&self, conversation: &str) -> AppResult<Vec<TerminalSession>> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        Ok(sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.hidden()
+                    && session
+                        .background
+                        .as_ref()
+                        .is_some_and(|b| b.conversation == conversation)
+            })
+            .map(|(id, session)| session.descriptor(id))
+            .collect())
+    }
+
+    pub fn check_ai_access(&self, id: &str, conversation: &str, write: bool) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let session = sessions.get_mut(id).ok_or_else(|| {
+            AppError::new("session_not_found", "终端会话不存在或已关闭，请重新连接。")
+        })?;
+        session.ai_access(conversation, write)
+    }
+
+    /// Ownership transition invalidates every input approval prepared before it.
+    pub fn take_over_background(&self, id: &str, conversation: &str) -> AppResult<TerminalSession> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| AppError::new("session_not_found", "后台会话已关闭。"))?;
+        session.take_over(conversation)?;
+        Ok(session.descriptor(id))
+    }
+
+    pub async fn close_background(&self, id: &str, conversation: &str) -> AppResult<()> {
+        {
+            let mut sessions = self.sessions.lock().map_err(lock_error)?;
+            let Some(session) = sessions.get_mut(id) else {
+                return Ok(());
+            };
+            session.begin_background_close(conversation)?;
+        }
+        self.close_session(id).await
+    }
+
+    pub async fn close_conversation(&self, conversation: &str) -> AppResult<()> {
+        let mut first_error = None;
+        for session in self.background_sessions(conversation)? {
+            if let Err(error) = self.close_background(&session.id, conversation).await {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    fn update_status(&self, id: &str, status: SessionStatus) -> bool {
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return false;
+        };
+        let Some(session) = sessions.get_mut(id) else {
+            return false;
+        };
+        session.status = status;
+        session.hidden()
     }
 
     /// Return the accumulated terminal output (including ANSI sequences) for a
@@ -591,6 +855,15 @@ async fn run_ssh_session(
                 return Ok(());
             }
             Ok(ConnOutcome::Dropped) => {
+                if is_background(app_handle.clone(), &session_id) {
+                    emit_status(
+                        &app_handle,
+                        &session_id,
+                        SessionStatus::Disconnected,
+                        Some("后台连接已断开；请重新连接并确认目标资产。".into()),
+                    );
+                    return Ok(());
+                }
                 // A live session dropped — start a fresh grace window.
                 grace_deadline = None;
                 backoff = RECONNECT_BACKOFF_BASE;
@@ -904,9 +1177,25 @@ async fn connect_and_run(
     output: &Arc<Mutex<String>>,
     pool: &SshConnectionPool,
 ) -> AppResult<ConnOutcome> {
-    let transport = pool
-        .acquire(profile.clone(), ChannelOwner::Terminal)
-        .await?;
+    let acquire = pool.acquire(profile.clone(), ChannelOwner::Terminal);
+    tokio::pin!(acquire);
+    let mut early_input = String::new();
+    let transport = loop {
+        tokio::select! {
+            result = &mut acquire => break result?,
+            command = rx.recv() => match command {
+                Some(SessionCommand::Resize(new_size)) => *size = new_size,
+                Some(SessionCommand::Input(data)) => {
+                    if early_input.len().saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
+                        return Err(AppError::new("session_input_limit", "连接期间输入过多，请等待连接完成。"));
+                    }
+                    early_input.push_str(&data);
+                }
+                Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => return Ok(ConnOutcome::Closed),
+                _ => {}
+            }
+        }
+    };
     let (channel, _channel_lease) = transport.open_session_channel().await?;
     channel
         .request_pty(
@@ -921,6 +1210,12 @@ async fn connect_and_run(
         .await
         .map_err(ssh_error)?;
     channel.request_shell(true).await.map_err(ssh_error)?;
+    if !early_input.is_empty() {
+        channel
+            .data(early_input.as_bytes())
+            .await
+            .map_err(ssh_error)?;
+    }
     emit_status(app_handle, session_id, SessionStatus::Connected, None);
     // The remote shell paints its own prompt on attach; the frontend's initial
     // fit sends a window-change (SIGWINCH) which triggers a repaint for shells
@@ -1588,6 +1883,12 @@ async fn connect_and_run(
                         let filtered = finish_filter.feed(&data);
                         if let Some(gate) = input_gate.as_mut() {
                             gate.observe_output(&filtered, &finish_filter);
+                        }
+                        if is_background(app_handle.clone(), session_id) {
+                            // No file selectors or protocol handshakes in an AI-only PTY.
+                            let text = decode_with_carry(&mut utf8_carry, &filtered);
+                            sink.push(&text);
+                            continue;
                         }
                         let download_probed = download_probe.feed(&filtered);
                         let probed = probe.feed(&download_probed.text);
@@ -3349,6 +3650,9 @@ fn push_session_output(output: &Arc<Mutex<String>>, text: &str) {
 }
 
 fn emit_output(app_handle: &AppHandle, session_id: &str, data: String) {
+    if is_background(app_handle.clone(), session_id) {
+        return;
+    }
     #[cfg(debug_assertions)]
     output_metrics::record(data.len());
     let _ = app_handle.emit(
@@ -3406,6 +3710,12 @@ fn emit_status(
     status: SessionStatus,
     message: Option<String>,
 ) {
+    if app_handle
+        .try_state::<crate::app::AppState>()
+        .is_some_and(|state| state.sessions.update_status(session_id, status.clone()))
+    {
+        return;
+    }
     let _ = app_handle.emit(
         TERMINAL_STATUS_EVENT,
         TerminalStatusEvent {
@@ -3414,6 +3724,11 @@ fn emit_status(
             message,
         },
     );
+}
+
+fn is_background(app: AppHandle, id: &str) -> bool {
+    app.try_state::<crate::app::AppState>()
+        .is_some_and(|state| state.sessions.is_background(id))
 }
 
 struct LocalShell {
@@ -3681,6 +3996,8 @@ mod tests {
                 closed,
                 output: Arc::new(Mutex::new("Welcome to JumpServer\nOpt> ".into())),
                 input_revision: 0,
+                status: crate::models::terminal::SessionStatus::Connected,
+                background: None,
             },
             rx,
             closed_tx,
@@ -3692,6 +4009,121 @@ mod tests {
             output: handle.output.lock().unwrap().clone(),
             input_revision: handle.input_revision,
         }
+    }
+
+    fn background_test_session() -> (
+        SessionHandle,
+        tokio::sync::mpsc::Receiver<SessionCommand>,
+        tokio::sync::watch::Sender<bool>,
+    ) {
+        let (mut handle, rx, closed) = interactive_test_session();
+        handle.background = Some(super::BackgroundOwner {
+            conversation: "chat-a".into(),
+            taken_over: false,
+            closing: false,
+            touched: std::time::Instant::now(),
+        });
+        (handle, rx, closed)
+    }
+
+    #[test]
+    fn background_session_is_private_and_reports_real_status() {
+        let (mut handle, _rx, _closed) = background_test_session();
+        assert!(handle.hidden());
+        assert!(handle.visible_to_ai("chat-a"));
+        assert!(!handle.visible_to_ai("chat-b"));
+        assert!(handle.ai_access("chat-b", false).is_err());
+        assert!(handle.ai_access("chat-b", true).is_err());
+        handle.status = crate::models::terminal::SessionStatus::Connecting;
+        assert!(matches!(
+            handle.descriptor("pty").status,
+            crate::models::terminal::SessionStatus::Connecting
+        ));
+    }
+
+    #[test]
+    fn background_pty_supports_multiple_turns_without_a_renderer() {
+        let (mut handle, mut rx, _closed) = background_test_session();
+        for (input, output) in [
+            ("10.20.30.40", "1 asset 10.20.30.40\nChoose> "),
+            ("1", "1 root\nAccount> "),
+            ("1", "root@asset:~# "),
+            ("pwd", "/root\nroot@asset:~# "),
+        ] {
+            handle.ai_access("chat-a", true).unwrap();
+            let snapshot = input_snapshot(&handle);
+            queue_approved_input(&mut handle, &snapshot, format!("{input}\r"), || {}).unwrap();
+            assert!(
+                matches!(rx.try_recv().unwrap(), SessionCommand::Input(data) if data == format!("{input}\r"))
+            );
+            *handle.output.lock().unwrap() = output.into();
+        }
+        assert!(handle.hidden());
+        assert!(handle.ai_access("chat-a", false).is_ok());
+        assert!(handle.output.lock().unwrap().contains("/root"));
+    }
+
+    #[test]
+    fn takeover_keeps_the_same_pty_and_invalidates_pending_and_future_ai_input() {
+        let (mut handle, mut rx, _closed) = background_test_session();
+        let snapshot = input_snapshot(&handle);
+        assert!(handle.take_over("chat-b").is_err());
+        handle.take_over("chat-a").unwrap();
+        assert!(!handle.hidden());
+        assert_eq!(handle.descriptor("original-pty").id, "original-pty");
+        assert!(queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {}).is_err());
+        assert!(handle.ai_access("chat-a", true).is_err());
+        assert!(handle.begin_background_close("chat-a").is_err());
+        assert!(rx.try_recv().is_err());
+        queue_session_input(&mut handle, "manual\r".into()).unwrap();
+        assert!(
+            matches!(rx.try_recv().unwrap(), SessionCommand::Input(data) if data == "manual\r")
+        );
+    }
+
+    #[test]
+    fn closing_background_session_blocks_takeover_and_ai_writes() {
+        let (mut handle, mut rx, _closed) = background_test_session();
+        let snapshot = input_snapshot(&handle);
+        assert!(handle.begin_background_close("chat-b").is_err());
+        handle.begin_background_close("chat-a").unwrap();
+        assert!(handle.hidden());
+        assert!(handle.take_over("chat-a").is_err());
+        assert!(handle.ai_access("chat-a", true).is_err());
+        assert!(queue_approved_input(&mut handle, &snapshot, "1\r".into(), || {}).is_err());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn ai_activity_refreshes_background_idle_time_and_user_sessions_stay_usable() {
+        let (mut handle, _rx, _closed) = background_test_session();
+        handle.background.as_mut().unwrap().touched =
+            std::time::Instant::now() - std::time::Duration::from_secs(1000);
+        handle.ai_access("chat-a", false).unwrap();
+        assert!(
+            handle.background.as_ref().unwrap().touched.elapsed()
+                < std::time::Duration::from_secs(1)
+        );
+        let (mut visible, _rx, _closed) = interactive_test_session();
+        assert!(!visible.hidden());
+        assert!(visible.visible_to_ai("chat-b"));
+        assert!(visible.ai_access("chat-b", true).is_ok());
+        assert!(visible.begin_background_close("chat-b").is_err());
+    }
+
+    #[test]
+    fn idle_cleanup_cannot_race_takeover_or_recent_activity() {
+        let (mut handle, _rx, _closed) = background_test_session();
+        assert!(!handle.begin_idle_close());
+        handle.background.as_mut().unwrap().touched =
+            std::time::Instant::now() - std::time::Duration::from_secs(1000);
+        assert!(handle.begin_idle_close());
+        assert!(handle.take_over("chat-a").is_err());
+        let (mut attached, _rx, _closed) = background_test_session();
+        attached.take_over("chat-a").unwrap();
+        attached.background.as_mut().unwrap().touched =
+            std::time::Instant::now() - std::time::Duration::from_secs(1000);
+        assert!(!attached.begin_idle_close());
     }
 
     #[test]

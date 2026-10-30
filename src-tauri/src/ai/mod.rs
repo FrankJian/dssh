@@ -10,6 +10,7 @@ use tokio::sync::{Notify, mpsc};
 
 pub mod agent;
 mod anthropic;
+pub mod background;
 pub mod client;
 pub mod connection;
 mod context;

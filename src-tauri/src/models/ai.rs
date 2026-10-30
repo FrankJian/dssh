@@ -228,6 +228,7 @@ pub struct CurrentServer {
 #[serde(rename_all = "camelCase")]
 pub struct AiSendMessageRequest {
     pub run_id: String,
+    pub conversation_id: String,
     pub provider_id: String,
     pub model: String,
     #[serde(default)]
@@ -283,14 +284,6 @@ pub enum AiEvent {
         tool_name: String,
         result: String,
         is_error: bool,
-    },
-    /// Requests that the frontend open a saved SSH profile after the user
-    /// approved the corresponding tool call.
-    #[serde(rename_all = "camelCase")]
-    OpenSshSession {
-        run_id: String,
-        call_id: String,
-        profile_id: String,
     },
     /// Requests a validated, non-destructive application UI action. The
     /// frontend owns execution because workspace state is renderer-local.

@@ -98,11 +98,56 @@ pub async fn ai_send_message(
     state: State<'_, AppState>,
     request: AiSendMessageRequest,
 ) -> AppResult<()> {
+    if request.conversation_id.trim().is_empty() || request.conversation_id.len() > 128 {
+        return Err(AppError::new(
+            "ai_conversation",
+            "无效的 AI 对话标识，请重新打开助手。",
+        ));
+    }
     let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         run_agent(app_handle, state, request).await;
     });
     Ok(())
+}
+
+#[tauri::command]
+pub fn ai_background_sessions(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> AppResult<Vec<crate::models::terminal::TerminalSession>> {
+    state.sessions.background_sessions(&conversation_id)
+}
+
+#[tauri::command]
+pub fn ai_take_over_session(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    session_id: String,
+) -> AppResult<crate::models::terminal::TerminalSession> {
+    state
+        .sessions
+        .take_over_background(&session_id, &conversation_id)
+}
+
+#[tauri::command]
+pub async fn ai_close_background_session(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    session_id: String,
+) -> AppResult<()> {
+    state
+        .sessions
+        .close_background(&session_id, &conversation_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn ai_close_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> AppResult<()> {
+    state.sessions.close_conversation(&conversation_id).await
 }
 
 /// Approve or reject a pending tool call for a run.

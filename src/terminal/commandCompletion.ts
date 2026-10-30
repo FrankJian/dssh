@@ -1,5 +1,12 @@
 export const commandCompletionEnabledKey = "dssh.terminal.commandCompletion.enabled";
-const historyKey = "dssh.terminal.commandCompletion.history.v1";
+const historyKey = "dssh.terminal.commandCompletion.history.v2";
+// Old entries have no echo/provenance information: an arbitrary password is
+// indistinguishable from a command. Discard that unverified store on upgrade.
+try {
+  localStorage.removeItem("dssh.terminal.commandCompletion.history.v1");
+} catch {
+  // Storage may be unavailable; never fall back to reading unverified entries.
+}
 const historyLimitKey = "dssh.terminal.commandCompletion.historyLimit";
 export const COMMAND_HISTORY_DEFAULT_LIMIT = 300;
 export const COMMAND_HISTORY_MIN_LIMIT = 1;
@@ -46,7 +53,7 @@ function loadHistory(): string[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(historyKey) ?? "[]");
     return Array.isArray(value)
-      ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= commandLimit))].slice(0, getCommandHistoryLimit())
+      ? [...new Set(value.filter((item): item is string => typeof item === "string" && isRecordableCommand(item)))].slice(0, getCommandHistoryLimit())
       : [];
   } catch {
     return [];
@@ -64,6 +71,7 @@ export function isRecordableCommand(value: string): boolean {
   return command.length >= 1 && command.length <= commandLimit
     && !/[\r\n\x00-\x1f]/.test(command)
     && !/^\s/.test(value)
+    && !/^[*•●]+$/.test(command)
     && !/(?:password|passwd|passphrase|token|secret|api[_-]?key|authorization|private[_-]?key)/i.test(command)
     && !/\b(?:export|set|setx|read|login|mysql|psql)\b/i.test(command);
 }
@@ -113,6 +121,13 @@ export class CommandInputTracker {
   }
 
   observe(data: string, visibleLine: string, renderedCommand?: string): string | null {
+    // Check on every input event, including when a prompt arrives after the
+    // user has started typing. Credential prompts are not limited to a bare
+    // "Password:" (sudo, SSH keys, MFA, localization and masked input vary).
+    if (/\b(?:password|passwd|passphrase|verification\s*code|one.time\s*(?:password|code)|otp|pin)\b|密码|口令|验证码/i.test(visibleLine)) {
+      this.reset();
+      return null;
+    }
     // xterm wraps pasted text in these markers when the shell enables
     // bracketed paste. A single-line paste is still ordinary command input.
     if (data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~")) {
@@ -123,15 +138,17 @@ export class CommandInputTracker {
       }
     }
     if (!this.line && data && !this.atPrompt) {
-      // Track input directly. Prompt formats vary, and the first keystroke can
-      // arrive before xterm has painted the prompt (or after its first echo).
-      // Only known credential prompts should suppress input capture.
-      this.atPrompt = !/(?:password|passphrase|verification code|one.time (?:password|code)|密码|口令|验证码)\s*[:：]\s*$/i.test(visibleLine);
+      // Prompt formats vary; don't require a particular shell prompt suffix.
+      this.atPrompt = true;
     }
     if (!this.atPrompt) return null;
     for (const char of data) {
       if (char === "\r" || char === "\n") {
-        const submitted = this.reliable ? this.line : renderedCommand ?? "";
+        // Hidden/masked input must never be inferred from keystrokes alone.
+        // Verify the PTY actually echoed the submitted text before saving it;
+        // this also covers unknown/custom credential prompts and echo-off read.
+        const echoed = renderedCommand?.trimEnd() ?? "";
+        const submitted = this.reliable && echoed !== this.line.trimEnd() ? "" : echoed;
         this.reset();
         return isRecordableCommand(submitted) ? submitted : null;
       }

@@ -63,7 +63,7 @@ pub fn tool_defs() -> Vec<Tool> {
         Tool::new("open_ssh_session")
             .with_description(
                 "请求打开一台已保存服务器的交互式 SSH 终端。必须先通过 list_servers 获取 server_id。\
-                 该操作会向用户显示目标服务器信息并要求确认；确认后在应用中创建一个新的 SSH 终端标签。",
+                 该操作经用户确认后在后台创建或复用本对话的 SSH PTY，不打开标签、不切换页面。返回真实 session_id 和初始输出；后续读写必须使用该 ID。",
             )
             .with_schema(json!({
                 "type": "object",
@@ -151,7 +151,7 @@ pub fn tool_defs() -> Vec<Tool> {
                 "additionalProperties": false
             })),
         Tool::new("list_terminal_sessions")
-            .with_description("列出应用中已打开的交互终端，返回 session_id、名称、profile_id 和类型。打开 SSH 终端后或需要指定其他终端时，用它获取实际会话 ID；该 ID 与已保存服务器的 server_id 不同。")
+            .with_description("列出用户可见终端和本对话的后台交互会话，返回 session_id、名称、profile_id、类型、真实 status 和 background。优先复用本对话 background=true 的会话；该 ID 与服务器配置 server_id 不同。")
             .with_schema(json!({"type":"object", "properties":{}, "additionalProperties":false})),
         Tool::new("write_terminal")
             .with_description("向已打开的交互式终端输入一行文本并按一次回车，随后返回该终端的新输出。用于 JumpServer/KoKo 的 Opt> 选服提示输入目的 IP、搜索资产、选择实际列出的资产/账号编号，也可在已连接的目标 shell 中执行单条命令。必须先 read_terminal 观察当前提示，每次仅提交一行并等待结果，不要预先串联多步；每次写入都需要用户确认。不要输入密码、口令或验证码。session_id 省略时使用本轮开始时的活动终端；不确定时先 list_terminal_sessions。")
@@ -166,7 +166,7 @@ pub fn tool_defs() -> Vec<Tool> {
             })),
         Tool::new("read_terminal")
             .with_description(
-                "读取用户当前正在查看的交互式终端（黑窗口）中最近的输出内容，已去除 ANSI 颜色控制字符。\
+                "读取指定后台会话或用户当前终端中最近的输出内容，已去除 ANSI 颜色控制字符。\
                  当用户提到“刚才的报错、上面的输出、屏幕上的内容、这个错误”等，却没有把文本粘贴到对话里时，\
                  应调用此工具直接获取终端上可见的内容（尤其是报错信息），然后据此作答。\
                  默认读取本轮开始时用户当前的会话，通常无需提供 session_id。连接尚未完成时可用 wait_ms 等待新输出；这不会向终端写入任何内容。",
@@ -328,22 +328,23 @@ pub async fn execute_tool(
     tool_name: &str,
     args: &Value,
     current: Option<&CurrentServer>,
+    conversation: &str,
 ) -> (String, bool) {
     match tool_name {
         "list_servers" => execute_list_servers(state),
-        "list_terminal_sessions" => match state.sessions.list_sessions() {
+        "list_terminal_sessions" => match state.sessions.list_ai_sessions(conversation) {
             Ok(sessions) => (json!({"sessions": sessions.into_iter().map(|session| json!({
-                "session_id": session.id, "name": session.title, "profile_id": session.profile_id, "kind": session.kind,
+                "session_id": session.id, "name": session.title, "profile_id": session.profile_id, "kind": session.kind, "status": session.status, "background": state.sessions.is_background(&session.id),
             })).collect::<Vec<_>>(), "current_session_id": current.and_then(|c| c.session_id.as_deref())}).to_string(), false),
             Err(_) => ("无法读取活动终端列表。".into(), true),
         },
         "run_command" => execute_run_command(state, args, current).await,
         "ask_user_question" => ("正在等待用户选择。".to_string(), false),
-        "open_ssh_session" => ("SSH 连接请求正在由应用打开终端。".to_string(), false),
+        "open_ssh_session" => ("请通过后台会话管理器建立 SSH 连接。".to_string(), false),
         "read_terminal" => {
             let wait_ms = args.get("wait_ms").and_then(Value::as_u64).unwrap_or(0).min(10_000);
             if wait_ms > 0 { tokio::time::sleep(Duration::from_millis(wait_ms)).await; }
-            execute_read_terminal(state, args, current.and_then(|c| c.session_id.as_deref()))
+            execute_read_terminal(state, args, current.and_then(|c| c.session_id.as_deref()), conversation)
         }
         other => (format!("未知的工具：{other}"), true),
     }
@@ -503,6 +504,7 @@ fn execute_read_terminal(
     state: &AppState,
     args: &Value,
     current_session_id: Option<&str>,
+    conversation: &str,
 ) -> (String, bool) {
     let session_id = args
         .get("session_id")
@@ -516,12 +518,18 @@ fn execute_read_terminal(
         Some(value) => value,
         None => {
             return (
-                "当前没有可读取的活动终端会话。请确认已打开一个 SSH 会话窗口。".to_string(),
+                "尚未指定终端，请用 open_ssh_session 建立后台会话，或通过 list_terminal_sessions 选择已有会话。".to_string(),
                 true,
             );
         }
     };
 
+    if let Err(error) = state
+        .sessions
+        .check_ai_access(&session_id, conversation, false)
+    {
+        return (error.message, true);
+    }
     match state.sessions.read_session_output(&session_id) {
         Ok(raw) => {
             let clean = strip_ansi(&raw);
