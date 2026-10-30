@@ -9956,6 +9956,8 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .ai-settings__form textarea { resize: vertical; font-family: var(--font-mono); }
 .ai-settings__form:disabled { opacity: 0.65; }
 .ai-settings__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-settings__feedback { flex-basis: 100%; min-width: 0; }
+.ai-settings__feedback:empty { display: none; }
 .ai-settings summary { cursor: pointer; color: var(--text-muted); font-size: 12px; padding-block: 8px; }
 .ai-settings__behavior[open] { display: grid; gap: 16px; }
 .ai-chat__model-select { flex: 1; min-width: 0; max-width: calc(100% - 80px); }

@@ -1,18 +1,20 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { AiProvider, AiProviderKind } from "../models/ai";
 import { listAiModels, testAiConnection } from "../services/aiService";
 import { Button } from "../ui/Button";
 import { SelectMenu } from "../ui/SelectMenu";
-import { AiModelCatalog } from "./AiModelCatalog";
+import { AiModelCatalog, type AiModelCatalogHandle } from "./AiModelCatalog";
 import { Icon } from "../ui/Icon";
 import { API_PROTOCOLS, createEmptyProvider, ENDPOINT_PRESETS, inferPresetId } from "./aiConfig";
 import type { AiConfig } from "./useAiConfig";
+import { settingsActionError } from "./aiSettingsValidation";
 
 export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
   const { providers, activeProviderId, options, setOptions } = aiConfig;
   const [draft, setDraft] = useState<AiProvider | null>(null);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [modelPending, setModelPending] = useState(false);
+  const modelCatalog = useRef<AiModelCatalogHandle>(null);
   const [modelEditorRevision, setModelEditorRevision] = useState(0);
   const [presetId, setPresetId] = useState("custom");
   const [busy, setBusy] = useState(false);
@@ -32,22 +34,40 @@ export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
     setDraft((previous) => previous ? { ...previous, ...value } : null);
     setDirty(true); setNotice(null); setError(null);
   }
+  function prepareAction(testingConnection = false) {
+    setError(null); setNotice(null);
+    if (!draft) return null;
+    try {
+      const provider = { ...draft, ...modelCatalog.current?.resolve() };
+      const message = settingsActionError(provider, testingConnection);
+      if (message) throw new Error(message);
+      return provider;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "模型配置无效。");
+      return null;
+    }
+  }
   async function testConnection() {
-    if (!draft || modelPending) return;
+    if (busy) return;
+    const provider = prepareAction(true);
+    if (!provider) return;
     setBusy(true); setTesting(true); setError(null); setNotice(null);
     try {
-      const result = await testAiConnection(draft);
+      const result = await testAiConnection(provider);
       setNotice(`连接成功 · ${result.model} · ${(result.elapsedMs / 1000).toFixed(2)} 秒`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "连接测试失败，请检查配置。");
     } finally { setBusy(false); setTesting(false); }
   }
   async function save(fetchModels = false) {
-    if (!draft || modelPending) return;
+    if (busy) return;
+    const provider = prepareAction();
+    if (!provider) return;
     setBusy(true); setError(null); setNotice(null);
     try {
-      const saved = await aiConfig.saveProvider(draft);
+      const saved = await aiConfig.saveProvider(provider);
       setDraft(saved); setDirty(false);
+      modelCatalog.current?.reset();
       if (fetchModels) {
         const discovered = await listAiModels(saved.id);
         setDiscoveredModels([...new Set(discovered)]);
@@ -130,9 +150,9 @@ export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
                   <span className="settings-field__hint">保存后仅由本机后端读取，不回显密钥。</span>
                 </label>
                 {draft.hasApiKey ? <Button onClick={() => patch({ apiKey: "", hasApiKey: false })} variant="ghost">清除已保存密钥（保存后生效）</Button> : null}
-                <AiModelCatalog key={`${draft.id}:${modelEditorRevision}`} models={draft.models} defaultModel={draft.model}
+                <AiModelCatalog ref={modelCatalog} key={`${draft.id}:${modelEditorRevision}`} models={draft.models} defaultModel={draft.model}
                   discovered={discoveredModels} onPendingChange={setModelPending}
-                  onDiscover={() => void save(true)} canDiscover={!modelPending && Boolean(draft.label.trim() && draft.baseUrl.trim())}
+                  onDiscover={() => void save(true)} canDiscover={Boolean(draft.label.trim() && draft.baseUrl.trim())}
                   onChange={(models, model) => patch({ models, model })} />
                 {presetId === "custom" ? <details>
                   <summary>连接选项</summary>
@@ -142,16 +162,19 @@ export function AiSettingsSection({ aiConfig }: { aiConfig: AiConfig }) {
                   </label>
                 </details> : null}
                 <div className="ai-settings__actions">
-                  <Button disabled={modelPending || !draft.label.trim() || !draft.baseUrl.trim()} onClick={() => void save()}>{busy && !testing ? "处理中…" : "保存配置"}</Button>
-                  <Button disabled={modelPending || !draft.baseUrl.trim() || !draft.model.trim()} onClick={() => void testConnection()}>{testing ? "测试中…" : "测试连接"}</Button>
+                  <Button onClick={() => void save()}>{busy && !testing ? "处理中…" : "保存配置"}</Button>
+                  <Button onClick={() => void testConnection()}>{testing ? "测试中…" : "测试连接"}</Button>
                   {providers.some((p) => p.id === draft.id) ? <Button onClick={() => void remove()} variant="ghost">删除服务</Button> : null}
+                  <div className="ai-settings__feedback" aria-live="polite" aria-atomic="true">
+                    {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
+                    {testing ? <span className="settings-field__hint" role="status">正在测试默认模型连接，最长等待 30 秒…</span> : null}
+                    {notice ? <span className="settings-field__hint" role="status">{notice}</span> : null}
+                  </div>
                 </div>
                 {dirty ? <span className="settings-field__hint">有未保存的修改</span> : null}
               </fieldset>
             ) : <div className="ai-settings__empty">从左侧选择服务，或添加厂商预设 / 自定义 API。</div>}
-            {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
-            {testing ? <p className="settings-field__hint" role="status">正在测试默认模型连接，最长等待 30 秒…</p> : null}
-            {notice ? <p className="settings-field__hint" role="status">{notice}</p> : null}
+            {!draft && error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
           </div>
         </div>
       )}

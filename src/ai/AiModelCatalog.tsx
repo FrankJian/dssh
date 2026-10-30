@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import type { AiModelConfig, AiReasoningLevel } from "../models/ai";
 import { AiReasoningLevels } from "./AiReasoningLevels";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { ComboBox } from "../ui/ComboBox";
-import { DEFAULT_MODEL_CONTEXT_WINDOW, DEFAULT_MODEL_MAX_OUTPUT_TOKENS, MIN_MODEL_CONTEXT_WINDOW, MAX_MODEL_CONTEXT_WINDOW, parseTokenCapacity, formatTokenCapacity, defaultReasoningLevels } from "./aiConfig";
+import { DEFAULT_MODEL_CONTEXT_WINDOW, DEFAULT_MODEL_MAX_OUTPUT_TOKENS, parseTokenCapacity, formatTokenCapacity, defaultReasoningLevels } from "./aiConfig";
+import { resolveModelCatalog } from "./aiSettingsValidation";
+
+export interface AiModelCatalogHandle {
+  resolve: () => { models: AiModelConfig[]; model: string };
+  reset: () => void;
+}
 
 interface AiModelCatalogProps {
+  ref?: Ref<AiModelCatalogHandle>;
   models: AiModelConfig[];
   defaultModel: string;
   discovered: string[];
@@ -16,7 +23,7 @@ interface AiModelCatalogProps {
   onPendingChange: (pending: boolean) => void;
 }
 
-export function AiModelCatalog({ models, defaultModel, discovered, onChange, onPendingChange, onDiscover, canDiscover }: AiModelCatalogProps) {
+export function AiModelCatalog({ ref, models, defaultModel, discovered, onChange, onPendingChange, onDiscover, canDiscover }: AiModelCatalogProps) {
   const [id, setId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [contextWindow, setContextWindow] = useState(formatTokenCapacity(DEFAULT_MODEL_CONTEXT_WINDOW));
@@ -37,28 +44,32 @@ export function AiModelCatalog({ models, defaultModel, discovered, onChange, onP
     setEditingId(null); setError(null); setExpanded(false);
   }
 
-  function commit() {
+  function resolve() {
+    setError(null);
+    if (!pending) return { models, model: defaultModel };
     const modelId = id.trim();
     const capacity = contextWindow.trim() ? parseTokenCapacity(contextWindow) : DEFAULT_MODEL_CONTEXT_WINDOW;
-    if (!modelId) { setError("请填写模型 ID。"); return; }
-    if (models.some((model) => model.id === modelId && model.id !== editingId)) {
-      setError("此模型 ID 已添加，可在列表中编辑。"); return;
-    }
-    if (!Number.isInteger(capacity) || capacity < MIN_MODEL_CONTEXT_WINDOW || capacity > MAX_MODEL_CONTEXT_WINDOW) {
-      setError("上下文窗口须为 4096 到 10000000 之间的整数。"); return;
-    }
     const maxOutput = maxOutputTokens.trim() ? parseTokenCapacity(maxOutputTokens) : DEFAULT_MODEL_MAX_OUTPUT_TOKENS;
-    if (!Number.isInteger(maxOutput) || maxOutput < 1 || maxOutput >= capacity) {
-      setError("最大输出 token 数须小于上下文窗口。"); return;
-    }
     const model: AiModelConfig = {
       id: modelId, displayName: displayName.trim() || modelId, contextWindow: capacity,
       maxOutputTokens: maxOutput, inputTypes: imageInput ? ["text", "image"] : ["text"],
       reasoningEffort: reasoningEffort ? reasoningLevels.find((row) => row.level === reasoningEffort)?.level ?? reasoningLevels[0].level : null,
       reasoningLevels: reasoningEffort ? reasoningLevels : [],
     };
-    const next = editingId ? models.map((item) => item.id === editingId ? model : item) : [...models, model];
-    onChange(next, !defaultModel || defaultModel === editingId ? modelId : defaultModel);
+    try {
+      return resolveModelCatalog(models, defaultModel, editingId, model);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "模型配置无效。");
+      throw cause;
+    }
+  }
+
+  useImperativeHandle(ref, () => ({ resolve, reset }));
+
+  function commit() {
+    let next;
+    try { next = resolve(); } catch { return; }
+    onChange(next.models, next.model);
     reset();
   }
 
@@ -96,7 +107,7 @@ export function AiModelCatalog({ models, defaultModel, discovered, onChange, onP
             </li>
           ))}
         </ul>
-      ) : <p className="settings-field__hint">尚未添加模型，请在下方填写后点击“添加模型”。</p>}
+      ) : <p className="settings-field__hint">填写首个模型后可直接保存配置或测试连接；配置多个模型时点击“添加模型”继续填写。</p>}
       <div className="ai-model-catalog__entry" role="group" aria-label={editingId ? "编辑模型" : "添加模型"}>
         <div className="ai-model-catalog__entry-header">
           <ComboBox ariaLabel="模型 ID" value={id} onChange={setId}
@@ -142,7 +153,7 @@ export function AiModelCatalog({ models, defaultModel, discovered, onChange, onP
       <div className="ai-model-catalog__entry-actions">
         <Button onClick={commit} disabled={!id.trim()}><Icon name="plus" width="16" height="16" />{editingId ? "保存模型" : "添加模型"}</Button>
       </div>
-      {pending ? <span className="settings-field__hint">请先添加或取消当前模型，再保存服务配置。</span> : null}
+      {pending ? <span className="settings-field__hint">当前填写的模型会随配置一起保存，也可直接测试连接。</span> : null}
       {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
     </section>
   );
