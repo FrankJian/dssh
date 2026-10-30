@@ -336,8 +336,10 @@ function MainApp() {
     setTerminalBgGlassEnabled,
     terminalBgGlassBlur,
     setTerminalBgGlassBlur,
-    terminalWorkspaceInset,
-    setTerminalWorkspaceInset,
+    terminalWorkspaceRightInset,
+    setTerminalWorkspaceRightInset,
+    terminalWorkspaceBottomInset,
+    setTerminalWorkspaceBottomInset,
     s3DownloadConcurrency,
     s3UploadConcurrency,
     setS3DownloadConcurrency,
@@ -571,13 +573,6 @@ function MainApp() {
     );
     root.style.setProperty("--terminal-wallpaper-blur", `${terminalBgGlassBlur}px`);
   }, [terminalBgDataUrl, terminalBgGlassBlur, terminalBgOpacity]);
-
-  useEffect(() => {
-    document.documentElement.style.setProperty(
-      "--terminal-workspace-inset",
-      `${terminalWorkspaceInset}px`,
-    );
-  }, [terminalWorkspaceInset]);
 
   const isS3 = activeActivity === "s3";
   const isConnections = activeActivity === "connections";
@@ -2285,8 +2280,10 @@ function MainApp() {
           onTerminalBgGlassEnabledChange={setTerminalBgGlassEnabled}
           terminalBgGlassBlur={terminalBgGlassBlur}
           onTerminalBgGlassBlurChange={setTerminalBgGlassBlur}
-          terminalWorkspaceInset={terminalWorkspaceInset}
-          onTerminalWorkspaceInsetChange={setTerminalWorkspaceInset}
+          terminalWorkspaceRightInset={terminalWorkspaceRightInset}
+          onTerminalWorkspaceRightInsetChange={setTerminalWorkspaceRightInset}
+          terminalWorkspaceBottomInset={terminalWorkspaceBottomInset}
+          onTerminalWorkspaceBottomInsetChange={setTerminalWorkspaceBottomInset}
           onThemeChange={setThemeMode}
           rightClick={rightClick}
           s3DownloadConcurrency={s3DownloadConcurrency}

@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { placeCompletionMenu } from "./completionPosition.ts";
+import { completionAreaBounds, placeCompletionMenu } from "./completionPosition.ts";
 
 const bounds = { left: 100, top: 60, right: 500, bottom: 300 };
+
+test("workspace bottom padding is available below the final terminal row", () => {
+  const pane = { left: 100, top: 60, right: 760, bottom: 400 };
+  const workspace = { left: 100, top: 40, right: 800, bottom: 500 };
+  const area = completionAreaBounds(pane, workspace, 40, 100);
+  assert.deepEqual(area, { left: 100, top: 60, right: 800, bottom: 500 });
+  const popup = placeCompletionMenu(area, 140, 364, 392, 300, 6, 28);
+  assert.equal(popup.top, 396);
+  assert.equal(popup.height, 90);
+  assert.ok(popup.top + popup.height <= workspace.bottom);
+});
+
+test("padding expansion never extends across adjacent split panes", () => {
+  const workspace = { left: 0, top: 0, right: 800, bottom: 600 };
+  const upperLeft = { left: 0, top: 0, right: 380, bottom: 250 };
+  assert.deepEqual(completionAreaBounds(upperLeft, workspace, 40, 100), upperLeft);
+  const lowerLeft = { left: 0, top: 255, right: 380, bottom: 500 };
+  assert.deepEqual(completionAreaBounds(lowerLeft, workspace, 40, 100), { ...lowerLeft, bottom: 600 });
+  const upperRight = { left: 385, top: 0, right: 760, bottom: 250 };
+  assert.deepEqual(completionAreaBounds(upperRight, workspace, 40, 100), { ...upperRight, right: 800 });
+});
 
 test("completion stays inside the viewport near its bottom and right edges", () => {
   const popup = placeCompletionMenu(bounds, 480, 270, 290, 300, 20, 24);

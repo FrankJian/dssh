@@ -23,7 +23,7 @@ import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../setting
 import { toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 import { CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands, recordCommand } from "./commandCompletion";
-import { placeCompletionMenu, type CompletionBounds } from "./completionPosition";
+import { completionAreaBounds, placeCompletionMenu, type CompletionBounds } from "./completionPosition";
 import "@xterm/xterm/css/xterm.css";
 
 /**
@@ -221,7 +221,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const suggestionContent = document.createElement("div");
   suggestionContent.className = "terminal-completion__content";
   suggestionMenu.appendChild(suggestionContent);
-  host.appendChild(suggestionMenu);
+  // The workspace's reserved padding lies outside the terminal's clipped
+  // canvas. Mount the overlay separately so that padding can actually be used.
+  document.body.appendChild(suggestionMenu);
 
   const terminal = new Terminal({
     allowProposedApi: false,
@@ -337,18 +339,31 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
 
     const screenRect = screen.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
+    if (!host.isConnected || !hostRect.width || !hostRect.height) {
+      hideSuggestions();
+      return;
+    }
     const cellWidth = screenRect.width / terminal.cols;
     const cellHeight = screenRect.height / terminal.rows;
     if (!cellWidth || !cellHeight) return;
 
     const viewport = window.visualViewport;
+    const pane = host.closest<HTMLElement>(".terminal-view") ?? host;
+    const workspace = host.closest<HTMLElement>(".terminal-workspace, .pane-workspace") ?? pane;
+    const workspaceStyle = window.getComputedStyle(workspace);
+    const area = completionAreaBounds(
+      pane.getBoundingClientRect(),
+      workspace.getBoundingClientRect(),
+      Number.parseFloat(workspaceStyle.paddingRight) || 0,
+      Number.parseFloat(workspaceStyle.paddingBottom) || 0,
+    );
     const bounds: CompletionBounds = {
-      left: Math.max(hostRect.left, viewport?.offsetLeft ?? 0),
-      top: Math.max(hostRect.top, viewport?.offsetTop ?? 0),
-      right: Math.min(hostRect.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth)),
-      bottom: Math.min(hostRect.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)),
+      left: Math.max(area.left, viewport?.offsetLeft ?? 0),
+      top: Math.max(area.top, viewport?.offsetTop ?? 0),
+      right: Math.min(area.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth)),
+      bottom: Math.min(area.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)),
     };
-    for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    for (let ancestor = workspace.parentElement; ancestor; ancestor = ancestor.parentElement) {
       const style = window.getComputedStyle(ancestor);
       const rect = ancestor.getBoundingClientRect();
       const clipLeft = rect.left + ancestor.clientLeft;
@@ -382,8 +397,8 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     }
     suggestionMenu.style.maxWidth = `${placement.width}px`;
     suggestionMenu.style.maxHeight = `${placement.height}px`;
-    suggestionMenu.style.left = `${placement.left - hostRect.left}px`;
-    suggestionMenu.style.top = `${placement.top - hostRect.top}px`;
+    suggestionMenu.style.left = `${placement.left}px`;
+    suggestionMenu.style.top = `${placement.top}px`;
     revealSelectedSuggestion();
   }
 
@@ -632,12 +647,14 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     }
 
     const nextSize = { cols: terminal.cols, rows: terminal.rows };
+    // Pixel-sized inset changes can move the overlay without changing rows
+    // or columns, so placement must update even when no PTY resize is needed.
+    positionSuggestions();
     if (lastSize?.cols === nextSize.cols && lastSize.rows === nextSize.rows) {
       return;
     }
 
     lastSize = nextSize;
-    positionSuggestions();
     void Promise.resolve(props.onResize?.(nextSize)).catch(() => {});
   }
 
@@ -878,6 +895,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     host.removeEventListener("paste", handlePaste, true);
     host.removeEventListener("contextmenu", handleContextMenu);
     suggestionMenu.removeEventListener("scroll", renderSuggestionItems);
+    suggestionMenu.remove();
     window.removeEventListener("scroll", onWindowScroll, true);
     window.removeEventListener("resize", positionSuggestions);
     window.removeEventListener("dssh:command-completion-settings", onCompletionSettingChange);

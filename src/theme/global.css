@@ -89,7 +89,8 @@
      background) shows through is controlled by the terminal's own alpha. */
   --terminal-bg-image: none;
   --terminal-surface: var(--terminal-bg);
-  --terminal-workspace-inset: 4px;
+  --terminal-workspace-right-inset: 4px;
+  --terminal-workspace-bottom-inset: 4px;
   --terminal-wallpaper-blur: 20px;
   --terminal-wallpaper-saturate: 108%;
   --terminal-wallpaper-highlight: rgb(244 247 250 / 4%);
@@ -2342,8 +2343,8 @@ button {
   min-width: 0;
   min-height: 0;
   flex: 1;
-  padding-right: var(--terminal-workspace-inset);
-  padding-bottom: var(--terminal-workspace-inset);
+  padding-right: var(--terminal-workspace-right-inset);
+  padding-bottom: var(--terminal-workspace-bottom-inset);
   background: var(--bg-app);
 }
 
@@ -3118,8 +3119,8 @@ button {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  padding-right: var(--terminal-workspace-inset);
-  padding-bottom: var(--terminal-workspace-inset);
+  padding-right: var(--terminal-workspace-right-inset);
+  padding-bottom: var(--terminal-workspace-bottom-inset);
   background: var(--bg-app);
 }
 
@@ -4420,8 +4421,8 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 
 .terminal-completion {
   --terminal-completion-row-height: 28px;
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 50;
   box-sizing: border-box;
   width: max-content;
   max-width: calc(100% - var(--space-2));

@@ -12,6 +12,23 @@ export interface CompletionPlacement {
   height: number;
 }
 
+/** Include workspace padding only for panes touching that workspace edge. */
+export function completionAreaBounds(
+  pane: CompletionBounds,
+  workspace: CompletionBounds,
+  rightInset: number,
+  bottomInset: number,
+): CompletionBounds {
+  const touchesRight = Math.abs(pane.right - (workspace.right - rightInset)) <= 2;
+  const touchesBottom = Math.abs(pane.bottom - (workspace.bottom - bottomInset)) <= 2;
+  return {
+    left: Math.max(pane.left, workspace.left),
+    top: Math.max(pane.top, workspace.top),
+    right: Math.min(touchesRight ? workspace.right : pane.right, workspace.right),
+    bottom: Math.min(touchesBottom ? workspace.bottom : pane.bottom, workspace.bottom),
+  };
+}
+
 /** Prefer below the input, reducing rows before falling back above it. */
 export function placeCompletionMenu(
   bounds: CompletionBounds,

@@ -149,6 +149,8 @@ export const terminalBgOpacityKey = "dssh.terminal.bgOpacity";
 export const terminalBgGlassEnabledKey = "dssh.terminal.bgGlassEnabled";
 export const terminalBgGlassBlurKey = "dssh.terminal.bgGlassBlur";
 export const terminalWorkspaceInsetKey = "dssh.terminal.workspaceInset";
+export const terminalWorkspaceRightInsetKey = "dssh.terminal.workspaceRightInset";
+export const terminalWorkspaceBottomInsetKey = "dssh.terminal.workspaceBottomInset";
 /** Shared by the main window and detached ones, so a new window opens the way
  *  the user last left the chrome rather than re-showing a bar they hid.
  *
@@ -215,10 +217,18 @@ export function clampTerminalBgGlassBlur(value: number): number {
   );
 }
 
-/** Shared right/bottom breathing room around terminal workspaces, in pixels. */
+/** Independent right/bottom breathing room around terminal workspaces, in pixels. */
 export const TERMINAL_WORKSPACE_INSET_DEFAULT = 4;
 export const TERMINAL_WORKSPACE_INSET_MIN = 0;
-export const TERMINAL_WORKSPACE_INSET_MAX = 24;
+export const TERMINAL_WORKSPACE_INSET_MAX = 240;
+
+export function getTerminalWorkspaceInset(edge: "right" | "bottom"): number {
+  const key = edge === "right" ? terminalWorkspaceRightInsetKey : terminalWorkspaceBottomInsetKey;
+  const raw = localStorage.getItem(key) ?? localStorage.getItem(terminalWorkspaceInsetKey);
+  return raw === null || raw.trim() === ""
+    ? TERMINAL_WORKSPACE_INSET_DEFAULT
+    : clampTerminalWorkspaceInset(Number(raw));
+}
 
 export function clampTerminalWorkspaceInset(value: number): number {
   if (!Number.isFinite(value)) return TERMINAL_WORKSPACE_INSET_DEFAULT;

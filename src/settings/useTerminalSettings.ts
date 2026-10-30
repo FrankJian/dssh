@@ -26,7 +26,9 @@ import {
   terminalBgGlassEnabledKey,
   terminalBgImageKey,
   terminalBgOpacityKey,
-  terminalWorkspaceInsetKey,
+  terminalWorkspaceRightInsetKey,
+  terminalWorkspaceBottomInsetKey,
+  getTerminalWorkspaceInset,
   terminalLineHeightKey,
   terminalLetterSpacingKey,
   clampTerminalLineHeight,
@@ -40,7 +42,6 @@ import {
   TERMINAL_BG_GLASS_BLUR_DEFAULT,
   TERMINAL_BG_GLASS_ENABLED_DEFAULT,
   TERMINAL_BG_OPACITY_DEFAULT,
-  TERMINAL_WORKSPACE_INSET_DEFAULT,
   s3DownloadConcurrencyKey,
   s3UploadConcurrencyKey,
   S3_TRANSFER_CONCURRENCY_DEFAULT,
@@ -102,12 +103,8 @@ export function useTerminalSettings() {
     const raw = localStorage.getItem(terminalBgGlassBlurKey);
     return raw ? clampTerminalBgGlassBlur(Number.parseInt(raw, 10)) : TERMINAL_BG_GLASS_BLUR_DEFAULT;
   });
-  const [terminalWorkspaceInset, setTerminalWorkspaceInsetState] = useState<number>(() => {
-    const raw = localStorage.getItem(terminalWorkspaceInsetKey);
-    return raw
-      ? clampTerminalWorkspaceInset(Number.parseInt(raw, 10))
-      : TERMINAL_WORKSPACE_INSET_DEFAULT;
-  });
+  const [terminalWorkspaceRightInset, setTerminalWorkspaceRightInsetState] = useState(() => getTerminalWorkspaceInset("right"));
+  const [terminalWorkspaceBottomInset, setTerminalWorkspaceBottomInsetState] = useState(() => getTerminalWorkspaceInset("bottom"));
   const [s3UploadConcurrency, setS3UploadConcurrencyState] = useState<number>(() =>
     getStoredS3TransferConcurrency(s3UploadConcurrencyKey),
   );
@@ -160,8 +157,18 @@ export function useTerminalSettings() {
   }, [terminalBgGlassBlur]);
 
   useEffect(() => {
-    localStorage.setItem(terminalWorkspaceInsetKey, String(terminalWorkspaceInset));
-  }, [terminalWorkspaceInset]);
+    localStorage.setItem(terminalWorkspaceRightInsetKey, String(terminalWorkspaceRightInset));
+  }, [terminalWorkspaceRightInset]);
+
+  useEffect(() => {
+    localStorage.setItem(terminalWorkspaceBottomInsetKey, String(terminalWorkspaceBottomInset));
+  }, [terminalWorkspaceBottomInset]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--terminal-workspace-right-inset", `${terminalWorkspaceRightInset}px`);
+    root.style.setProperty("--terminal-workspace-bottom-inset", `${terminalWorkspaceBottomInset}px`);
+  }, [terminalWorkspaceRightInset, terminalWorkspaceBottomInset]);
 
   useEffect(() => {
     localStorage.setItem(s3UploadConcurrencyKey, String(s3UploadConcurrency));
@@ -188,6 +195,8 @@ export function useTerminalSettings() {
     const sync = () => {
       setCommandCompletionState(commandCompletionEnabled());
       setCommandHistoryLimitState(getCommandHistoryLimit());
+      setTerminalWorkspaceRightInsetState(getTerminalWorkspaceInset("right"));
+      setTerminalWorkspaceBottomInsetState(getTerminalWorkspaceInset("bottom"));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
@@ -213,8 +222,12 @@ export function useTerminalSettings() {
     setTerminalBgGlassBlurState(clampTerminalBgGlassBlur(value));
   }, []);
 
-  const setTerminalWorkspaceInset = useCallback((value: number) => {
-    setTerminalWorkspaceInsetState(clampTerminalWorkspaceInset(value));
+  const setTerminalWorkspaceRightInset = useCallback((value: number) => {
+    setTerminalWorkspaceRightInsetState(clampTerminalWorkspaceInset(value));
+  }, []);
+
+  const setTerminalWorkspaceBottomInset = useCallback((value: number) => {
+    setTerminalWorkspaceBottomInsetState(clampTerminalWorkspaceInset(value));
   }, []);
 
   const setRightClick = useCallback((value: RightClickAction) => {
@@ -307,8 +320,10 @@ export function useTerminalSettings() {
     setTerminalBgGlassEnabled,
     terminalBgGlassBlur,
     setTerminalBgGlassBlur,
-    terminalWorkspaceInset,
-    setTerminalWorkspaceInset,
+    terminalWorkspaceRightInset,
+    setTerminalWorkspaceRightInset,
+    terminalWorkspaceBottomInset,
+    setTerminalWorkspaceBottomInset,
     s3UploadConcurrency,
     setS3UploadConcurrency,
     s3DownloadConcurrency,

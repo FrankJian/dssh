@@ -109,8 +109,10 @@ interface SettingsDialogProps {
   onTerminalBgGlassEnabledChange: (value: boolean) => void;
   terminalBgGlassBlur: number;
   onTerminalBgGlassBlurChange: (value: number) => void;
-  terminalWorkspaceInset: number;
-  onTerminalWorkspaceInsetChange: (value: number) => void;
+  terminalWorkspaceRightInset: number;
+  onTerminalWorkspaceRightInsetChange: (value: number) => void;
+  terminalWorkspaceBottomInset: number;
+  onTerminalWorkspaceBottomInsetChange: (value: number) => void;
   s3UploadConcurrency: number;
   onS3UploadConcurrencyChange: (value: number) => void;
   s3DownloadConcurrency: number;
@@ -227,7 +229,8 @@ export function SettingsDialog({
   onTerminalBgOpacityChange,
   onTerminalBgGlassEnabledChange,
   onTerminalBgGlassBlurChange,
-  onTerminalWorkspaceInsetChange,
+  onTerminalWorkspaceRightInsetChange,
+  onTerminalWorkspaceBottomInsetChange,
   onThemeChange,
   navigationIcons,
   onNavigationIconsChange,
@@ -238,7 +241,8 @@ export function SettingsDialog({
   terminalBgOpacity,
   terminalBgGlassEnabled,
   terminalBgGlassBlur,
-  terminalWorkspaceInset,
+  terminalWorkspaceRightInset,
+  terminalWorkspaceBottomInset,
   themeMode,
 }: SettingsDialogProps) {
   const s3NavigationEnabled = navigationIcons.includes("s3");
@@ -743,16 +747,20 @@ export function SettingsDialog({
                 />
 
                 <details className="terminal-settings__background">
-                  <summary>背景与留白<span>不透明度 {terminalBgOpacity}% · 留白 {terminalWorkspaceInset}px</span></summary>
+                  <summary>背景与留白<span>不透明度 {terminalBgOpacity}% · 下 {terminalWorkspaceBottomInset}px · 右 {terminalWorkspaceRightInset}px</span></summary>
                   <div className="terminal-settings__background-body">
                     <div className="terminal-settings__ranges">
                       <label className="settings-field" title="调低后透出应用背景；启用磨砂图片且系统支持时透出图片。">
                         <span className="terminal-settings__range-label">背景不透明度<output>{terminalBgOpacity}%</output></span>
                         <input aria-label="背景不透明度" className="settings-range" max={TERMINAL_BG_OPACITY_MAX} min={TERMINAL_BG_OPACITY_MIN} onChange={(event) => onTerminalBgOpacityChange(Number(event.currentTarget.value))} type="range" value={terminalBgOpacity} />
                       </label>
-                      <label className="settings-field" title="工作区右侧与底部的留白，不影响文字和滚动位置。">
-                        <span className="terminal-settings__range-label">终端边距<output>{terminalWorkspaceInset}px</output></span>
-                        <input aria-label="终端边距" className="settings-range" max={TERMINAL_WORKSPACE_INSET_MAX} min={TERMINAL_WORKSPACE_INSET_MIN} onChange={(event) => onTerminalWorkspaceInsetChange(Number(event.currentTarget.value))} type="range" value={terminalWorkspaceInset} />
+                      <label className="settings-field" title="终端底部的留白，历史命令提示可利用这部分空间。">
+                        <span className="terminal-settings__range-label">下边距<output>{terminalWorkspaceBottomInset}px</output></span>
+                        <input aria-label="终端下边距" className="settings-range" max={TERMINAL_WORKSPACE_INSET_MAX} min={TERMINAL_WORKSPACE_INSET_MIN} onChange={(event) => onTerminalWorkspaceBottomInsetChange(Number(event.currentTarget.value))} type="range" value={terminalWorkspaceBottomInset} />
+                      </label>
+                      <label className="settings-field" title="终端右侧的留白，与下边距独立调整。">
+                        <span className="terminal-settings__range-label">右边距<output>{terminalWorkspaceRightInset}px</output></span>
+                        <input aria-label="终端右边距" className="settings-range" max={TERMINAL_WORKSPACE_INSET_MAX} min={TERMINAL_WORKSPACE_INSET_MIN} onChange={(event) => onTerminalWorkspaceRightInsetChange(Number(event.currentTarget.value))} type="range" value={terminalWorkspaceRightInset} />
                       </label>
                     </div>
                     <div className="settings-bg__row">
