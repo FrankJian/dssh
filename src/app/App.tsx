@@ -20,6 +20,7 @@ import {
   type SshAuthPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
+import { ServerSnapshotButton } from "../hosttools/snapshot/ServerSnapshotButton";
 import type { S3Profile, SshProfile, TerminalSession, TerminalSize } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
@@ -1179,6 +1180,11 @@ function MainApp() {
 
   function handleSelectActivity(next: ActivityId) {
     if (next === activeActivity) {
+      if (next === "connections") {
+        setActiveActivity("sessions");
+        setSidebarCollapsed(true);
+        return;
+      }
       setSidebarCollapsed((collapsed) => !collapsed);
       return;
     }
@@ -2120,7 +2126,6 @@ function MainApp() {
               visibleNavigationIcons={navigationIcons}
               onSelectActivity={handleSelectActivity}
               sidebarCollapsed={sidebarCollapsed}
-              onToggleSidebar={toggleSidebar}
               rightPanel={rightPanel}
               onToggleRightPanel={toggleRightPanel}
               onNewLocalTerminal={handleStartLocalSession}
@@ -2158,6 +2163,7 @@ function MainApp() {
               </button>
               {activeSession ? (
                 <div className="tab-actions">
+                  <ServerSnapshotButton session={sessions.find(s => s.id === (activePaneLayout?.focusedPaneId ?? activeSession?.id)) ?? null} />
                   <button
                     className="tab-action"
                     disabled={!activeCanSplit}

@@ -101,10 +101,12 @@ impl SessionManager {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct SessionHandle {
     kind: TerminalSessionKind,
     profile_id: String,
+    snapshot_profile: Option<SshProfile>,
+    snapshot_terminal: Arc<Mutex<crate::ssh::interactive_snapshot::TerminalSnapshotState>>,
     title: String,
     tx: mpsc::Sender<SessionCommand>,
     closed: watch::Receiver<bool>,
@@ -220,6 +222,10 @@ pub(crate) struct TerminalInputSnapshot {
 #[derive(Debug)]
 enum SessionCommand {
     Input(String),
+    SnapshotInput {
+        token: String,
+        data: String,
+    },
     ZmodemResponse {
         detection_id: String,
         paths: Option<Vec<String>>,
@@ -436,6 +442,12 @@ impl SessionManager {
             session_id.clone(),
             SessionHandle {
                 kind: TerminalSessionKind::Ssh,
+                snapshot_profile: Some(profile.clone()),
+                snapshot_terminal: Arc::new(Mutex::new(
+                    crate::ssh::interactive_snapshot::TerminalSnapshotState::from_username(
+                        &profile.username,
+                    ),
+                )),
                 profile_id: profile.id.clone(),
                 title: title.clone(),
                 tx,
@@ -536,6 +548,10 @@ impl SessionManager {
             session_id.clone(),
             SessionHandle {
                 kind: TerminalSessionKind::Local,
+                snapshot_profile: None,
+                snapshot_terminal: Arc::new(Mutex::new(
+                    crate::ssh::interactive_snapshot::TerminalSnapshotState::default(),
+                )),
                 profile_id: "local".to_string(),
                 title: title.clone(),
                 tx,
@@ -698,6 +714,161 @@ impl SessionManager {
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
     }
 
+    /// Bind read-only probes to the original connection configuration, even if
+    /// the saved profile was edited while this terminal remained connected.
+    pub fn snapshot_profile(&self, session_id: &str) -> AppResult<SshProfile> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let session = sessions
+            .get(session_id)
+            .filter(|session| {
+                !session.hidden() && matches!(session.status, SessionStatus::Connected)
+            })
+            .ok_or_else(|| AppError::new("snapshot_unavailable", "请先连接 SSH 终端。"))?;
+        session
+            .snapshot_profile
+            .clone()
+            .ok_or_else(|| AppError::new("snapshot_unavailable", "服务器快照仅适用于 SSH 会话。"))
+    }
+
+    pub fn snapshot_target(
+        &self,
+        session_id: &str,
+    ) -> AppResult<crate::models::server_snapshot::ServerSnapshotTarget> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get(session_id)
+            .filter(|s| {
+                !s.hidden()
+                    && matches!(s.status, SessionStatus::Connected)
+                    && matches!(s.kind, TerminalSessionKind::Ssh)
+            })
+            .ok_or_else(|| AppError::new("snapshot_unavailable", "请先连接 SSH 终端。"))?;
+        let label = handle
+            .snapshot_profile
+            .as_ref()
+            .map(|p| p.host.as_str())
+            .unwrap_or(&handle.title);
+        let probe = handle.snapshot_terminal.lock().map_err(lock_error)?;
+        Ok(probe.target(session_id, label))
+    }
+
+    pub(crate) fn begin_terminal_snapshot(
+        &self,
+        session_id: &str,
+        expected: &str,
+        token: &str,
+        preflight: String,
+    ) -> AppResult<crate::ssh::interactive_snapshot::CaptureReceivers> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(session_id)
+            .filter(|s| !s.hidden() && matches!(s.status, SessionStatus::Connected))
+            .ok_or_else(|| AppError::new("snapshot_unavailable", "SSH 终端已关闭或断开。"))?;
+        let mut probe = handle.snapshot_terminal.lock().map_err(lock_error)?;
+        let target = probe.target(session_id, &handle.title);
+        if target.source != "terminal" || target.identity != expected {
+            return Err(AppError::new(
+                "snapshot_target_changed",
+                "目标资产已变化，请关闭报告并重新采集。",
+            ));
+        }
+        if !target.ready {
+            return Err(AppError::new(
+                "snapshot_terminal_busy",
+                target.reason.unwrap_or_default(),
+            ));
+        }
+        let receivers = probe.begin(token.into());
+        if handle
+            .tx
+            .try_send(SessionCommand::SnapshotInput {
+                token: token.into(),
+                data: preflight,
+            })
+            .is_err()
+        {
+            probe.abort(
+                "snapshot_send_failed",
+                "无法向当前终端发送采集请求。".into(),
+            );
+            return Err(AppError::new(
+                "snapshot_send_failed",
+                "无法向当前终端发送采集请求。",
+            ));
+        }
+        handle.input_revision = handle.input_revision.wrapping_add(1);
+        Ok(receivers)
+    }
+
+    pub(crate) fn queue_snapshot_line(
+        &self,
+        session_id: &str,
+        token: &str,
+        data: String,
+    ) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(session_id)
+            .filter(|s| matches!(s.status, SessionStatus::Connected))
+            .ok_or_else(|| AppError::new("snapshot_connection_lost", "SSH 终端已断开。"))?;
+        if !handle
+            .snapshot_terminal
+            .lock()
+            .map_err(lock_error)?
+            .owns(token)
+        {
+            return Err(AppError::new(
+                "snapshot_cancelled",
+                "采集已取消或目标资产已变化。",
+            ));
+        }
+        handle
+            .tx
+            .try_send(SessionCommand::SnapshotInput {
+                token: token.into(),
+                data,
+            })
+            .map_err(|_| AppError::new("snapshot_send_failed", "采集输入队列繁忙，请稍后重试。"))?;
+        handle.input_revision = handle.input_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn abort_terminal_snapshot(&self, session_id: &str, token: &str, message: &str) {
+        if let Ok(sessions) = self.sessions.lock()
+            && let Some(handle) = sessions.get(session_id)
+            && let Ok(mut probe) = handle.snapshot_terminal.lock()
+            && probe.owns(token)
+        {
+            probe.abort("snapshot_terminal_timeout", message.into());
+        }
+    }
+
+    pub fn cancel_terminal_snapshot(&self, session_id: &str, expected: &str) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "SSH 终端已关闭。"))?;
+        let current = handle
+            .snapshot_terminal
+            .lock()
+            .map_err(lock_error)?
+            .target(session_id, &handle.title);
+        if current.identity != expected {
+            return Err(AppError::new("snapshot_target_changed", "目标资产已变化。"));
+        }
+        let can_interrupt = handle
+            .snapshot_terminal
+            .lock()
+            .map_err(lock_error)?
+            .can_interrupt();
+        if can_interrupt {
+            queue_session_input(handle, "\x03".into())?;
+        } else if let Ok(mut probe) = handle.snapshot_terminal.lock() {
+            probe.abort("snapshot_cancelled", "已取消采集请求。".into());
+        }
+        Ok(())
+    }
+
     pub fn list_sessions(&self) -> AppResult<Vec<TerminalSession>> {
         let sessions = self.sessions.lock().map_err(lock_error)?;
         Ok(sessions
@@ -786,6 +957,11 @@ impl SessionManager {
         let Some(session) = sessions.get_mut(id) else {
             return false;
         };
+        if !matches!(status, SessionStatus::Connected)
+            && let Ok(mut probe) = session.snapshot_terminal.lock()
+        {
+            probe.disconnected();
+        }
         session.status = status;
         session.hidden()
     }
@@ -923,7 +1099,7 @@ async fn run_ssh_session(
                         break;
                     }
                     Some(SessionCommand::Resize(new_size)) => size = new_size,
-                    Some(SessionCommand::Input(_)) => {}
+                    Some(SessionCommand::Input(_) | SessionCommand::SnapshotInput { .. }) => {}
                     Some(SessionCommand::ZmodemResponse { .. })
                     | Some(SessionCommand::ZmodemConflictResponse { .. })
                     | Some(SessionCommand::CancelZmodem { .. }) => {}
@@ -1454,6 +1630,17 @@ async fn connect_and_run(
 
         tokio::select! {
             command = rx.recv() => match command {
+                Some(SessionCommand::SnapshotInput { token, data }) => {
+                    let owns = sink.snapshot.as_ref().is_some_and(|state| state.lock().is_ok_and(|state| state.owns(&token)));
+                    if !owns { continue; }
+                    if transfer.is_some() || download.is_some() || input_gate.is_some() {
+                        if let Some(state) = sink.snapshot.as_ref() && let Ok(mut state) = state.lock() {
+                            state.abort("snapshot_terminal_busy", "文件传输尚未结束，未发送采集命令。".into());
+                        }
+                        continue;
+                    }
+                    if writer.data_bytes(normalize_input(&data)).await.is_err() { break ConnOutcome::Dropped; }
+                }
                 Some(SessionCommand::Input(data)) => {
                     if let Some(active) = transfer.as_mut() {
                         if active.awaiting_selection && data.contains('\u{3}') {
@@ -3089,6 +3276,7 @@ fn run_local_session(
                         .and_then(|_| writer.flush())
                         .map_err(local_terminal_error)?;
                 }
+                SessionCommand::SnapshotInput { .. } => {}
                 SessionCommand::ZmodemResponse { .. }
                 | SessionCommand::ZmodemConflictResponse { .. }
                 | SessionCommand::CancelZmodem { .. } => {}
@@ -3187,6 +3375,7 @@ fn wait_for_initial_local_resize(
                 break;
             }
             Ok(SessionCommand::Input(data)) => pending_input.push(data),
+            Ok(SessionCommand::SnapshotInput { .. }) => {}
             Ok(SessionCommand::ZmodemResponse { .. })
             | Ok(SessionCommand::ZmodemConflictResponse { .. })
             | Ok(SessionCommand::CancelZmodem { .. }) => {}
@@ -3586,21 +3775,38 @@ struct OutputSink {
     session_id: String,
     output: Arc<Mutex<String>>,
     pending: Arc<Mutex<PendingOutput>>,
+    snapshot: Option<Arc<Mutex<crate::ssh::interactive_snapshot::TerminalSnapshotState>>>,
 }
 
 impl OutputSink {
     fn new(app_handle: AppHandle, session_id: String, output: Arc<Mutex<String>>) -> Self {
+        let snapshot = app_handle
+            .try_state::<crate::app::AppState>()
+            .and_then(|state| {
+                state.sessions.sessions.lock().ok().and_then(|sessions| {
+                    sessions
+                        .get(&session_id)
+                        .filter(|s| matches!(s.kind, TerminalSessionKind::Ssh))
+                        .map(|s| s.snapshot_terminal.clone())
+                })
+            });
         Self {
             app_handle,
             session_id,
             output,
             pending: Arc::new(Mutex::new(PendingOutput::default())),
+            snapshot,
         }
     }
 
     /// Buffer a decoded chunk, emitting immediately when the burst is already
     /// large or the coalescing window has elapsed.
     fn push(&self, text: &str) {
+        let filtered = self
+            .snapshot
+            .as_ref()
+            .and_then(|probe| probe.lock().ok().map(|mut probe| probe.output(text)));
+        let text = filtered.as_deref().unwrap_or(text);
         if text.is_empty() {
             return;
         }
@@ -3928,10 +4134,18 @@ fn queue_session_input(handle: &mut SessionHandle, data: String) -> AppResult<()
             "终端已关闭，请重新读取活动会话。",
         ));
     }
+    let mut probe = handle.snapshot_terminal.lock().map_err(lock_error)?;
+    if !probe.input_allowed(&data) {
+        return Err(AppError::new(
+            "snapshot_terminal_busy",
+            "正在采集当前终端，请等待完成或按 Ctrl+C 取消。",
+        ));
+    }
     handle
         .tx
-        .try_send(SessionCommand::Input(data))
+        .try_send(SessionCommand::Input(data.clone()))
         .map_err(|_| AppError::new("session_send_error", "无法向终端发送输入，请稍后重试。"))?;
+    probe.observe_input(&data);
     handle.input_revision = handle.input_revision.wrapping_add(1);
     Ok(())
 }
@@ -3990,6 +4204,10 @@ mod tests {
         (
             SessionHandle {
                 kind: crate::models::terminal::TerminalSessionKind::Ssh,
+                snapshot_profile: None,
+                snapshot_terminal: Arc::new(Mutex::new(
+                    crate::ssh::interactive_snapshot::TerminalSnapshotState::default(),
+                )),
                 profile_id: "gateway".into(),
                 title: "JumpServer".into(),
                 tx,
@@ -4650,5 +4868,34 @@ mod tests {
         let fallback = resolve_remote_forward_target(&forwards, "localhost", 8080)
             .expect("a unique port fallback should resolve");
         assert_eq!(fallback.local_port, 3000);
+    }
+    #[test]
+    fn interactive_snapshot_reservation_blocks_other_input_but_allows_user_cancellation() {
+        let (mut handle, mut rx, _closed) = interactive_test_session();
+        let mut receivers = handle
+            .snapshot_terminal
+            .lock()
+            .unwrap()
+            .begin("owned".into());
+        assert_eq!(
+            queue_session_input(&mut handle, "exit\r".into())
+                .unwrap_err()
+                .code,
+            "snapshot_terminal_busy"
+        );
+        assert!(rx.try_recv().is_err());
+        assert_eq!(handle.input_revision, 0);
+        handle
+            .snapshot_terminal
+            .lock()
+            .unwrap()
+            .output("\x1eDSSH_owned_READY:octal\x1f\x1eDSSH_owned_BEGIN\x1f");
+        queue_session_input(&mut handle, "\x03".into()).unwrap();
+        assert!(matches!(rx.try_recv().unwrap(),SessionCommand::Input(s) if s=="\x03"));
+        assert_eq!(
+            receivers.result.try_recv().unwrap().unwrap_err().code,
+            "snapshot_cancelled"
+        );
+        assert!(!handle.snapshot_terminal.lock().unwrap().owns("owned"));
     }
 }

@@ -1,8 +1,12 @@
-//! Host tools: read-only system snapshots gathered by running a single
-//! whitelisted command over SSH (via [`run_ssh_command`]) and parsing the
+//! Host tools: per-tool read-only snapshots use a single whitelisted command
+//! over SSH (via [`run_ssh_command`]); [`server_snapshot`] concurrently collects
+//! independent server-report probes. Tool parsers turn the
 //! output into structured rows. Every parser is tolerant — on an unexpected
 //! layout it simply yields fewer rows, and the raw text is always returned so
 //! the UI can fall back to showing it verbatim.
+
+pub mod server_snapshot;
+pub mod terminal_snapshot;
 
 use serde::{Deserialize, Serialize};
 

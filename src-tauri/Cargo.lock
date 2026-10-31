@@ -1851,6 +1851,7 @@ dependencies = [
  "aws-sdk-s3",
  "aws-smithy-types",
  "base64 0.22.1",
+ "flate2",
  "font-kit",
  "futures",
  "genai",

@@ -14,7 +14,6 @@ interface ActivityBarProps {
   visibleNavigationIcons: readonly NavigationIconId[];
   onSelectActivity: (activity: ActivityId) => void;
   sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
   rightPanel: RightPanelId | null;
   onToggleRightPanel: (panel: RightPanelId) => void;
   onNewLocalTerminal: () => void;
@@ -32,7 +31,6 @@ export function ActivityBar({
   visibleNavigationIcons,
   onSelectActivity,
   sidebarCollapsed,
-  onToggleSidebar,
   rightPanel,
   onToggleRightPanel,
   onNewLocalTerminal,
@@ -45,29 +43,26 @@ export function ActivityBar({
   return (
     <nav className="activity-bar is-glass-chrome" aria-label="主导航">
       <div className="activity-bar__top">
-        <IconButton
-          active={!sidebarCollapsed}
-          className="activity-toggle"
-          label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
-          onClick={onToggleSidebar}
-        >
-          <Icon name="panelLeft" />
-        </IconButton>
-        <div className="activity-bar__divider" />
-        {visibleActivities.map((activity) => (
-          <IconButton
-            key={activity.id}
-            active={activeActivity === activity.id}
-            label={activity.label}
-            onClick={() => onSelectActivity(activity.id)}
-          >
-            <Icon name={activity.icon} />
-          </IconButton>
-        ))}
+        {visibleActivities.map((activity) => {
+          const expanded = activeActivity === activity.id
+            && (activity.id === "connections" || !sidebarCollapsed);
+          return (
+            <IconButton
+              key={activity.id}
+              active={expanded}
+              aria-expanded={expanded}
+              label={activity.label}
+              onClick={() => onSelectActivity(activity.id)}
+            >
+              <Icon name={activity.icon} />
+            </IconButton>
+          );
+        })}
         {showAssistant && visibleActivities.length > 0 ? <div className="activity-bar__divider" /> : null}
         {showAssistant ? (
           <IconButton
             active={rightPanel === "assistant"}
+            aria-expanded={rightPanel === "assistant"}
             label="AI 助手"
             onClick={() => onToggleRightPanel("assistant")}
           >

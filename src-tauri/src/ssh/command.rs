@@ -4,7 +4,7 @@ use russh::ChannelMsg;
 use serde::Serialize;
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     models::ssh_profile::SshProfile,
     ssh::{ChannelOwner, SshConnectionPool, transport_recovering_error},
 };
@@ -34,7 +34,7 @@ pub async fn run_ssh_command(
 
 /// Run an SSH exec command with a hard combined stdout/stderr byte cap, so a
 /// faulty remote process cannot grow the desktop process without bound.
-async fn run_ssh_command_with_limit(
+pub(crate) async fn run_ssh_command_with_limit(
     profile: SshProfile,
     command: String,
     timeout_secs: u64,
@@ -44,8 +44,11 @@ async fn run_ssh_command_with_limit(
     let transport = pool.acquire(profile, ChannelOwner::Exec).await?;
     let (mut channel, _channel_lease) = transport.open_session_channel().await?;
     if channel.exec(true, command.as_bytes()).await.is_err() {
-        transport.invalidate().await;
-        return Err(transport_recovering_error());
+        if transport.is_closed().await {
+            transport.invalidate().await;
+            return Err(transport_recovering_error());
+        }
+        return Err(AppError::new("ssh_exec_failed", "无法发送 SSH 命令。"));
     }
 
     let mut stdout: Vec<u8> = Vec::new();
@@ -53,6 +56,7 @@ async fn run_ssh_command_with_limit(
     let mut exit_code: Option<u32> = None;
     let mut channel_closed = false;
     let mut output_truncated = false;
+    let mut exec_rejected = false;
 
     let read_loop = async {
         loop {
@@ -76,6 +80,10 @@ async fn run_ssh_command_with_limit(
                     stderr.extend_from_slice(&data);
                 }
                 Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = Some(exit_status),
+                Some(ChannelMsg::Failure) => {
+                    exec_rejected = true;
+                    break;
+                }
                 // The server sends EOF *before* the exit-status request, so keep
                 // reading after EOF; only stop once the channel actually closes.
                 Some(ChannelMsg::Close) | None => {
@@ -90,12 +98,26 @@ async fn run_ssh_command_with_limit(
     let timed_out = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), read_loop)
         .await
         .is_err();
-    if timed_out || output_truncated {
+    if timed_out || output_truncated || exec_rejected {
         let _ = channel.close().await;
     }
+    // A policy rejection (common on gateways) is channel-local. Never tear
+    // down live PTYs/SFTP just because the server does not permit exec.
+    if exec_rejected {
+        return Err(AppError::new(
+            "ssh_exec_rejected",
+            "服务器拒绝 SSH exec 命令（网关可能仅允许交互终端）。",
+        ));
+    }
     if !timed_out && channel_closed && exit_code.is_none() {
-        transport.invalidate().await;
-        return Err(transport_recovering_error());
+        if transport.is_closed().await {
+            transport.invalidate().await;
+            return Err(transport_recovering_error());
+        }
+        return Err(AppError::new(
+            "ssh_exec_closed",
+            "SSH exec 通道提前关闭，未返回退出状态。",
+        ));
     }
 
     Ok(CommandOutput {

@@ -625,7 +625,16 @@ impl ConnectionLease {
         let handle = handle
             .as_ref()
             .ok_or_else(|| AppError::new("ssh_transport_unavailable", "共享 SSH 连接暂不可用。"))?;
-        let channel = handle.channel_open_session().await.map_err(ssh_error);
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|error| match error {
+                russh::Error::ChannelOpenFailure(_) => AppError::new(
+                    "ssh_channel_open_rejected",
+                    "服务器拒绝新的 SSH 会话通道（可能达到 MaxSessions 限制）。",
+                ),
+                other => ssh_error(other),
+            });
         match channel {
             Ok(channel) => {
                 channel_lease.mark_opened();

@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ServerSnapshotButton } from "../hosttools/snapshot/ServerSnapshotButton";
 import type { DetachedWorkspace } from "../models";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
@@ -497,6 +498,7 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
           </button>
         </div>
         <span className="detached-workspace__tab-spacer" />
+        <ServerSnapshotButton session={visibleSessions.find(s => s.id === (layout?.focusedPaneId ?? activeSession?.id)) ?? null} />
         <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`} type="button"><Icon name="splitH" height="15" width="15" /></button>
         <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`} type="button"><Icon name="splitV" height="15" width="15" /></button>
         {hasSessionBar ? (
