@@ -11,3 +11,5 @@ pub mod server_snapshot;
 
 pub mod browser;
 pub mod rdp;
+
+pub mod jumpserver;

@@ -33,6 +33,7 @@ pub struct AppState {
     pub detached_workspaces: DetachedWorkspaceManager,
     pub app_lock: lock::AppLockManager,
     pub rdp: crate::rdp::RdpManager,
+    pub jumpserver: crate::jumpserver::JumpServerManager,
 }
 
 impl AppState {
@@ -77,6 +78,7 @@ impl AppState {
             detached_workspaces: DetachedWorkspaceManager::default(),
             app_lock,
             rdp: crate::rdp::RdpManager::default(),
+            jumpserver: crate::jumpserver::JumpServerManager::default(),
         })
     }
 }

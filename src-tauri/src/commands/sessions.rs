@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State, Webview};
 
 use crate::{
     app::AppState,
@@ -30,7 +30,18 @@ pub fn start_ssh_session(
     app_handle: AppHandle,
     state: State<'_, AppState>,
     request: StartSshSessionRequest,
+    webview: Webview,
 ) -> AppResult<TerminalSession> {
+    if crate::jumpserver::is_target(&request.profile_id) {
+        crate::browser::trusted(&webview)?;
+        if app_handle.state::<AppState>().app_lock.status()?.locked {
+            return Err(AppError::new("jumpserver_locked", "请先解锁 Duo SSH。"));
+        }
+        let profile = state.jumpserver.source(&request.profile_id)?;
+        return state
+            .sessions
+            .start_session(app_handle, profile, request.size);
+    }
     let profile = state
         .profiles
         .get_profile(&request.profile_id)?

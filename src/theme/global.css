@@ -101,6 +101,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-pill: 999px;
+  --connection-type-select-width: 128px;
   --shadow-soft: 0 8px 24px rgb(0 0 0 / 45%);
   --shadow-popover: 0 10px 28px rgb(0 0 0 / 34%);
 
@@ -1735,6 +1736,9 @@ button {
 }
 .session-manager__group {
   order: 1;
+}
+.session-manager__group .select-menu {
+  width: var(--connection-type-select-width);
 }
 .session-manager__sort {
   order: 2;

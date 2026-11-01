@@ -73,12 +73,14 @@ export function SelectMenu({
   value,
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
+  const canOpen = !disabled && options.length > 0;
   const [searchQuery, setSearchQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const previousValueRef = useRef(value);
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
+  useEffect(() => { if (!canOpen) setOpen(false); }, [canOpen]);
   const filteredOptions = useMemo(
     () => {
       if (!searchable || !searchQuery.trim()) {
@@ -165,6 +167,7 @@ export function SelectMenu({
   }
 
   function handleTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (!canOpen) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       if (open) {
@@ -195,15 +198,15 @@ export function SelectMenu({
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         className={`select-menu__trigger${open ? " is-open" : ""}`}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        disabled={!canOpen}
+        onClick={() => { if (canOpen) setOpen((current) => !current); }}
         onKeyDown={handleTriggerKeyDown}
         type="button"
       >
-        <span>{selected?.label}</span>
+        <span>{selected?.label ?? "暂无选项"}</span>
         <Icon name="chevron-down" height="14" width="14" />
       </button>
-      {open ? (
+      {open && canOpen ? (
         <div className="select-menu__popover is-glass-overlay">
           {searchable ? (
             <input

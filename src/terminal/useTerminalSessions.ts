@@ -1,3 +1,4 @@
+import { onJumpServerTargetsClosed } from "../services/jumpserverService";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listDetachedWorkspaces } from "../services/workspaceService";
 import { workspaceSessionIds } from "../models/workspace";
@@ -391,7 +392,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   );
 
   const startSession = useCallback(async (
-    profile: SshProfile,
+    profile: Pick<SshProfile, "id">,
     size: TerminalSize = initialSize,
     options?: { activate?: boolean },
   ) => {
@@ -563,6 +564,15 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
       return nextSessions;
     });
   }, []);
+
+  useEffect(() => {
+    const listener = onJumpServerTargetsClosed((ids) => {
+      for (const session of sessionsRef.current) {
+        if (ids.includes(session.profileId)) forgetSession(session.id);
+      }
+    });
+    return () => { void listener.then((unlisten) => unlisten()); };
+  }, [forgetSession]);
 
   const closeSession = useCallback(async (sessionId: string) => {
     await closeSshSession(sessionId);

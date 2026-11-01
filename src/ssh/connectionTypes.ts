@@ -1,14 +1,28 @@
+import type { JumpServerProfile } from "../models/jumpserver";
 import type { SshProfile } from "../models";
 import type { RdpConnectionProfile } from "../models/rdp";
 import type { IconName } from "../ui/Icon";
 
 /**
  * The connection-type catalogue is intentionally independent from SshProfile.
- * SSH and RDP keep their own persisted DTOs and are aggregated only for display.
+ * SSH, RDP and JumpServer keep their own persisted DTOs and are aggregated only for display.
  * Future protocols can join without adding unrelated fields to SshProfile.
  */
-export type ConnectionType = "ssh" | "telnet" | "sftp" | "rdp";
-export type ConnectionProfile = SshProfile | RdpConnectionProfile;
+export type ConnectionType = "ssh" | "telnet" | "sftp" | "rdp" | "jumpserver";
+export type JumpServerConnectionProfile = JumpServerProfile & {
+  protocol: "jumpserver";
+  host: string; port: number; username: string;
+  favorite: false; tags: string[]; description: string;
+};
+export type ConnectionProfile = SshProfile | RdpConnectionProfile | JumpServerConnectionProfile;
+export function isJumpServerProfile(profile: ConnectionProfile): profile is JumpServerConnectionProfile {
+  return "protocol" in profile && profile.protocol === "jumpserver";
+}
+export function jumpServerConnectionProfile(profile: JumpServerProfile): JumpServerConnectionProfile {
+  const url = new URL(profile.coreUrl);
+  return { ...profile, protocol: "jumpserver", host: url.hostname, port: Number(url.port) || 443,
+    username: profile.username ?? "", favorite: false, tags: [], description: "授权资产目录 · SSH 终端" };
+}
 export function isRdpProfile(profile: ConnectionProfile): profile is RdpConnectionProfile {
   return "protocol" in profile && profile.protocol === "rdp";
 }
@@ -22,6 +36,7 @@ export interface ConnectionTypeOption {
 }
 
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
+  { available: true, description: "堡垒机授权资产目录与终端", icon: "stackedHexagon", id: "jumpserver", label: "JumpServer" },
   { available: true, description: "Windows 远程桌面（独立窗口）", icon: "monitor", id: "rdp", label: "RDP" },
   {
     available: true,
@@ -61,7 +76,7 @@ export interface ConnectionTypeGroup {
 
 /** Connection cards use a discriminator; legacy SSH DTOs remain compatible. */
 export function connectionTypeForProfile(profile: ConnectionProfile): ConnectionType {
-  return isRdpProfile(profile) ? "rdp" : "ssh";
+  return isJumpServerProfile(profile) ? "jumpserver" : isRdpProfile(profile) ? "rdp" : "ssh";
 }
 
 export function connectionTypeLabel(type: ConnectionType): string {

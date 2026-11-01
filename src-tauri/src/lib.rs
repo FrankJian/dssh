@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod error;
 pub mod forwarding;
 pub mod hosttools;
+pub mod jumpserver;
 pub mod models;
 pub mod rdp;
 pub mod s3;
@@ -45,6 +46,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(browser::guard(tauri::generate_handler![
+            commands::jumpserver::list_jumpserver_profiles,
+            commands::jumpserver::save_jumpserver_profile,
+            commands::jumpserver::delete_jumpserver_profile,
+            commands::jumpserver::jumpserver_login,
+            commands::jumpserver::jumpserver_verify_otp,
+            commands::jumpserver::jumpserver_cancel_login,
+            commands::jumpserver::jumpserver_open_ssh_gateway,
+            commands::jumpserver::jumpserver_identity,
+            commands::jumpserver::jumpserver_list_assets,
+            commands::jumpserver::jumpserver_list_nodes,
+            commands::jumpserver::jumpserver_list_accounts,
+            commands::jumpserver::jumpserver_open_terminal,
+            commands::jumpserver::jumpserver_logout,
             commands::rdp::rdp_engine_status,
             commands::rdp::list_rdp_profiles,
             commands::rdp::save_rdp_profile,
@@ -193,6 +207,7 @@ pub fn run() {
                 ..
             } => {
                 app.state::<app::AppState>().rdp.close_owner(Some(&label));
+                app.state::<app::AppState>().jumpserver.cancel_owner(&label);
             }
             tauri::RunEvent::Exit => app.state::<app::AppState>().rdp.close_owner(None),
             _ => {}

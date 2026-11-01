@@ -1,3 +1,4 @@
+import { isJumpServerSource } from "../models/jumpserver";
 import { useMemo, useState, type ReactNode } from "react";
 import type { SshProfile, TerminalSession } from "../models";
 import type { SessionStatus } from "../models/terminal";
@@ -56,7 +57,7 @@ function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): Sessio
       key,
       kind: "ssh",
       title: profile?.name ?? nodeSessions[0]?.title ?? "SSH",
-      subtitle: profile ? `${profile.username}@${profile.host}:${profile.port}` : "",
+      subtitle: profile ? `${profile.username}@${profile.host}:${profile.port}` : isJumpServerSource(key) ? "经 KoKo · SSH 终端" : "",
       profile,
       sessions: nodeSessions,
       status: aggregateStatus(nodeSessions),
@@ -222,7 +223,7 @@ export function SessionTree({
                         <span>SFTP</span>
                       </button>
                     ) : null}
-                    {node.kind === "ssh" ? (
+                    {node.kind === "ssh" && node.profile ? (
                       <button
                         className="session-child"
                         onClick={() => onOpenForward(node)}

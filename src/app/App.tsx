@@ -1,10 +1,16 @@
+import { JumpServerWorkspace } from "../jumpserver/JumpServerWorkspace";
+import { isJumpServerSource, type JumpServerProfile } from "../models/jumpserver";
+import { useJumpServerProfiles } from "../jumpserver/useJumpServerProfiles";
+import { JumpServerProfileEditor } from "../jumpserver/JumpServerProfileEditor";
+import { JumpServerDeleteDialog } from "../jumpserver/JumpServerDeleteDialog";
+import { deleteJumpServerProfile } from "../services/jumpserverService";
 import { reconcileWorkspaceTabFocus } from "./workspaceTabFocus";
 import { useRdp } from "../rdp/useRdp";
 import { RdpProfileEditor } from "../rdp/RdpProfileEditor";
 import { RdpConnectDialog } from "../rdp/RdpConnectDialog";
 import { RdpSessionList } from "../rdp/RdpSessionList";
 import type { RdpProfile } from "../models/rdp";
-import { isRdpProfile, type ConnectionProfile } from "../ssh/connectionTypes";
+import { isRdpProfile, isJumpServerProfile, jumpServerConnectionProfile, type ConnectionProfile } from "../ssh/connectionTypes";
 import { startRdpSession, closeRdpSession, focusRdpSession, saveRdpProfile, deleteRdpProfile } from "../services/rdpService";
 import { RdpDeleteDialog } from "../rdp/RdpDeleteDialog";
 import "../rdp/rdp.css";
@@ -407,6 +413,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     renameTag,
   } = useProfiles();
   const s3Profiles = useS3Profiles();
+  const jumpservers = useJumpServerProfiles(appLock.status?.locked ?? true);
+  const [jumpServerOpen, setJumpServerOpen] = useState<string | null>(null);
+  const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null } | null>(null);
+  const [jumpServerDelete, setJumpServerDelete] = useState<JumpServerProfile | null>(null);
   const {
     activeSessionId,
     isSessionsLoaded,
@@ -469,7 +479,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     void connectRdp(profile).catch((e: Error) => toast(e.message, "error"));
   }
   function connectManagedProfile(profile: ConnectionProfile) {
-    if (isRdpProfile(profile)) openRdp(profile); else handleConnectProfile(profile);
+    if (isJumpServerProfile(profile)) { setJumpServerOpen(profile.id); recordUse(profile.id); setActiveActivity("connections"); }
+    else if (isRdpProfile(profile)) openRdp(profile); else handleConnectProfile(profile);
   }
   function reconnectRdp(profileId: string) {
     const profile = rdp.profiles.find((p) => p.id === profileId);
@@ -1067,13 +1078,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       source?.kind === "ssh"
         ? (profiles.find((profile) => profile.id === source.profileId) ?? null)
         : null;
-    if (!source || (source.kind === "ssh" && !sourceProfile)) {
+    if (!source || (source.kind === "ssh" && !sourceProfile && !isJumpServerSource(source.profileId))) {
       toast("原终端的连接配置已不存在，无法创建分屏。", "error");
       return;
     }
     try {
       const session = source.kind === "ssh"
-        ? await startSession(sourceProfile!, undefined, { activate: false })
+        ? await startSession(sourceProfile ?? { id: source.profileId }, undefined, { activate: false })
         : await startLocalSession({ activate: false });
       panes.split(dir, currentId, session.id);
       setActiveSessionId(session.id);
@@ -1168,6 +1179,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   async function handleNewTerminalForNode(node: SessionNode) {
     if (node.kind === "ssh" && node.profile) {
       await handleConnectProfile(node.profile);
+    } else if (node.kind === "ssh") {
+      const source = node.sessions[0];
+      if (source && isJumpServerSource(source.profileId)) {
+        try { await startSession({ id: source.profileId }); showTerminalSurface(); }
+        catch (error) { toast(error instanceof Error ? error.message : "无法新建资产终端。", "error"); }
+      }
     } else {
       await handleStartLocalSession();
     }
@@ -1321,6 +1338,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
   const activePaneLayout = panes.findLayout(activeSessionId);
+  const focusedSnapshotSession = sessions.find((session) => session.id === (activePaneLayout?.focusedPaneId ?? activeSessionId));
+  const snapshotSession = focusedSnapshotSession && !isJumpServerSource(focusedSnapshotSession.profileId) ? focusedSnapshotSession : null;
 
   const toggleTerminalFullscreen = useCallback(() => {
     const paneId = activePaneLayout?.focusedPaneId ?? activeSessionId;
@@ -1467,6 +1486,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     if (!source) return;
     if (source.kind === "local") {
       await handleStartLocalSession();
+      return;
+    }
+    if (isJumpServerSource(source.profileId)) {
+      try { await startSession({ id: source.profileId }, terminalSize(tab.id) ?? undefined); showTerminalSurface(); }
+      catch (error) { toast(error instanceof Error ? error.message : "无法新建资产终端。", "error"); }
       return;
     }
     const profile = profiles.find((item) => item.id === source.profileId);
@@ -1740,20 +1764,31 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   let mainSurface: ReactNode;
   if (isConnections) {
-    mainSurface = (
+    mainSurface = jumpServerOpen ? (
+      <JumpServerWorkspace profile={jumpservers.profiles.find((p) => p.id === jumpServerOpen) ?? null}
+        loading={jumpservers.loading} error={jumpservers.error}
+        onBack={() => setJumpServerOpen(null)} onCreate={() => setJumpServerEditor({ profile: null })}
+        onEdit={() => { const profile = jumpservers.profiles.find((p) => p.id === jumpServerOpen); if (profile) setJumpServerEditor({ profile }); }}
+        onDelete={() => { const profile = jumpservers.profiles.find((p) => p.id === jumpServerOpen); if (profile) setJumpServerDelete(profile); }}
+        onTerminal={async (session) => {
+        try { await attachSession(session); showTerminalSurface(); }
+        catch (error) { await closeSession(session.id).catch(() => undefined); throw error; }
+      }} />
+    ) : (
       <SessionManager
-        profiles={[...profiles, ...rdp.profiles]}
+        onCreateJumpServer={() => setJumpServerEditor({ profile: null })}
+        profiles={[...profiles, ...rdp.profiles, ...jumpservers.profiles.map(jumpServerConnectionProfile)]}
         recentIds={recentIds}
         recentLimit={recentConnectionsLimit}
         activeSessionCount={visibleSessions.length + rdp.sessions.filter((s) => !["closed", "failed"].includes(s.status)).length}
-        isLoading={isLoading}
-        errorMessage={errorMessage ?? rdp.error}
+        isLoading={isLoading || jumpservers.loading}
+        errorMessage={errorMessage ?? rdp.error ?? jumpservers.error}
         onConnect={connectManagedProfile}
         onCreate={(initialTags) => setEditorState({ mode: "create", profile: null, initialTags })}
         onCreateRdp={(initialTags) => setRdpEditor({ profile: null, initialTags })}
-        onEdit={(profile) => { if (isRdpProfile(profile)) setRdpEditor({ profile }); else openEditProfile(profile); }}
-        onDelete={(profile) => { if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
-        onToggleFavorite={(profile) => { if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
+        onEdit={(profile) => { if (isJumpServerProfile(profile)) setJumpServerEditor({ profile }); else if (isRdpProfile(profile)) setRdpEditor({ profile }); else openEditProfile(profile); }}
+        onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
+        onToggleFavorite={(profile) => { if (isJumpServerProfile(profile)) return; if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
         onRenameTag={async (oldTag, newTag) => {
           await renameTag(oldTag, newTag);
           await Promise.all(rdp.profiles.filter((p) => p.tags.includes(oldTag)).map((p) => saveRdpProfile({ ...p, tags: p.tags.map((t) => t === oldTag ? newTag : t) }, { action: "keep" })));
@@ -1866,6 +1901,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
+      { id: "act:jumpserver", label: "新建 JumpServer 连接", hint: "连接", icon: "stackedHexagon", keywords: "jumpserver 堡垒机 资产", run: () => setJumpServerEditor({ profile: null }) },
+      ...jumpservers.profiles.map((profile): PaletteItem => ({ id: `jumpserver:${profile.id}`, label: `打开资产 · ${profile.name}`, hint: "JumpServer", icon: "stackedHexagon", keywords: `jumpserver ${profile.coreUrl}`, run: () => connectManagedProfile(jumpServerConnectionProfile(profile)) })),
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
@@ -1978,7 +2015,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         keywords: "close 关闭",
         run: () => void handleClosePane(activeSession.id),
       });
-      items.push({
+      if (!isJumpServerSource(activeSession.profileId)) items.push({
         id: "act:file-list-current",
         label: fileTreeSessionId === activeSession.id ? "关闭当前文件列表" : "打开当前文件列表",
         hint: "文件",
@@ -2230,7 +2267,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                       onOpenHostTools={canForward ? () => toggleRightPanel("hosttools") : undefined}
                       onOpenPortForward={canForward ? handleOpenPortForward : undefined}
                     />
-                    <ServerSnapshotButton session={sessions.find(s => s.id === (activePaneLayout?.focusedPaneId ?? activeSession?.id)) ?? null} />
+                    <ServerSnapshotButton session={snapshotSession} />
                     <button
                       className="tab-action"
                       disabled={!activeCanSplit}
@@ -2308,9 +2345,20 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           onClose={closeEditor}
           onSubmit={handleSubmitProfile}
           profile={editorState.profile}
+          onCreateJumpServer={() => { setJumpServerEditor({ profile: null }); closeEditor(); }}
           onCreateRdp={() => { setRdpEditor({ profile: null, initialTags: editorState.initialTags }); closeEditor(); }}
         />
       ) : null}
+      {jumpServerEditor ? <JumpServerProfileEditor profile={jumpServerEditor.profile}
+        onClose={() => setJumpServerEditor(null)} onSaved={async (profile) => {
+          await jumpservers.reload(); setJumpServerEditor(null); setJumpServerOpen(profile.id); setActiveActivity("connections");
+        }} /> : null}
+      {jumpServerDelete ? <JumpServerDeleteDialog profile={jumpServerDelete} onClose={() => setJumpServerDelete(null)}
+        onDelete={async () => {
+          await deleteJumpServerProfile(jumpServerDelete.id); await jumpservers.reload();
+          if (jumpServerOpen === jumpServerDelete.id) setJumpServerOpen(null);
+          setJumpServerDelete(null);
+        }} /> : null}
       {rdpEditor ? <RdpProfileEditor profile={rdpEditor.profile} initialTags={rdpEditor.initialTags}
         allTags={[...new Set([...allTags, ...rdp.profiles.flatMap((p) => p.tags)])]} engine={rdp.engine}
         onClose={() => setRdpEditor(null)} onSaved={rdp.reload} /> : null}

@@ -316,6 +316,12 @@ impl SshConnectionPool {
         profile: SshProfile,
         owner: ChannelOwner,
     ) -> AppResult<ConnectionLease> {
+        if crate::jumpserver::is_target(&profile.id) && owner != ChannelOwner::Terminal {
+            return Err(AppError::new(
+                "jumpserver_capability",
+                "此 JumpServer 来源当前仅支持交互终端。",
+            ));
+        }
         self.evict_idle().await;
         let key = ConnectionKey::from_profile(&profile);
 
@@ -333,7 +339,15 @@ impl SshConnectionPool {
 
         if should_connect {
             self.inner.auth_prompts.begin_profile_attempt(&profile.id);
-            return self.connect_entry(key, entry, profile, owner).await;
+            let mut pending = PendingGrantConnection {
+                pool: self.clone(),
+                key: key.clone(),
+                entry: entry.clone(),
+                armed: crate::jumpserver::is_target(&profile.id),
+            };
+            let result = self.connect_entry(key, entry, profile, owner).await;
+            pending.armed = false;
+            return result;
         }
 
         match entry.wait_until_ready().await {
@@ -786,6 +800,23 @@ impl ConnectionLease {
             return;
         }
 
+        if crate::jumpserver::is_target(&self.entry.profile.id) {
+            // A consumed one-time grant must never be reauthenticated by the pool.
+            self.entry
+                .set_state(EntryState::Failed(PoolFailure::from_error(&AppError::new(
+                    "jumpserver_grant_expired",
+                    "JumpServer 连接已中断，需要重新授权。",
+                ))))
+                .await;
+            if let Some(handle) = self.entry.handle.lock().await.take() {
+                let _ = handle
+                    .disconnect(Disconnect::ByApplication, "", "English")
+                    .await;
+            }
+            self.entry.record_transport_closed(&self.diagnostics);
+            self.pool.remove_if_same(&self.key, &self.entry).await;
+            return;
+        }
         self.entry.set_state(EntryState::Reconnecting).await;
         if let Some(handle) = self.entry.handle.lock().await.take() {
             let _ = handle
@@ -803,10 +834,59 @@ impl ConnectionLease {
     }
 }
 
+// Cancellation can happen during TOFU, authentication or a socket handshake.
+// Such an attempt has no lease yet, so ConnectionLease::drop cannot clean it.
+struct PendingGrantConnection {
+    pool: SshConnectionPool,
+    key: ConnectionKey,
+    entry: Arc<PoolEntry>,
+    armed: bool,
+}
+impl Drop for PendingGrantConnection {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let pool = self.pool.clone();
+        let key = self.key.clone();
+        let entry = self.entry.clone();
+        tauri::async_runtime::spawn(async move {
+            entry
+                .set_state(EntryState::Failed(PoolFailure::from_error(&AppError::new(
+                    "jumpserver_cancelled",
+                    "资产连接已取消。",
+                ))))
+                .await;
+            pool.remove_if_same(&key, &entry).await;
+            if let Some(handle) = entry.handle.lock().await.take() {
+                let _ = handle
+                    .disconnect(Disconnect::ByApplication, "", "English")
+                    .await;
+            }
+            entry.record_transport_closed(&pool.inner.diagnostics);
+        });
+    }
+}
+
 impl Drop for ConnectionLease {
     fn drop(&mut self) {
         let previous = self.entry.leases.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0, "connection lease count underflow");
+        if previous == 1 && crate::jumpserver::is_target(&self.entry.profile.id) {
+            let pool = self.pool.clone();
+            let key = self.key.clone();
+            let entry = self.entry.clone();
+            let diagnostics = self.diagnostics.clone();
+            tauri::async_runtime::spawn(async move {
+                pool.remove_if_same(&key, &entry).await;
+                if let Some(handle) = entry.handle.lock().await.take() {
+                    let _ = handle
+                        .disconnect(Disconnect::ByApplication, "", "English")
+                        .await;
+                }
+                entry.record_transport_closed(&diagnostics);
+            });
+        }
         if previous == 1
             && let Ok(mut last_released) = self.entry.last_released.lock()
         {
@@ -1002,5 +1082,17 @@ mod tests {
             super::next_reconnect_backoff(std::time::Duration::from_secs(15)),
             std::time::Duration::from_secs(15)
         );
+    }
+    #[test]
+    fn jumpserver_targets_and_authorization_generations_never_share_a_key() {
+        let mut a = profile();
+        a.id = "jms:asset-a".into();
+        a.updated_at = "grant-a".into();
+        let mut b = a.clone();
+        b.id = "jms:asset-b".into();
+        let mut refreshed = a.clone();
+        refreshed.updated_at = "grant-b".into();
+        assert!(ConnectionKey::from_profile(&a) != ConnectionKey::from_profile(&b));
+        assert!(ConnectionKey::from_profile(&a) != ConnectionKey::from_profile(&refreshed));
     }
 }

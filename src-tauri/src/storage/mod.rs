@@ -17,3 +17,5 @@ impl Default for StorageConfig {
         }
     }
 }
+
+pub mod jumpserver_repository;

@@ -11,7 +11,7 @@ import {
   type ConnectionProfile,
 } from "./connectionTypes";
 
-type ViewMode = "grid" | "list" | "tree";
+import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
 type Scope = "all" | "favorites" | "recent" | "untagged" | `tag:${string}`;
 type SortKey = "recent" | "name" | "host";
 
@@ -20,12 +20,6 @@ const SORT_KEY = "dssh.sessionManager.sort";
 const TYPE_FILTER_KEY = "dssh.sessionManager.typeFilter";
 
 type ConnectionTypeFilter = "all" | ConnectionType;
-
-const VIEW_OPTIONS: { id: ViewMode; label: string; icon: "connections" | "monitor" | "sessions" }[] = [
-  { id: "grid", label: "网格", icon: "monitor" },
-  { id: "list", label: "列表", icon: "connections" },
-  { id: "tree", label: "分组", icon: "sessions" },
-];
 
 const SORT_OPTIONS: { id: SortKey; label: string }[] = [
   { id: "recent", label: "最近使用" },
@@ -50,7 +44,7 @@ function loadSort(): SortKey {
 
 function loadTypeFilter(): ConnectionTypeFilter {
   const raw = localStorage.getItem(TYPE_FILTER_KEY);
-  return raw === "ssh" || raw === "telnet" || raw === "sftp" || raw === "rdp" ? raw : "all";
+  return raw === "ssh" || raw === "telnet" || raw === "sftp" || raw === "rdp" || raw === "jumpserver" ? raw : "all";
 }
 
 interface SessionManagerProps {
@@ -63,6 +57,7 @@ interface SessionManagerProps {
   onConnect: (profile: ConnectionProfile) => void;
   onCreate: (initialTags?: string[]) => void;
   onCreateRdp: (initialTags?: string[]) => void;
+  onCreateJumpServer: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDelete: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
@@ -79,6 +74,7 @@ export function SessionManager({
   onConnect,
   onCreate,
   onCreateRdp,
+  onCreateJumpServer,
   onEdit,
   onDelete,
   onToggleFavorite,
@@ -233,6 +229,7 @@ export function SessionManager({
   }
 
   function createConnection() {
+    if (typeFilter === "jumpserver") { onCreateJumpServer(); return; }
     (typeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
   }
 
@@ -296,21 +293,7 @@ export function SessionManager({
                 value={sort}
               />
             </div>
-            <div className="session-manager__views" role="group" aria-label="视图">
-              {VIEW_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  className={`session-manager__view ${view === option.id ? "is-active" : ""}`.trim()}
-                  onClick={() => changeView(option.id)}
-                  title={option.label}
-                  aria-label={option.label}
-                  aria-pressed={view === option.id}
-                  type="button"
-                >
-                  <Icon name={option.icon} height="15" width="15" />
-                </button>
-              ))}
-            </div>
+            <ConnectionViewToggle value={view} onChange={changeView} />
             <div className="session-manager__group">
               <span>类型</span>
               <SelectMenu

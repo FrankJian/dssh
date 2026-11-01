@@ -1,6 +1,6 @@
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
-import { connectionTypeLabel, connectionTypeForProfile, isRdpProfile, type ConnectionProfile } from "./connectionTypes";
+import { connectionTypeLabel, connectionTypeForProfile, isRdpProfile, isJumpServerProfile, type ConnectionProfile } from "./connectionTypes";
 import { profileIconName } from "./profileIcons";
 
 interface ConnectionCardProps {
@@ -24,28 +24,30 @@ export function ConnectionCard({
   onDelete,
   onToggleFavorite,
 }: ConnectionCardProps) {
+  const jumpserver = isJumpServerProfile(profile);
+  const address = jumpserver ? profile.coreUrl : `${profile.username}@${profile.host}:${profile.port}`;
   return (
-    <article className="conn-card" data-variant={variant} onDoubleClick={(event) => {
+    <article className="conn-card" data-variant={variant} data-profile-type={connectionTypeForProfile(profile)} onDoubleClick={(event) => {
       if (!(event.target as HTMLElement).closest("button")) onConnect();
     }}>
       <div className="conn-card__head">
         <span className="conn-card__icon">
-          <Icon name={isRdpProfile(profile) ? "monitor" : profileIconName(profile.icon)} height="18" width="18" />
+          <Icon name={jumpserver ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : profileIconName(profile.icon)} height="18" width="18" />
         </span>
         <div className="conn-card__title">
           <span className="conn-card__name" title={profile.name}>{profile.name}</span>
-          <span className="conn-card__host" title={`${profile.username}@${profile.host}:${profile.port}`}>
-            {profile.username}@{profile.host}:{profile.port}
+          <span className="conn-card__host" title={address}>
+            {address}
           </span>
         </div>
-        <IconButton
+        {!jumpserver && <IconButton
           active={profile.favorite}
           className="conn-card__fav"
           label={profile.favorite ? "取消收藏" : "收藏"}
           onClick={onToggleFavorite}
         >
           <Icon name="star" height="16" width="16" />
-        </IconButton>
+        </IconButton>}
       </div>
 
       {profile.tags.length > 0 || variant === "list" ? (
@@ -64,9 +66,9 @@ export function ConnectionCard({
       <span className="conn-card__type">{connectionTypeLabel(connectionTypeForProfile(profile))}{isRdpProfile(profile) && profile.skipCertificateVerification ? " · 未验证证书" : ""}</span>
 
       <div className="conn-card__actions">
-        <button className="conn-card__connect" aria-label={`连接 ${profile.name}`} onClick={onConnect} type="button">
+        <button className="conn-card__connect" aria-label={`${jumpserver ? "打开资产" : "连接"} ${profile.name}`} onClick={onConnect} type="button">
           <Icon name="play" height="14" width="14" />
-          <span>连接</span>
+          <span>{jumpserver ? "打开资产" : "连接"}</span>
         </button>
         <IconButton label="编辑" onClick={onEdit}>
           <Icon name="edit" height="16" width="16" />

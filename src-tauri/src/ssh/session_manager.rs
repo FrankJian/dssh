@@ -442,7 +442,8 @@ impl SessionManager {
             session_id.clone(),
             SessionHandle {
                 kind: TerminalSessionKind::Ssh,
-                snapshot_profile: Some(profile.clone()),
+                snapshot_profile: (!crate::jumpserver::is_target(&profile.id))
+                    .then(|| profile.clone()),
                 snapshot_terminal: Arc::new(Mutex::new(
                     crate::ssh::interactive_snapshot::TerminalSnapshotState::from_username(
                         &profile.username,
@@ -743,6 +744,12 @@ impl SessionManager {
                     && matches!(s.kind, TerminalSessionKind::Ssh)
             })
             .ok_or_else(|| AppError::new("snapshot_unavailable", "请先连接 SSH 终端。"))?;
+        if crate::jumpserver::is_target(&handle.profile_id) {
+            return Err(AppError::new(
+                "jumpserver_capability",
+                "资产工作台连接的服务器快照尚未开放，请使用已适配的手动终端路径。",
+            ));
+        }
         let label = handle
             .snapshot_profile
             .as_ref()
@@ -1045,6 +1052,18 @@ async fn run_ssh_session(
                 backoff = RECONNECT_BACKOFF_BASE;
             }
             Err(error) => {
+                if crate::jumpserver::is_target(&profile.id)
+                    && (error.code.starts_with("jumpserver_")
+                        && !matches!(
+                            error.code.as_str(),
+                            "jumpserver_network" | "jumpserver_server" | "jumpserver_rate_limit"
+                        )
+                        || error.code == "auth_error")
+                {
+                    // Approval, revoked permissions and expired identity need
+                    // user action; retrying cannot authorize them.
+                    return Err(error);
+                }
                 if error.code == "auth_prompt_cancelled" {
                     emit_status(
                         &app_handle,
@@ -1353,7 +1372,28 @@ async fn connect_and_run(
     output: &Arc<Mutex<String>>,
     pool: &SshConnectionPool,
 ) -> AppResult<ConnOutcome> {
-    let acquire = pool.acquire(profile.clone(), ChannelOwner::Terminal);
+    // Resolve a fresh, asset-bound grant for every attempt. The retained source
+    // profile contains no credentials and cannot be used for SFTP or exec.
+    let acquire = async {
+        if crate::jumpserver::is_target(&profile.id) {
+            let state = app_handle.state::<crate::app::AppState>();
+            if state.app_lock.status()?.locked {
+                return Err(AppError::new("jumpserver_locked", "请先解锁 Duo SSH。"));
+            }
+            let grant = state.jumpserver.prepare(&profile.id).await?;
+            let transport = pool.acquire(grant, ChannelOwner::Terminal).await?;
+            state.jumpserver.source(&profile.id)?;
+            if state.app_lock.status()?.locked {
+                return Err(AppError::new(
+                    "jumpserver_locked",
+                    "应用已锁定，资产连接已取消。",
+                ));
+            }
+            Ok(transport)
+        } else {
+            pool.acquire(profile.clone(), ChannelOwner::Terminal).await
+        }
+    };
     tokio::pin!(acquire);
     let mut early_input = String::new();
     let transport = loop {
@@ -1362,6 +1402,7 @@ async fn connect_and_run(
             command = rx.recv() => match command {
                 Some(SessionCommand::Resize(new_size)) => *size = new_size,
                 Some(SessionCommand::Input(data)) => {
+                    if crate::jumpserver::is_target(&profile.id) { continue; }
                     if early_input.len().saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
                         return Err(AppError::new("session_input_limit", "连接期间输入过多，请等待连接完成。"));
                     }

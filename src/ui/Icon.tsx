@@ -67,6 +67,7 @@ export type IconName =
   | "splitV"
   | "ssh"
   | "star"
+  | "stackedHexagon"
   | "stop"
   | "sun"
   | "system"
@@ -178,6 +179,14 @@ export function Icon({ name, ...props }: IconProps) {
           <rect height="6" rx="1.5" width="18" x="3" y="14" />
           <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
         </>
+      ) : null}
+      {/* Outline adaptation of the JumpServer layered hexagon mark:
+          https://download.jumpserver.org/images/jumpserver-logo.svg */}
+      {name === "stackedHexagon" ? (
+        <g strokeWidth="1.5">
+          <path d="m12 2 8.5 5v10L12 22l-8.5-5V7L12 2Z" />
+          <path d="m12 5-5 3 7 4-2 1-7-4M17 9l-7-4M19 11l-7 4-7-4M19 15l-7 4-7-4" />
+        </g>
       ) : null}
       {name === "linux" ? (
         <>

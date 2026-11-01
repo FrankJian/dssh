@@ -7,6 +7,7 @@ Duo SSH 是一个轻量、跨平台（Windows / macOS）的 SSH 管理桌面应�
 ## 功能
 
 **连接与会话**
+- **JumpServer 资产工作台（试验版）**：在新建连接中选择 JumpServer 类型，保存的平台与 SSH / RDP 一起展示；点击平台打开资产页，使用用户名和密码登录 Core，并在要求时输入 OTP，也可使用获准的 Access Key，以网格 / 列表 / 目录分组、搜索和分页浏览当前组织的授权资产，选择账号后经 KoKo 打开终端；支持分屏、新建终端、重新授权重连及跨窗口退出清理。密码 / Secret 可保存在系统凭据库，OTP 不保存；可关联已有 SSH 连接，沿用原来的密码 + OTP 交互终端。当前资产模式仅开放 SSH PTY，SSO / 审批、SFTP 与其他协议待适配；真实部署与 Windows 仍待验收，见[设计与实施边界](features/jumpserver-asset-workspace.md#10-首版实施情况)。
 - **RDP 远程桌面（试验版）**：连接管理中新增独立 RDP 配置与 Windows 原生桌面窗口，支持账号 / 域、固定分辨率、系统凭据库保存密码、证书 SHA-256 固定信任、活动会话与手动重连。当前面向 Windows Server 内网直连；macOS 本地原生边界测试已通过，真实 Windows Server 和 Windows 客户端仍待验收。原生引擎需随安装包构建，详见 [RDP 实施说明](features/rdp-implementation.md)。
 - SSH 连接配置的本地管理（增删改查，SQLite 存储），密码 / 密钥认证、keyboard-interactive OTP / 多因子认证，SOCKS5 / HTTP 代理
 - **会话树**：连接后按主机聚合成节点，展开即可新建终端 / 打开 SFTP / 端口转发 / 断开；一台主机可并行多个终端；下方提供收藏的快捷启动入口
