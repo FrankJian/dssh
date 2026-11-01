@@ -123,6 +123,55 @@ impl ProfileRepository {
         Ok(())
     }
 
+    pub fn rename_ssh_tag(&self, old_tag: &str, new_tag: &str) -> AppResult<()> {
+        let new_tag = new_tag.trim();
+        if old_tag.trim().is_empty() || new_tag.is_empty() {
+            return Err(AppError::new("invalid_tag", "标签名称不能为空。"));
+        }
+        if old_tag == new_tag {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let updates = {
+            let mut statement = transaction.prepare("SELECT id, tags FROM ssh_profiles")?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            let mut updates = Vec::new();
+            for row in rows {
+                let (id, stored_tags) = row?;
+                let tags = deserialize_tags(stored_tags.as_deref());
+                if tags.iter().any(|tag| tag == old_tag) {
+                    let tags = normalize_tags(
+                        tags.into_iter()
+                            .map(|tag| {
+                                if tag == old_tag {
+                                    new_tag.to_string()
+                                } else {
+                                    tag
+                                }
+                            })
+                            .collect(),
+                    );
+                    updates.push((id, serialize_tags(&tags)));
+                }
+            }
+            updates
+        };
+        let now = timestamp();
+        for (id, tags) in updates {
+            transaction.execute(
+                "UPDATE ssh_profiles SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                params![tags, now, id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn set_favorite(&self, id: &str, favorite: bool) -> AppResult<SshProfile> {
         let profile = self.get_profile(id)?.ok_or_else(|| {
             AppError::new(
@@ -1382,6 +1431,80 @@ impl From<&AuthMethod> for AuthFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_tag_rename_is_atomic_and_merges_exact_matches() {
+        let directory = std::env::temp_dir().join(format!(
+            "dssh-tag-rename-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        for (index, tags) in [
+            vec!["production", "shared"],
+            vec!["production", "renamed"],
+            vec!["production-backup"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            insert_profile(
+                &repository.connection().unwrap(),
+                &SshProfile {
+                    id: format!("tag-test-{index}"),
+                    created_at: timestamp(),
+                    updated_at: timestamp(),
+                    name: format!("host-{index}"),
+                    host: format!("host-{index}.example.test"),
+                    port: 22,
+                    username: "root".into(),
+                    auth_method: AuthMethod::Password { secret_ref: None },
+                    proxy: None,
+                    description: None,
+                    favorite: false,
+                    icon: "ssh".into(),
+                    tags: tags.into_iter().map(String::from).collect(),
+                },
+            )
+            .unwrap();
+        }
+        let before = repository.list_profiles().unwrap();
+        assert!(repository.rename_ssh_tag("production", "  ").is_err());
+        let connection = repository.connection().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_tag_update BEFORE UPDATE OF tags ON ssh_profiles
+             WHEN NEW.name = 'host-1' BEGIN SELECT RAISE(ABORT, 'test failure'); END;",
+            )
+            .unwrap();
+        assert!(repository.rename_ssh_tag("production", "renamed").is_err());
+        for (old, current) in before.iter().zip(repository.list_profiles().unwrap()) {
+            assert_eq!(old.tags, current.tags);
+            assert_eq!(old.updated_at, current.updated_at);
+        }
+        connection
+            .execute_batch("DROP TRIGGER reject_tag_update")
+            .unwrap();
+        repository
+            .rename_ssh_tag("production", " renamed ")
+            .unwrap();
+        let after = repository.list_profiles().unwrap();
+        assert_eq!(after[0].tags, vec!["renamed", "shared"]);
+        assert_eq!(after[1].tags, vec!["renamed"]);
+        assert_eq!(after[2].tags, vec!["production-backup"]);
+        for (old, current) in before.iter().zip(&after) {
+            let mut expected = serde_json::to_value(old).unwrap();
+            expected["tags"] = serde_json::to_value(&current.tags).unwrap();
+            expected["updatedAt"] = serde_json::to_value(&current.updated_at).unwrap();
+            assert_eq!(expected, serde_json::to_value(current).unwrap());
+        }
+        repository.rename_ssh_tag("renamed", "renamed").unwrap();
+        repository.rename_ssh_tag("missing", "unused").unwrap();
+        assert_eq!(repository.list_profiles().unwrap()[0].tags, after[0].tags);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn reasoning_mappings_persist_and_duplicate_levels_fail_without_changing_credentials() {

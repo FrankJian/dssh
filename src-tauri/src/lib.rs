@@ -66,6 +66,7 @@ pub fn run() {
             commands::profiles::create_ssh_profile,
             commands::profiles::update_ssh_profile,
             commands::profiles::delete_ssh_profile,
+            commands::profiles::rename_ssh_tag,
             commands::profiles::set_ssh_profile_favorite,
             commands::profiles::read_key_file,
             commands::s3::list_s3_profiles,

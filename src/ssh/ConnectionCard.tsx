@@ -26,14 +26,16 @@ export function ConnectionCard({
   onToggleFavorite,
 }: ConnectionCardProps) {
   return (
-    <article className="conn-card" data-variant={variant} onDoubleClick={onConnect}>
+    <article className="conn-card" data-variant={variant} onDoubleClick={(event) => {
+      if (!(event.target as HTMLElement).closest("button")) onConnect();
+    }}>
       <div className="conn-card__head">
         <span className="conn-card__icon">
           <Icon name={profileIconName(profile.icon)} height="18" width="18" />
         </span>
         <div className="conn-card__title">
-          <span className="conn-card__name">{profile.name}</span>
-          <span className="conn-card__host">
+          <span className="conn-card__name" title={profile.name}>{profile.name}</span>
+          <span className="conn-card__host" title={`${profile.username}@${profile.host}:${profile.port}`}>
             {profile.username}@{profile.host}:{profile.port}
           </span>
         </div>
@@ -47,20 +49,23 @@ export function ConnectionCard({
         </IconButton>
       </div>
 
-      {profile.tags.length > 0 ? (
+      {profile.tags.length > 0 || variant === "list" ? (
         <div className="conn-card__tags">
           {profile.tags.slice(0, 4).map((tag) => (
-            <span className="conn-card__tag" key={tag}>
+            <span className="conn-card__tag" key={tag} title={tag}>
               {tag}
             </span>
           ))}
+          {profile.tags.length > 4 ? <span className="conn-card__tag" title={profile.tags.slice(4).join("、")}>+{profile.tags.length - 4}</span> : null}
         </div>
       ) : null}
+
+      {variant === "grid" && profile.description ? <p className="conn-card__description" title={profile.description}>{profile.description}</p> : null}
 
       <span className="conn-card__type">{connectionTypeLabel(connectionTypeForProfile(profile))}</span>
 
       <div className="conn-card__actions">
-        <button className="conn-card__connect" onClick={onConnect} type="button">
+        <button className="conn-card__connect" aria-label={`连接 ${profile.name}`} onClick={onConnect} type="button">
           <Icon name="play" height="14" width="14" />
           <span>连接</span>
         </button>

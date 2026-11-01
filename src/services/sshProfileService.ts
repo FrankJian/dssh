@@ -34,6 +34,10 @@ export function deleteSshProfile(id: string) {
   return invokeCommand<void>("delete_ssh_profile", { id });
 }
 
+export function renameSshTag(oldTag: string, newTag: string) {
+  return invokeCommand<SshProfile[]>("rename_ssh_tag", { oldTag, newTag });
+}
+
 export function setSshProfileFavorite(id: string, favorite: boolean) {
   return invokeCommand<SshProfile>("set_ssh_profile_favorite", { id, favorite });
 }

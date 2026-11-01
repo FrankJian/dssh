@@ -24,6 +24,7 @@ interface ProfileEditorProps {
   mode: ProfileEditorMode;
   profile: SshProfile | null;
   allTags: string[];
+  initialTags?: string[];
   onClose: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
 }
@@ -38,18 +39,18 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, mode, onClose, onSubmit, profile }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, profile }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
-    profile ? profileToDraft(profile) : createEmptyProfileDraft(),
+    profile ? profileToDraft(profile) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] },
   );
   const [connectionType, setConnectionType] = useState<ConnectionType>("ssh");
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    setDraft(profile ? profileToDraft(profile) : createEmptyProfileDraft());
+    setDraft(profile ? profileToDraft(profile) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] });
     setConnectionType("ssh");
     setErrors([]);
-  }, [mode, profile]);
+  }, [initialTags, mode, profile]);
 
   function updateDraft<Field extends keyof ProfileDraft>(field: Field, value: ProfileDraft[Field]) {
     setDraft((currentDraft) => ({

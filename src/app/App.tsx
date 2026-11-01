@@ -107,6 +107,7 @@ import {
 interface EditorState {
   mode: ProfileEditorMode;
   profile: SshProfile | null;
+  initialTags?: string[];
 }
 
 interface S3EditorState {
@@ -385,6 +386,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     setSelectedProfileId,
     toggleFavorite,
     updateProfile,
+    renameTag,
   } = useProfiles();
   const s3Profiles = useS3Profiles();
   const {
@@ -1708,10 +1710,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         isLoading={isLoading}
         errorMessage={errorMessage}
         onConnect={handleConnectProfile}
-        onCreate={openCreateProfile}
+        onCreate={(initialTags) => setEditorState({ mode: "create", profile: null, initialTags })}
         onEdit={openEditProfile}
         onDelete={handleDeleteProfile}
         onToggleFavorite={handleToggleFavorite}
+        onRenameTag={renameTag}
       />
     );
   } else if (isS3) {
@@ -2249,6 +2252,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       {editorState ? (
         <ProfileEditor
           allTags={allTags}
+          initialTags={editorState.initialTags}
           mode={editorState.mode}
           onClose={closeEditor}
           onSubmit={handleSubmitProfile}

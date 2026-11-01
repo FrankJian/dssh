@@ -4,6 +4,7 @@ import {
   createSshProfile,
   deleteSshProfile,
   listSshProfiles,
+  renameSshTag,
   setSshProfileFavorite,
   updateSshProfile,
 } from "../services/sshProfileService";
@@ -133,6 +134,11 @@ export function useProfiles() {
     );
   }
 
+  async function renameTag(oldTag: string, newTag: string) {
+    const updatedProfiles = await renameSshTag(oldTag, newTag);
+    setProfiles(updatedProfiles);
+  }
+
   return {
     allTags,
     createProfile,
@@ -143,6 +149,7 @@ export function useProfiles() {
     profiles,
     query,
     reloadProfiles,
+    renameTag,
     selectedProfile,
     selectedProfileId,
     setQuery,

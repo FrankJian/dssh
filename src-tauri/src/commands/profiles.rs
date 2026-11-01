@@ -33,6 +33,16 @@ pub fn delete_ssh_profile(state: State<'_, AppState>, id: String) -> AppResult<(
 }
 
 #[tauri::command]
+pub fn rename_ssh_tag(
+    state: State<'_, AppState>,
+    old_tag: String,
+    new_tag: String,
+) -> AppResult<Vec<SshProfile>> {
+    state.profiles.rename_ssh_tag(&old_tag, &new_tag)?;
+    state.profiles.list_profiles()
+}
+
+#[tauri::command]
 pub fn set_ssh_profile_favorite(
     state: State<'_, AppState>,
     id: String,
