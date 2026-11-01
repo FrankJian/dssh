@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { SshProfile, TerminalSession } from "../models";
 import type { SessionStatus } from "../models/terminal";
 import { Icon } from "../ui/Icon";
@@ -65,6 +65,7 @@ function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): Sessio
 }
 
 interface SessionTreeProps {
+  remoteDesktops?: ReactNode;
   sessions: TerminalSession[];
   terminalNames: Record<string, string>;
   paneNames: Record<string, string>;
@@ -93,6 +94,7 @@ interface SessionTreeProps {
  * running and a shortcut to favorites, so the two don't duplicate each other.
  */
 export function SessionTree({
+  remoteDesktops,
   sessions,
   terminalNames,
   paneNames,
@@ -164,6 +166,7 @@ export function SessionTree({
       <div className="sidebar__top">
         <SectionHeader title="会话" />
       </div>
+      {remoteDesktops}
 
       {nodes.length > 0 ? (
         <div className="session-tree" role="tree" aria-label="活动会话">

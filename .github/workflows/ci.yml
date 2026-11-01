@@ -65,7 +65,11 @@ jobs:
         run: node --experimental-strip-types --test src/terminal/commandCompletion.test.mjs src/terminal/completionPosition.test.mjs src/settings/terminalInsets.test.mjs
 
       - name: Build frontend
+        # Session revisions prevent late RDP events from reviving closed windows.
         run: pnpm build
+
+      - name: Test RDP session state
+        run: pnpm test:rdp
 
   package:
     name: Package ${{ matrix.name }}
@@ -102,11 +106,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/build-rdp
+
       - name: Build unsigned test installer
+        # The native runtime is bundled using the RDP overlay below.
         # Test builds intentionally do not consume release signing secrets or
         # generate updater artifacts. The tag-triggered Release workflow remains
         # responsible for signed, published releases.
-        run: pnpm tauri build --no-sign --config src-tauri/tauri.ci.conf.json
+        run: pnpm tauri build --no-sign --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.rdp.conf.json
 
       - name: Upload macOS test installer
         if: matrix.name == 'macOS'

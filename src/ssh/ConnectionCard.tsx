@@ -1,11 +1,10 @@
-import type { SshProfile } from "../models";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
-import { connectionTypeLabel, connectionTypeForProfile } from "./connectionTypes";
+import { connectionTypeLabel, connectionTypeForProfile, isRdpProfile, type ConnectionProfile } from "./connectionTypes";
 import { profileIconName } from "./profileIcons";
 
 interface ConnectionCardProps {
-  profile: SshProfile;
+  profile: ConnectionProfile;
   variant: "grid" | "list";
   onConnect: () => void;
   onEdit: () => void;
@@ -31,7 +30,7 @@ export function ConnectionCard({
     }}>
       <div className="conn-card__head">
         <span className="conn-card__icon">
-          <Icon name={profileIconName(profile.icon)} height="18" width="18" />
+          <Icon name={isRdpProfile(profile) ? "monitor" : profileIconName(profile.icon)} height="18" width="18" />
         </span>
         <div className="conn-card__title">
           <span className="conn-card__name" title={profile.name}>{profile.name}</span>
@@ -62,7 +61,7 @@ export function ConnectionCard({
 
       {variant === "grid" && profile.description ? <p className="conn-card__description" title={profile.description}>{profile.description}</p> : null}
 
-      <span className="conn-card__type">{connectionTypeLabel(connectionTypeForProfile(profile))}</span>
+      <span className="conn-card__type">{connectionTypeLabel(connectionTypeForProfile(profile))}{isRdpProfile(profile) && profile.skipCertificateVerification ? " · 未验证证书" : ""}</span>
 
       <div className="conn-card__actions">
         <button className="conn-card__connect" aria-label={`连接 ${profile.name}`} onClick={onConnect} type="button">

@@ -32,6 +32,7 @@ pub struct AppState {
     pub ssh_pool: SshConnectionPool,
     pub detached_workspaces: DetachedWorkspaceManager,
     pub app_lock: lock::AppLockManager,
+    pub rdp: crate::rdp::RdpManager,
 }
 
 impl AppState {
@@ -75,6 +76,7 @@ impl AppState {
             ssh_pool,
             detached_workspaces: DetachedWorkspaceManager::default(),
             app_lock,
+            rdp: crate::rdp::RdpManager::default(),
         })
     }
 }

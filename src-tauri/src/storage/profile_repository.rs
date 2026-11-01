@@ -548,6 +548,7 @@ impl ProfileRepository {
             );",
         )?;
         connection.execute_batch(include_str!("../../migrations/009_ai_providers.sql"))?;
+        connection.execute_batch(include_str!("../../migrations/010_rdp_profiles.sql"))?;
         ensure_columns(&connection)?;
         Ok(())
     }
@@ -821,7 +822,7 @@ impl ProfileRepository {
         Ok(())
     }
 
-    fn connection(&self) -> AppResult<Connection> {
+    pub(super) fn connection(&self) -> AppResult<Connection> {
         Ok(Connection::open(&self.db_path)?)
     }
 }

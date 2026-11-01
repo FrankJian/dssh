@@ -90,6 +90,8 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/build-rdp
+
       - name: Build and upload to draft release
         uses: tauri-apps/tauri-action@v1
         env:
@@ -112,7 +114,7 @@ jobs:
           uploadUpdaterJson: true
           # 同时存在 NSIS 与 MSI 时，latest.json 使用 NSIS 的 setup.exe。
           updaterJsonPreferNsis: true
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.rdp.conf.json
 
   publish:
     name: Publish GitHub Release

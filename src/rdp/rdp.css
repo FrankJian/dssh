@@ -1,0 +1,18 @@
+.rdp-editor { width: min(var(--rdp-editor-width), calc(100vw - var(--space-6))); max-height: calc(100vh - var(--space-6)); overflow: auto; }
+.rdp-editor__form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.rdp-editor__form > p { margin: 0; }
+.rdp-editor__row { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-3); }
+.rdp-editor__row > * { min-width: 0; }
+.rdp-editor__actions, .rdp-sessions__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.rdp-sessions { border-top: 1px solid var(--border-subtle); padding: var(--space-3); }
+.rdp-sessions h3 { display: flex; gap: var(--space-2); align-items: center; font-size: var(--rdp-text-size); color: var(--text-muted); }
+.rdp-sessions__item { padding-block: var(--space-2); }
+.rdp-sessions__title { display: flex; gap: var(--space-2); justify-content: space-between; font-size: var(--rdp-text-size); }
+.rdp-sessions__title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdp-sessions__title > span:last-child, .rdp-sessions p { color: var(--text-muted); font-size: var(--rdp-caption-size); }
+.rdp-sessions p { overflow-wrap: anywhere; }
+.rdp-editor .rdp-security-warning, .rdp-sessions .rdp-security-warning { color: var(--warning); font-size: var(--rdp-text-size); }
+.rdp-editor input:disabled { opacity: var(--rdp-disabled-opacity); cursor: not-allowed; }
+.rdp-sessions__actions button { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-base); font-size: var(--rdp-caption-size); cursor: pointer; }
+.rdp-sessions__actions button:disabled { opacity: var(--rdp-disabled-opacity); cursor: default; }
+.rdp-sessions__actions button:focus-visible { outline: 1px solid var(--accent); }

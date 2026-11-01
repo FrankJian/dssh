@@ -83,6 +83,7 @@ export function TagInput({ value, suggestions, onChange }: TagInputProps) {
           </span>
         ))}
         <input
+          aria-label="连接标签"
           className="tag-input__field"
           onChange={(event) => {
             setInputValue(event.currentTarget.value);

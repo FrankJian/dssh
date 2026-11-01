@@ -10,3 +10,4 @@ pub mod workspace;
 pub mod server_snapshot;
 
 pub mod browser;
+pub mod rdp;

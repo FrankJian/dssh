@@ -27,6 +27,7 @@ interface ProfileEditorProps {
   initialTags?: string[];
   onClose: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
+  onCreateRdp?: () => void;
 }
 
 type ConnectionRoute = "direct" | "socks5" | "http";
@@ -39,7 +40,7 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, profile }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, profile, onCreateRdp }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     profile ? profileToDraft(profile) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] },
   );
@@ -141,7 +142,7 @@ export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, p
                 <span>连接类型</span>
                 <SelectMenu
                   ariaLabel="连接类型"
-                  onChange={(value) => setConnectionType(value as ConnectionType)}
+                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(); else setConnectionType(value as ConnectionType); }}
                   options={CONNECTION_TYPE_OPTIONS.map((option) => ({
                     disabled: !option.available,
                     label: option.available ? option.label : `${option.label}（即将支持）`,

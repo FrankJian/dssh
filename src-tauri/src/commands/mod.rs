@@ -11,3 +11,4 @@ pub mod sftp;
 pub mod workspace;
 
 pub mod browser;
+pub mod rdp;

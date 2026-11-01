@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { SshProfile } from "../models";
 import { Icon, type IconName } from "../ui/Icon";
 import { SelectMenu } from "../ui/SelectMenu";
 import { ConnectionCard } from "./ConnectionCard";
@@ -9,6 +8,7 @@ import {
   CONNECTION_TYPE_OPTIONS,
   connectionTypeForProfile,
   type ConnectionType,
+  type ConnectionProfile,
 } from "./connectionTypes";
 
 type ViewMode = "grid" | "list" | "tree";
@@ -50,21 +50,22 @@ function loadSort(): SortKey {
 
 function loadTypeFilter(): ConnectionTypeFilter {
   const raw = localStorage.getItem(TYPE_FILTER_KEY);
-  return raw === "ssh" || raw === "telnet" || raw === "sftp" ? raw : "all";
+  return raw === "ssh" || raw === "telnet" || raw === "sftp" || raw === "rdp" ? raw : "all";
 }
 
 interface SessionManagerProps {
-  profiles: SshProfile[];
+  profiles: ConnectionProfile[];
   recentIds: string[];
   recentLimit: number;
   activeSessionCount: number;
   isLoading: boolean;
   errorMessage: string | null;
-  onConnect: (profile: SshProfile) => void;
+  onConnect: (profile: ConnectionProfile) => void;
   onCreate: (initialTags?: string[]) => void;
-  onEdit: (profile: SshProfile) => void;
-  onDelete: (profileId: string) => void;
-  onToggleFavorite: (profileId: string) => void;
+  onCreateRdp: (initialTags?: string[]) => void;
+  onEdit: (profile: ConnectionProfile) => void;
+  onDelete: (profile: ConnectionProfile) => void;
+  onToggleFavorite: (profile: ConnectionProfile) => void;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
 }
 
@@ -77,6 +78,7 @@ export function SessionManager({
   errorMessage,
   onConnect,
   onCreate,
+  onCreateRdp,
   onEdit,
   onDelete,
   onToggleFavorite,
@@ -231,10 +233,10 @@ export function SessionManager({
   }
 
   function createConnection() {
-    onCreate(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
+    (typeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
   }
 
-  function renderCards(list: SshProfile[]) {
+  function renderCards(list: ConnectionProfile[]) {
     return (
       <div className={`session-manager__cards ${cardVariant === "list" ? "is-list" : "is-grid"}`}>
         {list.map((profile) => (
@@ -244,8 +246,8 @@ export function SessionManager({
             variant={cardVariant}
             onConnect={() => onConnect(profile)}
             onEdit={() => onEdit(profile)}
-            onDelete={() => onDelete(profile.id)}
-            onToggleFavorite={() => onToggleFavorite(profile.id)}
+            onDelete={() => onDelete(profile)}
+            onToggleFavorite={() => onToggleFavorite(profile)}
           />
         ))}
         {cardVariant === "grid" ? (

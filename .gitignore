@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 .vite
+.cache/
+src-tauri/rdp-runtime/*
+!src-tauri/rdp-runtime/.gitkeep
 *.local
 
 # Editor directories and files

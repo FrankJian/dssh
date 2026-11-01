@@ -1,4 +1,13 @@
 import { reconcileWorkspaceTabFocus } from "./workspaceTabFocus";
+import { useRdp } from "../rdp/useRdp";
+import { RdpProfileEditor } from "../rdp/RdpProfileEditor";
+import { RdpConnectDialog } from "../rdp/RdpConnectDialog";
+import { RdpSessionList } from "../rdp/RdpSessionList";
+import type { RdpProfile } from "../models/rdp";
+import { isRdpProfile, type ConnectionProfile } from "../ssh/connectionTypes";
+import { startRdpSession, closeRdpSession, focusRdpSession, saveRdpProfile, deleteRdpProfile } from "../services/rdpService";
+import { RdpDeleteDialog } from "../rdp/RdpDeleteDialog";
+import "../rdp/rdp.css";
 import { BrowserWindow, BrowserWorkspace } from "../browser/BrowserWindow";
 import { openBrowser, closeBrowserTab, detachBrowserTab, renameBrowserTab } from "../services/browserService";
 import { useBrowserTabs } from "../browser/useBrowserTabs";
@@ -220,6 +229,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
+  const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[] } | null>(null);
+  const [rdpConnectTarget, setRdpConnectTarget] = useState<RdpProfile | null>(null);
+  const [rdpDeleteTarget, setRdpDeleteTarget] = useState<RdpProfile | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
   const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<SshProfile | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
@@ -334,6 +346,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   const { setThemeMode, themeMode } = useTheme();
   const appLock = useAppLock();
+  const rdp = useRdp(appLock.status?.locked ?? true);
+  useEffect(() => {
+    if (appLock.status?.locked) {
+      setRdpConnectTarget(null); setRdpEditor(null); setRdpDeleteTarget(null);
+    }
+  }, [appLock.status?.locked]);
   const {
     commandCompletion,
     setCommandCompletion,
@@ -441,6 +459,25 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // rendering a terminal during the removal event would steal keyboard focus.
   const isBrowserActive = activeBrowserId !== null;
   const { recentIds, recordUse, displayLimit: recentConnectionsLimit, setDisplayLimit: setRecentConnectionsLimit } = useRecentConnections();
+  async function connectRdp(profile: RdpProfile, password?: string) {
+    if (!rdp.engine?.available) throw new Error(rdp.engine?.message ?? "RDP 引擎正在检查，请稍后重试。");
+    await startRdpSession(profile.id, password); recordUse(profile.id); await rdp.reload();
+  }
+  function openRdp(profile: RdpProfile) {
+    if (!rdp.engine?.available) { toast(rdp.engine?.message ?? "RDP 引擎正在检查。", "error"); return; }
+    if (!profile.hasPassword) { setRdpConnectTarget(profile); return; }
+    void connectRdp(profile).catch((e: Error) => toast(e.message, "error"));
+  }
+  function connectManagedProfile(profile: ConnectionProfile) {
+    if (isRdpProfile(profile)) openRdp(profile); else handleConnectProfile(profile);
+  }
+  function reconnectRdp(profileId: string) {
+    const profile = rdp.profiles.find((p) => p.id === profileId);
+    if (profile) openRdp(profile); else toast("RDP 配置已删除，请重新创建。", "error");
+  }
+  function rdpAction(action: Promise<unknown>) {
+    void action.catch((e: Error) => toast(e.message, "error"));
+  }
   const panes = usePaneLayout();
   const { workspaces: detachedWorkspaces, addWorkspace } = useDetachedWorkspaces();
   // A compact remote tree can be docked alongside one SSH terminal. It is a
@@ -1616,6 +1653,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         />
       ) : (
         <SessionTree
+          remoteDesktops={<RdpSessionList sessions={rdp.sessions} onFocus={(id) => rdpAction(focusRdpSession(id))}
+            onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} />}
           sessions={visibleSessions}
           terminalNames={Object.fromEntries(visibleSessions.map((session) => [session.id, terminalName(session)]))}
           paneNames={paneNames}
@@ -1703,18 +1742,23 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   if (isConnections) {
     mainSurface = (
       <SessionManager
-        profiles={profiles}
+        profiles={[...profiles, ...rdp.profiles]}
         recentIds={recentIds}
         recentLimit={recentConnectionsLimit}
-        activeSessionCount={visibleSessions.length}
+        activeSessionCount={visibleSessions.length + rdp.sessions.filter((s) => !["closed", "failed"].includes(s.status)).length}
         isLoading={isLoading}
-        errorMessage={errorMessage}
-        onConnect={handleConnectProfile}
+        errorMessage={errorMessage ?? rdp.error}
+        onConnect={connectManagedProfile}
         onCreate={(initialTags) => setEditorState({ mode: "create", profile: null, initialTags })}
-        onEdit={openEditProfile}
-        onDelete={handleDeleteProfile}
-        onToggleFavorite={handleToggleFavorite}
-        onRenameTag={renameTag}
+        onCreateRdp={(initialTags) => setRdpEditor({ profile: null, initialTags })}
+        onEdit={(profile) => { if (isRdpProfile(profile)) setRdpEditor({ profile }); else openEditProfile(profile); }}
+        onDelete={(profile) => { if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
+        onToggleFavorite={(profile) => { if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
+        onRenameTag={async (oldTag, newTag) => {
+          await renameTag(oldTag, newTag);
+          await Promise.all(rdp.profiles.filter((p) => p.tags.includes(oldTag)).map((p) => saveRdpProfile({ ...p, tags: p.tags.map((t) => t === oldTag ? newTag : t) }, { action: "keep" })));
+          await rdp.reload();
+        }}
       />
     );
   } else if (isS3) {
@@ -1816,6 +1860,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
+      { id: "act:new-rdp", label: "新建 RDP 远程桌面", hint: "连接", icon: "monitor", keywords: "windows remote desktop 远程桌面", run: () => setRdpEditor({ profile: null }) },
+      ...rdp.profiles.map((profile): PaletteItem => ({ id: `rdp:${profile.id}`, label: `远程桌面 · ${profile.name}`, hint: profile.host, icon: "monitor", keywords: `rdp windows ${profile.username} ${profile.tags.join(" ")}`, run: () => openRdp(profile) })),
+      ...rdp.sessions.filter((s) => s.status === "connected").map((session): PaletteItem => ({ id: `rdp-focus:${session.id}`, label: `打开桌面窗口 · ${session.title}`, hint: "活动会话", icon: "monitor", keywords: "rdp focus desktop", run: () => rdpAction(focusRdpSession(session.id)) })),
       { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
@@ -2136,8 +2183,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         panelHeight={assistantDock.height}
         onPanelHeightChange={assistantDock.setHeight}
         titleBar={zenMode || terminalFullscreenPaneId ? null : (
-          <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
-            {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
+          <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : " titlebar--sidebar-aligned"}`}>
+            {isMacOS ? null : (
+              <div className="titlebar__leading" data-tauri-drag-region>
+                <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />
+              </div>
+            )}
             {isS3 || isConnections ? null : (
               <div className="titlebar__workspace">
                 <WorkspaceTabStrip
@@ -2257,8 +2308,15 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           onClose={closeEditor}
           onSubmit={handleSubmitProfile}
           profile={editorState.profile}
+          onCreateRdp={() => { setRdpEditor({ profile: null, initialTags: editorState.initialTags }); closeEditor(); }}
         />
       ) : null}
+      {rdpEditor ? <RdpProfileEditor profile={rdpEditor.profile} initialTags={rdpEditor.initialTags}
+        allTags={[...new Set([...allTags, ...rdp.profiles.flatMap((p) => p.tags)])]} engine={rdp.engine}
+        onClose={() => setRdpEditor(null)} onSaved={rdp.reload} /> : null}
+      {rdpConnectTarget ? <RdpConnectDialog profile={rdpConnectTarget} onClose={() => setRdpConnectTarget(null)} onConnect={(password) => connectRdp(rdpConnectTarget, password)} /> : null}
+      {rdpDeleteTarget ? <RdpDeleteDialog profile={rdpDeleteTarget} onClose={() => setRdpDeleteTarget(null)}
+        onDelete={async () => { await deleteRdpProfile(rdpDeleteTarget.id); await rdp.reload(); setRdpDeleteTarget(null); }} /> : null}
       {s3EditorState ? (
         <S3ProfileEditor
           mode={s3EditorState.mode}

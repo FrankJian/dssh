@@ -8,6 +8,7 @@ pub mod error;
 pub mod forwarding;
 pub mod hosttools;
 pub mod models;
+pub mod rdp;
 pub mod s3;
 pub mod sftp;
 pub mod ssh;
@@ -44,6 +45,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(browser::guard(tauri::generate_handler![
+            commands::rdp::rdp_engine_status,
+            commands::rdp::list_rdp_profiles,
+            commands::rdp::save_rdp_profile,
+            commands::rdp::delete_rdp_profile,
+            commands::rdp::list_rdp_sessions,
+            commands::rdp::start_rdp_session,
+            commands::rdp::focus_rdp_session,
+            commands::rdp::close_rdp_session,
             commands::browser::open_browser,
             commands::browser::list_browser_tabs,
             commands::browser::close_browser_tab,
@@ -175,8 +184,19 @@ pub fn run() {
             commands::ai::ai_save_chat_history,
             commands::ai::ai_clear_chat_history,
         ]))
-        .run(application_context())
-        .expect("error while running tauri application");
+        .build(application_context())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } => {
+                app.state::<app::AppState>().rdp.close_owner(Some(&label));
+            }
+            tauri::RunEvent::Exit => app.state::<app::AppState>().rdp.close_owner(None),
+            _ => {}
+        });
 }
 
 /// Shared by the desktop entry point and the native browser regression harness.

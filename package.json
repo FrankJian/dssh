@@ -4,6 +4,10 @@
   "type": "module",
   "packageManager": "pnpm@11.13.1",
   "scripts": {
+    "rdp:build": "node scripts/build-rdp.mjs",
+    "rdp:package": "pnpm rdp:build && pnpm tauri build --config src-tauri/tauri.rdp.conf.json",
+    "test:rdp-worker": "python3 scripts/test-rdp-worker.py",
+    "test:rdp": "node --experimental-strip-types --test src/rdp/sessionState.test.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "test:ai-config": "node --experimental-strip-types --test src/ai/aiConfig.test.mjs src/ai/aiSettingsValidation.test.mjs",

@@ -1,0 +1,27 @@
+name: Build native RDP worker
+description: Compile the pinned FreeRDP worker and its native runtime
+runs:
+  using: composite
+  steps:
+    - name: Install macOS native build dependencies
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install cmake ninja sdl3 openssl@3 freetype json-c
+    - name: Enable MSVC build tools
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+    - name: Install Windows native build dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $root = $env:VCPKG_INSTALLATION_ROOT
+        if (-not $root) { $root = 'C:\vcpkg' }
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        & "$root\vcpkg.exe" install sdl3 sdl3-ttf openssl json-c --triplet x64-windows-static-md
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Compile native RDP worker
+      shell: bash
+      run: pnpm rdp:build
+    - name: Check worker startup and parent-death cleanup
+      shell: bash
+      run: python scripts/test-rdp-worker.py

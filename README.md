@@ -7,6 +7,7 @@ Duo SSH 是一个轻量、跨平台（Windows / macOS）的 SSH 管理桌面应�
 ## 功能
 
 **连接与会话**
+- **RDP 远程桌面（试验版）**：连接管理中新增独立 RDP 配置与 Windows 原生桌面窗口，支持账号 / 域、固定分辨率、系统凭据库保存密码、证书 SHA-256 固定信任、活动会话与手动重连。当前面向 Windows Server 内网直连；macOS 本地原生边界测试已通过，真实 Windows Server 和 Windows 客户端仍待验收。原生引擎需随安装包构建，详见 [RDP 实施说明](features/rdp-implementation.md)。
 - SSH 连接配置的本地管理（增删改查，SQLite 存储），密码 / 密钥认证、keyboard-interactive OTP / 多因子认证，SOCKS5 / HTTP 代理
 - **会话树**：连接后按主机聚合成节点，展开即可新建终端 / 打开 SFTP / 端口转发 / 断开；一台主机可并行多个终端；下方提供收藏的快捷启动入口
 - **连接管理器**：搜索、排序（最近 / 名称 / 主机）、网格·列表·分组视图、最近使用、连接卡片、YAML 明文 + 加密（Argon2id + AES-256-GCM）导入导出

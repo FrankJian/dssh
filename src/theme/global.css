@@ -128,6 +128,10 @@
   --space-6: 24px;
 
   /* Metrics */
+  --rdp-editor-width: 620px;
+  --rdp-text-size: 12px;
+  --rdp-caption-size: 11px;
+  --rdp-disabled-opacity: 0.45;
   --snapshot-text-size: 13px;
   --snapshot-heading-size: 18px;
   --snapshot-value-size: 24px;
@@ -2605,6 +2609,15 @@ button {
    left for the traffic-light buttons and don't render our own controls. */
 .titlebar--mac {
   padding-left: 78px;
+}
+
+.titlebar--sidebar-aligned { padding-left: 0; }
+
+.titlebar__leading {
+  display: flex;
+  flex: 0 0 var(--workspace-sidebar-end, var(--activity-width));
+  align-items: center;
+  padding-left: 8px;
 }
 
 .titlebar__drag {

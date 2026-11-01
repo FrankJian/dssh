@@ -1,13 +1,17 @@
 import type { SshProfile } from "../models";
+import type { RdpConnectionProfile } from "../models/rdp";
 import type { IconName } from "../ui/Icon";
 
 /**
  * The connection-type catalogue is intentionally independent from SshProfile.
- * The latter still represents the only persisted connection implementation;
- * future Telnet/SFTP profile types can join this catalogue without changing
- * the new-connection flow or grouping UI.
+ * SSH and RDP keep their own persisted DTOs and are aggregated only for display.
+ * Future protocols can join without adding unrelated fields to SshProfile.
  */
-export type ConnectionType = "ssh" | "telnet" | "sftp";
+export type ConnectionType = "ssh" | "telnet" | "sftp" | "rdp";
+export type ConnectionProfile = SshProfile | RdpConnectionProfile;
+export function isRdpProfile(profile: ConnectionProfile): profile is RdpConnectionProfile {
+  return "protocol" in profile && profile.protocol === "rdp";
+}
 
 export interface ConnectionTypeOption {
   id: ConnectionType;
@@ -18,6 +22,7 @@ export interface ConnectionTypeOption {
 }
 
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
+  { available: true, description: "Windows 远程桌面（独立窗口）", icon: "monitor", id: "rdp", label: "RDP" },
   {
     available: true,
     description: "远程终端、文件管理与端口转发",
@@ -54,9 +59,9 @@ export interface ConnectionTypeGroup {
   profiles: SshProfile[];
 }
 
-/** All existing persisted profiles are SSH profiles until other backends land. */
-export function connectionTypeForProfile(_profile: SshProfile): ConnectionType {
-  return "ssh";
+/** Connection cards use a discriminator; legacy SSH DTOs remain compatible. */
+export function connectionTypeForProfile(profile: ConnectionProfile): ConnectionType {
+  return isRdpProfile(profile) ? "rdp" : "ssh";
 }
 
 export function connectionTypeLabel(type: ConnectionType): string {
@@ -65,7 +70,7 @@ export function connectionTypeLabel(type: ConnectionType): string {
 
 /**
  * Temporary SSH-profile adapter for the Session Manager. Replace this with the
- * future ConnectionProfile union once non-SSH profiles have a backend.
+ * ConnectionProfile union is used by the multi-protocol Session Manager.
  */
 export function groupSshProfilesByConnectionType(profiles: SshProfile[]): ConnectionTypeGroup[] {
   const sshProfiles = profiles.filter((profile) => connectionTypeForProfile(profile) === "ssh");

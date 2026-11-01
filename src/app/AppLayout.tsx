@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { boundedSize, fitWorkspaceDocks, workspaceDockGrid, type AssistantDockPosition } from "./assistantDock";
 
 interface AppLayoutProps {
@@ -94,7 +94,9 @@ export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
   const panelSize = bottom ? fitted.panelHeight : fitted.panelWidth;
   const setPanelSize = bottom ? onPanelHeightChange ?? (() => {}) : onRightPanelWidthChange;
 
-  return <div className="app-shell">
+  return <div className="app-shell" style={{
+    "--workspace-sidebar-end": `${(activityBar ? size.rail : 0) + (sidebar && fitted.showSidebar ? fitted.sidebarWidth + 1 : 0)}px`,
+  } as CSSProperties}>
     {titleBar}
     <div className={`app-body app-body--dock-${panelPosition}`} ref={bodyRef} style={{
       display: "grid", ...grid,

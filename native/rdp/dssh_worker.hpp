@@ -1,0 +1,92 @@
+// Duo SSH adapter for the pinned FreeRDP SDL3 client. No secrets in argv/files.
+#pragma once
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+inline void dssh_status(const char* status)
+{
+    std::printf("DSSH_RDP_V1 %s\n", status);
+    std::fflush(stdout);
+}
+
+inline uint32_t dssh_read_u32()
+{
+    unsigned char bytes[4] = {};
+    if (std::fread(bytes, 1, 4, stdin) != 4) std::_Exit(120);
+    return (uint32_t(bytes[0]) << 24) | (uint32_t(bytes[1]) << 16) |
+           (uint32_t(bytes[2]) << 8) | uint32_t(bytes[3]);
+}
+
+inline bool dssh_arguments(int& argc, char**& argv, std::vector<std::string>& storage,
+                           std::vector<char*>& pointers)
+{
+    if (argc != 2 || std::strcmp(argv[1], "--dssh-worker-v1") != 0) return false;
+#if defined(_WIN32)
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    dssh_status("ready");
+    const auto count = dssh_read_u32();
+    if (count == 0 || count > 64) return false;
+    storage.reserve(count + 1);
+    storage.emplace_back("dssh-rdp-client");
+    size_t total = 0;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const auto length = dssh_read_u32();
+        total += length;
+        if (length == 0 || length > 8192 || total > 65536) return false;
+        std::string value(length, '\0');
+        if (std::fread(value.data(), 1, length, stdin) != length ||
+            value.find('\0') != std::string::npos) return false;
+        storage.push_back(std::move(value));
+    }
+    for (auto& value : storage) pointers.push_back(value.data());
+    argc = static_cast<int>(pointers.size());
+    argv = pointers.data();
+    // The pipe stays open for control messages. EOF also handles parent crashes.
+    std::thread([] {
+        for (;;)
+        {
+            const int command = std::getchar();
+            if (command == EOF) std::_Exit(0);
+            SDL_Event event = {};
+            if (command == 'q') event.type = SDL_EVENT_QUIT;
+            else if (command == 'f') event.type = SDL_EVENT_USER;
+            else std::_Exit(121);
+            SDL_PushEvent(&event);
+        }
+    }).detach();
+    return true;
+}
+
+inline void dssh_focus_windows()
+{
+    int count = 0;
+    auto windows = SDL_GetWindows(&count);
+    if (!windows) return;
+    for (int i = 0; i < count; i++)
+    {
+        SDL_RestoreWindow(windows[i]);
+        SDL_RaiseWindow(windows[i]);
+    }
+    SDL_free(windows);
+}
+
+inline void dssh_wipe_arguments(std::vector<std::string>& storage)
+{
+    for (auto& value : storage)
+    {
+        volatile char* bytes = value.data();
+        for (size_t i = 0; i < value.size(); i++) bytes[i] = 0;
+    }
+}
