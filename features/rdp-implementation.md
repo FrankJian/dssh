@@ -38,12 +38,14 @@ pnpm tauri dev
 Windows 在 MSVC Developer PowerShell 中配置 CMake / Ninja 和 VCPKG_ROOT，先安装：
 
 ```powershell
-vcpkg install sdl3 sdl3-ttf openssl json-c --triplet x64-windows-static-md
+vcpkg install sdl3 sdl3-ttf openssl json-c --triplet x64-windows-static
 pnpm rdp:build
 pnpm tauri dev
 ```
 
 产物写到被 gitignore 的 `src-tauri/rdp-runtime/`，包含 worker 和运行库；缓存写到 `.cache/rdp/`。脚本可使用 `DSSH_RDP_ARCHIVE` / `DSSH_RDP_TTF_ARCHIVE` 指定离线源包，但仍强制校验摘要。
+
+Windows worker 与全部 vcpkg 依赖统一使用静态 CRT（Release `/MT`，Debug `/MTd`），CMake 显式设置 `CMAKE_MSVC_RUNTIME_LIBRARY`，独立构建目录为 `.cache/rdp/build-windows-static/`，不复用旧 `/MD` 依赖对应的 CMake 缓存。配置完成后检查 triplet、CRT 和静态链接选项，再进入编译；不通过 `/NODEFAULTLIB` 隐藏运行库冲突。CI 和许可证收集使用相同 triplet。
 
 解压统一通过 stdin 传入归档字节；Windows 显式使用 `%SystemRoot%\System32\tar.exe`，避免 Git Bash 的 GNU tar 把 `D:\...` 识别成远程归档地址。`pnpm test:rdp-build` 覆盖 Windows 工具选择、私有 stdin 调用与带空格路径的真实压缩包解压；原生构建 CI 在安装依赖前执行该回归。
 

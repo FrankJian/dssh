@@ -5,19 +5,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, realp
 import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractArchive } from "./rdp-archive.mjs";
+import { WINDOWS_TRIPLET, windowsCmakeArguments, validateWindowsRuntime } from "./rdp-windows.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const version = "3.32.2";
+const windows = process.platform === "win32";
 const checksum = "9ccb8357bf0188044a460de775c7ea289ca7d2a2a917eca0f0a7c4dc9c8b08ea";
 const cache = join(root, ".cache", "rdp");
 const archive = process.env.DSSH_RDP_ARCHIVE || join(cache, `FreeRDP-${version}.tar.gz`);
 const source = join(cache, `FreeRDP-${version}`);
-const build = join(cache, "build");
+// Isolate the corrected static CRT build from caches made with static-md.
+const build = join(cache, windows ? "build-windows-static" : "build");
 const dependencies = join(cache, "dependencies");
 const installedRuntime = join(root, "src-tauri", "rdp-runtime");
 const runtime = join(cache, "runtime-stage");
 const nativePrefix = process.env.DSSH_RDP_PREFIX || (existsSync("/opt/homebrew") ? "/opt/homebrew" : "/usr/local");
-const windows = process.platform === "win32";
 if (!windows && process.platform !== "darwin") throw new Error("The RDP worker currently targets Windows and macOS.");
 mkdirSync(cache, { recursive: true });
 rmSync(runtime, { recursive: true, force: true }); mkdirSync(runtime, { recursive: true });
@@ -77,13 +79,13 @@ const args = ["-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Rele
   "-DWITH_WIN_CONSOLE=ON", "-DWITH_SDL_LINK_SHARED=ON", "-DOPENSSL_USE_STATIC_LIBS=ON",
   "-DBUILD_TESTING=OFF", "-DWITH_TESTING=OFF", "-DWITH_FREERDP_DEPRECATED=OFF"];
 if (windows) {
-  if (!process.env.VCPKG_ROOT) throw new Error("Set VCPKG_ROOT; install sdl3, sdl3-ttf and openssl using vcpkg (x64-windows-static-md).");
-  args.push(`-DCMAKE_TOOLCHAIN_FILE=${join(process.env.VCPKG_ROOT, "scripts/buildsystems/vcpkg.cmake")}`, "-DVCPKG_TARGET_TRIPLET=x64-windows-static-md", "-DWITH_SDL_LINK_SHARED=OFF");
+  args.push(...windowsCmakeArguments(process.env.VCPKG_ROOT));
 } else {
   const prefix = nativePrefix;
   args.push(`-DCMAKE_PREFIX_PATH=${dependencies};${prefix}/opt/sdl3;${prefix}/opt/openssl@4;${prefix}/opt/openssl@3`, "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0");
 }
 run("cmake", args);
+if (windows) validateWindowsRuntime(readFileSync(join(build, "CMakeCache.txt"), "utf8"));
 run("cmake", ["--build", build, "--target", "sdl3-freerdp", "--parallel", "4"]);
 const output = join(build, "client/SDL/SDL3", windows ? "sdl3-freerdp.exe" : "sdl3-freerdp");
 const binary = join(runtime, windows ? "dssh-rdp-client.exe" : "dssh-rdp-client");
@@ -121,7 +123,7 @@ copyFileSync(join(root, "native/rdp/THIRD-PARTY-NOTICES.md"), join(runtime, "THI
 const licenseDir = join(runtime, "licenses"); mkdirSync(licenseDir, { recursive: true });
 if (windows) {
   for (const dependency of ["sdl3", "sdl3-ttf", "openssl", "freetype", "brotli", "libpng", "json-c", "zlib"]) {
-    const license = join(process.env.VCPKG_ROOT, "installed", "x64-windows-static-md", "share", dependency, "copyright");
+    const license = join(process.env.VCPKG_ROOT, "installed", WINDOWS_TRIPLET, "share", dependency, "copyright");
     if (existsSync(license)) copyFileSync(license, join(licenseDir, `${dependency}.txt`));
   }
 } else {

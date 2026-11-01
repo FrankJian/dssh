@@ -3,7 +3,7 @@ description: Compile the pinned FreeRDP worker and its native runtime
 runs:
   using: composite
   steps:
-    - name: Test native archive extraction
+    - name: Test native build configuration
       shell: bash
       run: pnpm test:rdp-build
     - name: Install macOS native build dependencies
@@ -20,7 +20,7 @@ runs:
         $root = $env:VCPKG_INSTALLATION_ROOT
         if (-not $root) { $root = 'C:\vcpkg' }
         "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
-        & "$root\vcpkg.exe" install sdl3 sdl3-ttf openssl json-c --triplet x64-windows-static-md
+        & "$root\vcpkg.exe" install sdl3 sdl3-ttf openssl json-c --triplet x64-windows-static
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Compile native RDP worker
       shell: bash
