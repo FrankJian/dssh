@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
 
-export type WorkspaceTabKind = "ssh" | "local" | "sftp";
+export type WorkspaceTabKind = "ssh" | "local" | "sftp" | "browser";
 
 export interface WorkspaceTabItem {
   id: string;

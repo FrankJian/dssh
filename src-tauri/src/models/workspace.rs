@@ -17,6 +17,8 @@ pub struct DetachedWorkspace {
     pub title: String,
     pub terminal: Option<DetachedTerminalWorkspace>,
     pub sftp: Option<DetachedSftpWorkspace>,
+    #[serde(default)]
+    pub workbench: Option<DetachedWorkbench>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -24,6 +26,7 @@ pub struct DetachedWorkspace {
 pub enum DetachedWorkspaceKind {
     Terminal,
     Sftp,
+    Workbench,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -72,4 +75,18 @@ pub struct OpenDetachedSftpRequest {
 pub struct UpdateDetachedWorkspaceRequest {
     pub label: String,
     pub terminal: DetachedTerminalWorkspace,
+}
+
+/// Renderer-owned state for a complete multi-tab window. No credentials are stored here.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachedWorkbench {
+    pub session_ids: Vec<String>,
+    pub layouts: Vec<Value>,
+    pub terminal_names: HashMap<String, String>,
+    pub pane_names: HashMap<String, String>,
+    pub terminal_snapshots: HashMap<String, TerminalSnapshot>,
+    pub sftp_tabs: Vec<Value>,
+    pub tab_order: Vec<String>,
+    pub s3_profile_ids: Vec<String>,
 }

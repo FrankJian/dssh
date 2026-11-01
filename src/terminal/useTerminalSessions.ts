@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listDetachedWorkspaces } from "../services/workspaceService";
+import { workspaceSessionIds } from "../models/workspace";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
@@ -84,7 +86,8 @@ function readBacklog(backlog: SessionBacklog): string {
   return backlog.chunks[0] ?? "";
 }
 
-export function useTerminalSessions() {
+export function useTerminalSessions(initialSessionIds?: string[]) {
+  const initialSessionIdsRef = useRef(initialSessionIds);
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
@@ -230,8 +233,12 @@ export function useTerminalSessions() {
     let mounted = true;
 
     void listSshSessions()
-      .then(async (loadedSessions) => {
+      .then(async (allSessions) => {
         if (!mounted) return;
+        const initialIds = initialSessionIdsRef.current;
+        const detached = initialIds ? [] : await listDetachedWorkspaces();
+        const otherIds = new Set(detached.flatMap(workspaceSessionIds));
+        const loadedSessions = allSessions.filter((session) => initialIds ? initialIds.includes(session.id) : !otherIds.has(session.id));
 
         // A second window attaches to an existing Rust-side session. Hydrate its
         // renderer from the retained backend scrollback before future global
@@ -529,8 +536,7 @@ export function useTerminalSessions() {
     await resizeSshSession({ sessionId, size });
   }, []);
 
-  const closeSession = useCallback(async (sessionId: string) => {
-    await closeSshSession(sessionId);
+  const forgetSession = useCallback((sessionId: string) => {
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);
     activityTrackersRef.current.delete(sessionId);
@@ -558,11 +564,17 @@ export function useTerminalSessions() {
     });
   }, []);
 
+  const closeSession = useCallback(async (sessionId: string) => {
+    await closeSshSession(sessionId);
+    forgetSession(sessionId);
+  }, [forgetSession]);
+
   return {
     activeSession,
     activeSessionId,
     cancelReconnect,
     closeSession,
+    forgetSession,
     getBacklog,
     isSessionsLoaded,
     reconnectSession,

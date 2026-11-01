@@ -1,3 +1,5 @@
+import { openTerminalLink } from "../services/terminalLinkService";
+import { toast } from "../ui/ToastHost";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -277,7 +279,12 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
-  terminal.loadAddon(new WebLinksAddon());
+  const activateLink = (event: MouseEvent, uri: string) => {
+    event.preventDefault();
+    void openTerminalLink(uri).catch((error: Error) => toast(error.message, "error"));
+  };
+  terminal.options.linkHandler = { activate: activateLink };
+  terminal.loadAddon(new WebLinksAddon(activateLink));
   // The serializer restores wrapped rows accurately only at the dimensions it
   // captured. Do this before xterm creates its DOM and before the first fit.
   if (restoredSnapshot) {

@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { reconcileWorkspaceTabFocus } from "./workspaceTabFocus";
+import { BrowserWindow, BrowserWorkspace } from "../browser/BrowserWindow";
+import { openBrowser, closeBrowserTab, detachBrowserTab, renameBrowserTab } from "../services/browserService";
+import { useBrowserTabs } from "../browser/useBrowserTabs";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { AiChat } from "../ai/AiChat";
 import { AiConfigModal } from "../ai/AiConfigModal";
@@ -86,7 +90,7 @@ import { useActionShortcuts } from "./useActionShortcuts";
 import { useWorkspace } from "./useWorkspace";
 import { UpdateNotification } from "./UpdateNotification";
 import { useDetachedWorkspaces } from "./useDetachedWorkspaces";
-import { DetachedWorkspaceWindow } from "./DetachedWorkspace";
+import { workspaceSessionIds, type DetachedWorkbench } from "../models/workspace";
 import { AppLockScreen } from "./AppLockScreen";
 import { useAppLock } from "./useAppLock";
 import { WorkspaceTabStrip, type WorkspaceTabItem } from "./WorkspaceTabStrip";
@@ -94,7 +98,8 @@ import type { ProfileDraft, ProfileEditorMode } from "../ssh/profileTypes";
 import type { DetachedWorkspace } from "../models";
 import {
   getDetachedWorkspace,
-  onDetachedWorkspaceClosed,
+  discardDetachedWorkspace,
+  updateDetachedWorkbench,
   openDetachedSftpWorkspace,
   openDetachedTerminalWorkspace,
 } from "../services/workspaceService";
@@ -116,7 +121,7 @@ interface ForwardTarget {
 
 const SIDEBAR_COLLAPSED_KEY = "dssh.sidebar.collapsed";
 const RIGHT_PANEL_KEY = "dssh.rightPanel";
-const NAVIGATION_ICONS_KEY = "dssh.navigation.icons";
+const NAVIGATION_ICONS_KEY = "dssh.navigation.icons.v2";
 const RIGHT_PANEL_WIDTH_KEY = "dssh.hosttools.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
@@ -161,7 +166,8 @@ function loadRightPanel(): RightPanelId | null {
 
 function loadNavigationIcons(): NavigationIconId[] {
   try {
-    const raw = localStorage.getItem(NAVIGATION_ICONS_KEY);
+    const saved = localStorage.getItem(NAVIGATION_ICONS_KEY);
+    const raw = saved ?? localStorage.getItem("dssh.navigation.icons");
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     if (!Array.isArray(parsed)) {
       return DEFAULT_NAVIGATION_ICONS;
@@ -171,11 +177,12 @@ function loadNavigationIcons(): NavigationIconId[] {
         item === "sessions" ||
         item === "connections" ||
         item === "s3" ||
+        item === "browser" ||
         item === "assistant" ||
         item === "newLocalTerminal",
     );
     const unique = [...new Set(valid)];
-    return unique.some((item) => item !== "assistant" && item !== "newLocalTerminal")
+    return unique.some((item) => item === "sessions" || item === "connections" || item === "s3")
       ? unique
       : DEFAULT_NAVIGATION_ICONS;
   } catch {
@@ -183,7 +190,28 @@ function loadNavigationIcons(): NavigationIconId[] {
   }
 }
 
-function MainApp() {
+// Show process-wide SSH prompts in one workbench, even while the app is in the background.
+async function isPromptWindow() {
+  const windows = (await getAllWindows()).filter((window) => window.label === "main" || window.label.startsWith("detached-"));
+  const focused = await Promise.all(windows.map(async (window) => await window.isFocused() ? window.label : null));
+  const owner = focused.find(Boolean) ?? windows.find((window) => window.label === "main")?.label ?? windows[0]?.label;
+  return owner === getCurrentWindow().label;
+}
+
+function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace }) {
+  const windowLabel = getCurrentWindow().label;
+  const initialState = useRef<DetachedWorkbench>(initialWorkspace?.workbench ?? {
+    sessionIds: initialWorkspace?.terminal?.sessionIds ?? [],
+    layouts: initialWorkspace?.terminal?.layout ? [initialWorkspace.terminal.layout] : [],
+    terminalNames: initialWorkspace?.terminal && !initialWorkspace.terminal.autoTitle
+      ? { [initialWorkspace.terminal.tabSessionId]: initialWorkspace.title } : {},
+    paneNames: {}, terminalSnapshots: initialWorkspace?.terminal?.terminalSnapshots ?? {},
+    sftpTabs: initialWorkspace?.sftp ? [{ id: `sftp:${initialWorkspace.sftp.profileId}`, profileId: initialWorkspace.sftp.profileId,
+      title: initialWorkspace.title.replace(/^SFTP · /, "") }] : [],
+    tabOrder: [], s3ProfileIds: [],
+  }).current;
+  const closingWindowRef = useRef(false);
+
   const [activeActivity, setActiveActivity] = useState<ActivityId>("sessions");
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
@@ -194,7 +222,7 @@ function MainApp() {
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
   const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<SshProfile | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
-  const [s3TabProfileIds, setS3TabProfileIds] = useState<string[]>([]);
+  const [s3TabProfileIds, setS3TabProfileIds] = useState<string[]>(initialState.s3ProfileIds);
   const [activeS3ProfileId, setActiveS3ProfileId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<ForwardTarget | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -219,6 +247,7 @@ function MainApp() {
   // failures stay silent here: a startup network error should not block SSH
   // work. The About page remains available for a manual check with details.
   useEffect(() => {
+    if (initialWorkspace) return;
     let cancelled = false;
     void checkForStartupUpdate()
       .then((update) => {
@@ -232,7 +261,7 @@ function MainApp() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialWorkspace]);
 
   // Keyboard-interactive challenges are typically OTP/MFA prompts. Queue them
   // because independent profiles may begin connecting at the same time.
@@ -240,7 +269,8 @@ function MainApp() {
     const closedPromise = onSshAuthPromptClosed((event) => {
       setSshAuthPrompts((current) => current.filter((item) => item.promptId !== event.promptId));
     });
-    const promptPromise = onSshAuthPrompt((event) => {
+    const promptPromise = onSshAuthPrompt(async (event) => {
+      if (!await isPromptWindow()) return;
       if (cancelledAuthProfiles.current.has(event.profileId)) {
         void respondSshAuthPrompt(event.promptId, null).catch(() => undefined);
         return;
@@ -358,16 +388,17 @@ function MainApp() {
   } = useProfiles();
   const s3Profiles = useS3Profiles();
   const {
-    activeSession,
     activeSessionId,
+    isSessionsLoaded,
     cancelReconnect,
     commandActivity,
     targetAddresses,
     closeSession,
+    forgetSession,
     getBacklog,
     reconnectSession,
     resizeSession,
-    sessions,
+    sessions: allSessions,
     terminalTransfers,
     terminalConflicts,
     cancelTerminalTransfer,
@@ -379,12 +410,14 @@ function MainApp() {
     subscribeOutput,
     writeToActiveSession,
     writeToSession,
-  } = useTerminalSessions();
+  } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined);
   const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
   const bulkClosingRef = useRef(false);
   const windowCloseRef = useRef<() => Promise<boolean>>(async () => false);
   const {
     sftpTabs,
+    activeBrowserId,
+    focusBrowserTab,
     activeSftpId,
     openSftpTab,
     duplicateSftpTab,
@@ -396,7 +429,15 @@ function MainApp() {
     focusTerminal,
     tabOrder,
     reorderTab,
-  } = useWorkspace();
+  } = useWorkspace(initialState.sftpTabs, initialState.tabOrder);
+  const browserTabs = useBrowserTabs((id) => {
+    focusBrowserTab(id);
+    setFileTreeSessionId(null);
+    setActiveActivity("sessions");
+  });
+  // Keep the browser surface selected until focus reconciliation completes;
+  // rendering a terminal during the removal event would steal keyboard focus.
+  const isBrowserActive = activeBrowserId !== null;
   const { recentIds, recordUse, displayLimit: recentConnectionsLimit, setDisplayLimit: setRecentConnectionsLimit } = useRecentConnections();
   const panes = usePaneLayout();
   const { workspaces: detachedWorkspaces, addWorkspace } = useDetachedWorkspaces();
@@ -405,55 +446,46 @@ function MainApp() {
   const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
   const [openRemoteFilePaths, setOpenRemoteFilePaths] = useState<string[]>([]);
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
-  const [terminalNames, setTerminalNames] = useState<Record<string, string>>({});
-  const [paneNames, setPaneNames] = useState<Record<string, string>>({});
+  const [terminalNames, setTerminalNames] = useState<Record<string, string>>(initialState.terminalNames);
+  const [paneNames, setPaneNames] = useState<Record<string, string>>(initialState.paneNames);
   const handledShellExitsRef = useRef(new Set<string>());
   const previousSessionIdsRef = useRef(new Set<string>());
 
   const detachedTerminalSessionIds = new Set(
-    detachedWorkspaces.flatMap((workspace) => workspace.terminal?.sessionIds ?? []),
+    detachedWorkspaces.filter((workspace) => workspace.label !== windowLabel).flatMap(workspaceSessionIds),
   );
-  const visibleSessions = sessions.filter((session) => !detachedTerminalSessionIds.has(session.id));
-
-  // A detached renderer may have changed the focused pane or divider ratios.
-  // Keep the hidden main-window tree in sync so it is restored exactly as the
-  // user left it when the child window closes.
-  useEffect(() => {
-    const closedPromise = onDetachedWorkspaceClosed((workspace) => {
-      if (workspace.terminal) {
-        for (const [sessionId, snapshot] of Object.entries(workspace.terminal.terminalSnapshots ?? {})) {
-          restoreTerminalSnapshot(sessionId, snapshot);
-        }
-        const restoredSessionId =
-          workspace.terminal.layout?.focusedPaneId
-          ?? workspace.terminal.sessionIds[0]
-          ?? workspace.terminal.tabSessionId;
-        if (workspace.terminal.layout) {
-          panes.replaceLayout(workspace.terminal.layout);
-          panes.focusPane(restoredSessionId);
-        }
-        setActiveSessionId(restoredSessionId);
-        focusTerminal();
-        setActiveActivity("sessions");
-      }
-      if (workspace.sftp) {
-        openSftpTab(workspace.sftp.profileId, workspace.title.replace(/^SFTP · /, ""));
-        setActiveActivity("sessions");
-      }
-    });
-    return () => { void closedPromise.then((unlisten) => unlisten()); };
-  }, [
-    focusTerminal,
-    openSftpTab,
-    panes.focusPane,
-    panes.replaceLayout,
-    setActiveSessionId,
-  ]);
+  const sessions = allSessions.filter((session) => !detachedTerminalSessionIds.has(session.id));
+  const visibleSessions = sessions;
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
 
   useEffect(() => {
-    if (!activeSessionId || !detachedTerminalSessionIds.has(activeSessionId)) return;
-    setActiveSessionId(visibleSessions[0]?.id ?? null);
-  }, [activeSessionId, detachedWorkspaces, setActiveSessionId, visibleSessions]);
+    for (const layout of initialState.layouts) panes.replaceLayout(layout);
+    for (const [id, snapshot] of Object.entries(initialState.terminalSnapshots)) restoreTerminalSnapshot(id, snapshot);
+  }, [initialState, panes.replaceLayout]);
+
+  const seededActiveRef = useRef(false);
+  useEffect(() => {
+    if (!isSessionsLoaded || seededActiveRef.current) return;
+    seededActiveRef.current = true;
+    if (initialWorkspace?.terminal) setActiveSessionId(initialWorkspace.terminal.layout?.focusedPaneId ?? initialState.sessionIds[0] ?? null);
+  }, [isSessionsLoaded, initialWorkspace, initialState, setActiveSessionId]);
+
+  const workbench: DetachedWorkbench = {
+    sessionIds: sessions.map((session) => session.id),
+    layouts: panes.layouts.filter((layout) => paneSessionIds(layout).some((id) => sessions.some((session) => session.id === id))),
+    terminalNames, paneNames, terminalSnapshots: {}, sftpTabs, tabOrder, s3ProfileIds: s3TabProfileIds,
+  };
+  const workbenchRef = useRef(workbench);
+  workbenchRef.current = workbench;
+  const workbenchKey = JSON.stringify(workbench);
+  useEffect(() => {
+    if (!initialWorkspace || !isSessionsLoaded || closingWindowRef.current) return;
+    void updateDetachedWorkbench(JSON.parse(workbenchKey) as DetachedWorkbench).catch((error: Error) => toast(error.message, "error"));
+  }, [initialWorkspace, isSessionsLoaded, workbenchKey]);
+
+  useEffect(() => {
+    if (activeSessionId && !sessions.some((session) => session.id === activeSessionId)) setActiveSessionId(sessions[0]?.id ?? null);
+  }, [activeSessionId, sessions, setActiveSessionId]);
 
   useEffect(() => {
     const activeIds = new Set(sessions.map((session) => session.id));
@@ -616,7 +648,7 @@ function MainApp() {
 
   useEffect(() => {
     const unlistenPromise = onAiEvent((event) => {
-      if (event.kind !== "appAction") {
+      if (event.kind !== "appAction" || !aiChat.ownsRun(event.runId)) {
         return;
       }
 
@@ -809,12 +841,14 @@ function MainApp() {
 
   // Host-key trust (TOFU): queue first-use prompts; warn loudly on a changed key.
   useEffect(() => {
-    const promptPromise = onHostKeyPrompt((event) => {
+    const promptPromise = onHostKeyPrompt(async (event) => {
+      if (!await isPromptWindow()) return;
       setHostKeyPrompts((current) =>
         current.some((item) => item.promptId === event.promptId) ? current : [...current, event],
       );
     });
-    const changedPromise = onHostKeyChanged((event) => {
+    const changedPromise = onHostKeyChanged(async (event) => {
+      if (!await isPromptWindow()) return;
       window.alert(
         `⚠️ 主机密钥已变更：${event.host}:${event.port}\n\n` +
           `已记录指纹：${event.storedFingerprint}\n` +
@@ -1306,12 +1340,17 @@ function MainApp() {
           : ("terminalTool" as const),
         title: terminalTabTitle(session),
         renameValue: terminalName(session),
-        active: !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
+        active: !isBrowserActive && !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
         running: (panes.findLayout(session.id)
           ? paneSessionIds(panes.findLayout(session.id))
           : [session.id]
         ).some((paneId) => commandActivity.has(paneId)),
       })),
+    ...browserTabs.map((tab) => ({
+      id: tab.id, kind: "browser" as const, icon: "globe" as const,
+      title: tab.title || "浏览器", renameValue: tab.title || "浏览器",
+      active: isBrowserActive && tab.id === activeBrowserId,
+    })),
     ...sftpTabs.map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
@@ -1333,7 +1372,21 @@ function MainApp() {
     });
   }
 
+  const tabFocusHistory = useRef<string[]>([]);
+  const selectedTabId = activeBrowserId ?? activeSftpId ?? workspaceTabs.find((tab) => tab.active)?.id ?? null;
+  useLayoutEffect(() => {
+    const next = reconcileWorkspaceTabFocus(tabFocusHistory.current, selectedTabId, workspaceTabs.map((tab) => tab.id));
+    tabFocusHistory.current = next.history;
+    if (next.activeId === selectedTabId) return;
+    const target = workspaceTabs.find((tab) => tab.id === next.activeId);
+    if (target) handleSelectTab(target);
+    else focusTerminal();
+  });
+
   function handleSelectTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "browser") {
+      setFileTreeSessionId(null); setActiveActivity("sessions"); focusBrowserTab(tab.id); return;
+    }
     if (tab.kind === "sftp") {
       setFileTreeSessionId(null);
       focusSftpTab(tab.id);
@@ -1358,6 +1411,10 @@ function MainApp() {
   }
 
   async function handleDuplicateTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "browser") {
+      const source = browserTabs.find((item) => item.id === tab.id);
+      void openBrowser(source?.url || undefined).catch((error: Error) => toast(error.message, "error")); return;
+    }
     if (tab.kind === "sftp") {
       const source = sftpTabs.find((item) => item.id === tab.id);
       if (source) {
@@ -1382,7 +1439,9 @@ function MainApp() {
   }
 
   function handleRenameTab(tab: WorkspaceTabItem, name: string) {
-    if (tab.kind === "sftp") {
+    if (tab.kind === "browser") {
+      void renameBrowserTab(tab.id, name).catch((error: Error) => toast(error.message, "error"));
+    } else if (tab.kind === "sftp") {
       renameSftpTab(tab.id, name);
     } else {
       handleRenameTerminal(tab.id, name);
@@ -1390,7 +1449,10 @@ function MainApp() {
   }
 
   async function handleCloseTab(tab: WorkspaceTabItem) {
-    if (tab.kind === "sftp") {
+    if (tab.kind === "browser") {
+      try { await closeBrowserTab(tab.id); }
+      catch (error) { toast(error instanceof Error ? error.message : "关闭浏览器失败。", "error"); }
+    } else if (tab.kind === "sftp") {
       closeSftpTab(tab.id);
     } else {
       await handleCloseTerminalWindow(tab.id);
@@ -1409,7 +1471,7 @@ function MainApp() {
     }
   }
 
-  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isSftpActive && !activeRemoteFilePath);
+  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
   const currentWorkspaceTab = workspaceTabs.find((tab) => tab.active);
   function switchWorkspaceTab(step: number) {
     const id = cycleItem(workspaceTabs.map((tab) => tab.id), currentWorkspaceTab?.id ?? null, step);
@@ -1449,7 +1511,16 @@ function MainApp() {
     closeTab: !isConnections && !isS3 && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
   }, appLock.status?.locked);
 
-  windowCloseRef.current = () => closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口");
+  windowCloseRef.current = async () => {
+    if (!isSessionsLoaded) { toast("工作区正在加载，请稍后关闭。", "info"); return false; }
+    closingWindowRef.current = true;
+    try {
+      if (!await closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口")) return false;
+      for (const tab of browserTabs) await closeBrowserTab(tab.id);
+      if (initialWorkspace) await discardDetachedWorkspace();
+      return true;
+    } finally { closingWindowRef.current = false; }
+  };
   useEffect(() => {
     const appWindow = getCurrentWindow();
     let pending = false;
@@ -1472,7 +1543,8 @@ function MainApp() {
 
   async function handleDetachTab(tab: WorkspaceTabItem) {
     try {
-      const parentLabel = getCurrentWindow().label;
+      if (tab.kind === "browser") { await detachBrowserTab(tab.id); return; }
+      const parentLabel = "main";
       if (tab.kind === "sftp") {
         const sftpTab = sftpTabs.find((item) => item.id === tab.id);
         if (!sftpTab) return;
@@ -1503,6 +1575,7 @@ function MainApp() {
       // window to let go of the instances it is no longer showing.
       for (const id of sessionIds) {
         releaseTerminal(id);
+        forgetSession(id);
       }
       if (sessionIds.includes(terminalFullscreenPaneId ?? "")) {
         setTerminalFullscreenPaneId(null);
@@ -1656,6 +1729,8 @@ function MainApp() {
         uploadConcurrency={s3UploadConcurrency}
       />
     );
+  } else if (isBrowserActive) {
+    mainSurface = null;
   } else if (isSftpActive && activeSftpTab) {
     mainSurface = null;
   } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
@@ -1732,8 +1807,13 @@ function MainApp() {
     mainSurface = terminalSurface;
   }
 
+  function handleOpenBrowser() {
+    void openBrowser().catch((error: Error) => toast(error.message, "error"));
+  }
+
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
+      { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
@@ -1924,7 +2004,7 @@ function MainApp() {
       items.push({
         id: `workspace:detach:${tab.id}`,
         label: `移至独立窗口：${tab.title}`,
-        hint: tab.kind === "sftp" ? "SFTP" : "终端",
+        hint: tab.kind === "browser" ? "浏览器" : tab.kind === "sftp" ? "SFTP" : "终端",
         icon: "externalWindow",
         keywords: "detach external window 新窗口",
         run: () => void handleDetachTab(tab),
@@ -1932,12 +2012,12 @@ function MainApp() {
       items.push({
         id: `workspace:duplicate:${tab.id}`,
         label: `新建同类标签：${tab.title}`,
-        hint: tab.kind === "sftp" ? "SFTP" : "终端",
+        hint: tab.kind === "browser" ? "浏览器" : tab.kind === "sftp" ? "SFTP" : "终端",
         icon: tab.icon,
         keywords: "duplicate copy new tab 双击 复制标签 新建终端 同一主机",
         run: () => void handleDuplicateTab(tab),
       });
-      if (tab.kind !== "sftp") {
+      if (tab.kind !== "sftp" && tab.kind !== "browser") {
         items.push({
           id: `workspace:close:${tab.id}`,
           label: `关闭终端标签：${tab.title}`,
@@ -2087,7 +2167,7 @@ function MainApp() {
                 >
                   <Icon name="plus" height="16" width="16" />
                 </button>
-                {activeSession ? (
+                {activeSession && !isBrowserActive ? (
                   <div className="tab-actions">
                     <TerminalSessionMenu
                       session={activeSession}
@@ -2156,11 +2236,15 @@ function MainApp() {
               rightPanel={rightPanel}
               onToggleRightPanel={toggleRightPanel}
               onNewLocalTerminal={handleStartLocalSession}
+              onOpenBrowser={handleOpenBrowser}
               onOpenSettings={() => openSettings("appearance")}
             />
           )
         }
-        main={<>{mainSurface}{sftpTabSurfaces}</>}
+        main={<>{mainSurface}{sftpTabSurfaces}{browserTabs.map((tab) => {
+          const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !appLock.status?.locked;
+          return <div className="browser-tab" hidden={!visible} key={tab.id}><BrowserWorkspace tab={tab} visible={visible} /></div>;
+        })}</>}
       />
       {editorState ? (
         <ProfileEditor
@@ -2322,6 +2406,10 @@ function MainApp() {
 }
 
 function App() {
+  return getCurrentWindow().label.startsWith("browser-ui-") ? <BrowserWindow /> : <WorkspaceApp />;
+}
+
+function WorkspaceApp() {
   const [isCheckingWindow, setIsCheckingWindow] = useState(true);
   const [detachedWorkspace, setDetachedWorkspace] = useState<DetachedWorkspace | null>(null);
 
@@ -2348,7 +2436,8 @@ function App() {
   if (isCheckingWindow) {
     return <div className="detached-unavailable">正在打开独立窗口…</div>;
   }
-  return detachedWorkspace ? <DetachedWorkspaceWindow workspace={detachedWorkspace} /> : <MainApp />;
+  if (getCurrentWindow().label.startsWith("detached-") && !detachedWorkspace) return <div className="detached-unavailable">独立窗口已不可用。</div>;
+  return <MainApp initialWorkspace={detachedWorkspace ?? undefined} />;
 }
 
 export default App;

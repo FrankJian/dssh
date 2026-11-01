@@ -1,6 +1,6 @@
 [package]
 name = "dssh"
-version = "0.5.3"
+version = "0.6.0"
 description = "A lightweight cross-platform SSH manager"
 authors = ["Jian-Frank Xie"]
 edition = "2024"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

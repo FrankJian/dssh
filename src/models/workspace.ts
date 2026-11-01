@@ -1,7 +1,7 @@
 import type { PaneLayout } from "../terminal/usePaneLayout";
 import type { TerminalSnapshot } from "./terminal";
 
-export type DetachedWorkspaceKind = "terminal" | "sftp";
+export type DetachedWorkspaceKind = "terminal" | "sftp" | "workbench";
 
 export interface DetachedTerminalWorkspace {
   tabSessionId: string;
@@ -24,6 +24,7 @@ export interface DetachedWorkspace {
   title: string;
   terminal: DetachedTerminalWorkspace | null;
   sftp: DetachedSftpWorkspace | null;
+  workbench?: DetachedWorkbench | null;
 }
 
 export interface OpenDetachedTerminalRequest {
@@ -36,4 +37,19 @@ export interface OpenDetachedSftpRequest {
   parentLabel: string;
   title: string;
   profileId: string;
+}
+
+export interface DetachedWorkbench {
+  sessionIds: string[];
+  layouts: PaneLayout[];
+  terminalNames: Record<string, string>;
+  paneNames: Record<string, string>;
+  terminalSnapshots: Record<string, TerminalSnapshot>;
+  sftpTabs: import("../app/useWorkspace").SftpTab[];
+  tabOrder: string[];
+  s3ProfileIds: string[];
+}
+
+export function workspaceSessionIds(workspace: DetachedWorkspace): string[] {
+  return workspace.workbench?.sessionIds ?? workspace.terminal?.sessionIds ?? [];
 }

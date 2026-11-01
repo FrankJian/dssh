@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -8,9 +11,12 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 use crate::{
     error::{AppError, AppResult},
     models::workspace::{
-        DetachedSftpWorkspace, DetachedTerminalWorkspace, DetachedWorkspace, DetachedWorkspaceKind,
+        DetachedSftpWorkspace, DetachedTerminalWorkspace, DetachedWorkbench, DetachedWorkspace,
+        DetachedWorkspaceKind,
     },
 };
+
+static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
 pub const DETACHED_WORKSPACE_CLOSED_EVENT: &str = "workspace://detached-window-closed";
 pub const DETACHED_WORKSPACE_UPDATED_EVENT: &str = "workspace://detached-window-updated";
@@ -49,7 +55,10 @@ impl DetachedWorkspaceManager {
         title: String,
         terminal: DetachedTerminalWorkspace,
     ) -> AppResult<DetachedWorkspace> {
-        let label = format!("detached-terminal-{}", terminal.tab_session_id);
+        let label = format!(
+            "detached-terminal-{}",
+            NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+        );
         let workspace = DetachedWorkspace {
             label: label.clone(),
             parent_label,
@@ -57,6 +66,7 @@ impl DetachedWorkspaceManager {
             title,
             terminal: Some(terminal),
             sftp: None,
+            workbench: None,
         };
         self.open(app_handle, workspace)
     }
@@ -68,7 +78,10 @@ impl DetachedWorkspaceManager {
         title: String,
         profile_id: String,
     ) -> AppResult<DetachedWorkspace> {
-        let label = format!("detached-sftp-{profile_id}");
+        let label = format!(
+            "detached-sftp-{}",
+            NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+        );
         let workspace = DetachedWorkspace {
             label: label.clone(),
             parent_label,
@@ -76,8 +89,48 @@ impl DetachedWorkspaceManager {
             title,
             terminal: None,
             sftp: Some(DetachedSftpWorkspace { profile_id }),
+            workbench: None,
         };
         self.open(app_handle, workspace)
+    }
+
+    pub fn open_workbench(&self, app: &AppHandle, title: String) -> AppResult<DetachedWorkspace> {
+        self.open(
+            app,
+            DetachedWorkspace {
+                label: format!(
+                    "detached-workbench-{}",
+                    NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+                ),
+                parent_label: "main".into(),
+                kind: DetachedWorkspaceKind::Workbench,
+                title,
+                terminal: None,
+                sftp: None,
+                workbench: Some(DetachedWorkbench::default()),
+            },
+        )
+    }
+
+    pub fn update_workbench(
+        &self,
+        app: &AppHandle,
+        label: &str,
+        workbench: DetachedWorkbench,
+    ) -> AppResult<()> {
+        let workspace = {
+            let mut items = self
+                .workspaces
+                .lock()
+                .map_err(|e| AppError::new("workspace_lock_error", e.to_string()))?;
+            let workspace = items
+                .get_mut(label)
+                .ok_or_else(|| AppError::new("detached_workspace_not_found", "独立窗口已关闭。"))?;
+            workspace.workbench = Some(workbench);
+            workspace.clone()
+        };
+        let _ = app.emit(DETACHED_WORKSPACE_UPDATED_EVENT, workspace);
+        Ok(())
     }
 
     pub fn update_terminal(
@@ -119,7 +172,7 @@ impl DetachedWorkspaceManager {
         app_handle: &AppHandle,
         workspace: DetachedWorkspace,
     ) -> AppResult<DetachedWorkspace> {
-        if let Some(window) = app_handle.get_webview_window(&workspace.label) {
+        if let Some(window) = app_handle.get_window(&workspace.label) {
             window
                 .set_focus()
                 .map_err(|error| AppError::new("detached_window_focus_error", error.to_string()))?;
@@ -171,13 +224,17 @@ impl DetachedWorkspaceManager {
                 ));
             }
         };
+        let _ = app_handle.emit(DETACHED_WORKSPACE_UPDATED_EVENT, &workspace);
         window.on_window_event(move |event| {
             if matches!(event, WindowEvent::Destroyed)
-                && let Ok(Some(closed)) = manager.take(&label)
+                && let Ok(Some(mut closed)) = manager.take(&label)
             {
-                let parent_label = closed.parent_label.clone();
-                let _ =
-                    event_app_handle.emit_to(parent_label, DETACHED_WORKSPACE_CLOSED_EVENT, closed);
+                // Windows are independent workbenches; destruction only removes ownership.
+                // It never restores their tabs in another window.
+                closed.terminal = None;
+                closed.sftp = None;
+                closed.workbench = Some(DetachedWorkbench::default());
+                let _ = event_app_handle.emit(DETACHED_WORKSPACE_CLOSED_EVENT, closed);
             }
         });
         Ok(workspace)

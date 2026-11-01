@@ -29,8 +29,8 @@ export function updateDetachedTerminalWorkspace(
   return invokeCommand<void>("update_detached_terminal_workspace", { request: { label, terminal } });
 }
 
-export function discardDetachedWorkspace(label: string) {
-  return invokeCommand<void>("discard_detached_workspace", { label });
+export function discardDetachedWorkspace() {
+  return invokeCommand<void>("discard_detached_workspace");
 }
 
 export function onDetachedWorkspaceClosed(handler: (workspace: DetachedWorkspace) => void) {
@@ -39,4 +39,8 @@ export function onDetachedWorkspaceClosed(handler: (workspace: DetachedWorkspace
 
 export function onDetachedWorkspaceUpdated(handler: (workspace: DetachedWorkspace) => void) {
   return listen<DetachedWorkspace>("workspace://detached-window-updated", (event) => handler(event.payload));
+}
+
+export function updateDetachedWorkbench(workbench: import("../models/workspace").DetachedWorkbench) {
+  return invokeCommand<void>("update_detached_workbench", { workbench });
 }

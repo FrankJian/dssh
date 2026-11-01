@@ -141,6 +141,9 @@
   --toolbar-height: 36px;
   --tabbar-height: 36px;
   --tab-icon-size: 20px;
+  --browser-empty-icon-size: 128px;
+  --browser-empty-icon-opacity: 0.24;
+  --browser-empty-icon-stroke-width: 1;
   --tab-content-offset-y: 2px;
   --titlebar-height: 36px;
 

@@ -7,7 +7,7 @@ export type ActivityId = "sessions" | "connections" | "s3";
 /** Right-panel selectors. */
 export type RightPanelId = "assistant" | "hosttools";
 /** Configurable icons shown in the left activity rail. */
-export type NavigationIconId = ActivityId | "assistant" | "newLocalTerminal";
+export type NavigationIconId = ActivityId | "browser" | "assistant" | "newLocalTerminal";
 
 interface ActivityBarProps {
   activeActivity: ActivityId;
@@ -18,6 +18,7 @@ interface ActivityBarProps {
   onToggleRightPanel: (panel: RightPanelId) => void;
   onNewLocalTerminal: () => void;
   onOpenSettings: () => void;
+  onOpenBrowser: () => void;
 }
 
 const ACTIVITIES: { id: ActivityId; label: string; icon: IconName }[] = [
@@ -35,6 +36,7 @@ export function ActivityBar({
   onToggleRightPanel,
   onNewLocalTerminal,
   onOpenSettings,
+  onOpenBrowser,
 }: ActivityBarProps) {
   const visibleActivities = ACTIVITIES.filter((activity) => visibleNavigationIcons.includes(activity.id));
   const showAssistant = visibleNavigationIcons.includes("assistant");
@@ -58,6 +60,9 @@ export function ActivityBar({
             </IconButton>
           );
         })}
+        {visibleNavigationIcons.includes("browser") ? (
+          <IconButton label="打开浏览器" onClick={onOpenBrowser}><Icon name="globe" /></IconButton>
+        ) : null}
         {showAssistant && visibleActivities.length > 0 ? <div className="activity-bar__divider" /> : null}
         {showAssistant ? (
           <IconButton

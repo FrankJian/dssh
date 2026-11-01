@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod app;
+pub mod browser;
 pub mod commands;
 pub mod config;
 pub mod crypto;
@@ -37,10 +38,21 @@ pub fn run() {
             let state = app::AppState::initialize(app.handle()).map_err(|error| {
                 Box::<dyn std::error::Error>::from(std::io::Error::other(error.message))
             })?;
+            app.manage(state.detached_workspaces.clone());
             app.manage(state);
+            app.manage(browser::BrowserManager::default());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(browser::guard(tauri::generate_handler![
+            commands::browser::open_browser,
+            commands::browser::list_browser_tabs,
+            commands::browser::close_browser_tab,
+            commands::browser::rename_browser_tab,
+            commands::browser::detach_browser_tab,
+            commands::browser::open_browser_external,
+            commands::browser::mount_browser,
+            commands::browser::resize_browser,
+            commands::browser::browser_action,
             commands::app::app_health,
             commands::app::app_update_endpoint_diagnostics,
             commands::app::list_system_font_families,
@@ -105,6 +117,7 @@ pub fn run() {
             commands::workspace::open_detached_sftp_workspace,
             commands::workspace::update_detached_terminal_workspace,
             commands::workspace::discard_detached_workspace,
+            commands::workspace::update_detached_workbench,
             commands::sftp::sftp_home,
             commands::sftp::sftp_list,
             commands::sftp::sftp_local_home,
@@ -160,7 +173,12 @@ pub fn run() {
             commands::ai::ai_load_chat_history,
             commands::ai::ai_save_chat_history,
             commands::ai::ai_clear_chat_history,
-        ])
-        .run(tauri::generate_context!())
+        ]))
+        .run(application_context())
         .expect("error while running tauri application");
+}
+
+/// Shared by the desktop entry point and the native browser regression harness.
+pub fn application_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
 }

@@ -1,3 +1,4 @@
+import { openBrowser } from "../services/browserService";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { ForwardKind, PortForward } from "../models";
 import {
@@ -194,6 +195,18 @@ export function PortForwardDialog({
                       <span className="port-forward__item-desc">{forward.description}</span>
                     ) : null}
                   </div>
+                  {forward.kind === "local" ? <button
+                    aria-label="在浏览器中打开本地转发"
+                    title="在浏览器中打开（HTTP）"
+                    className="icon-button"
+                    type="button"
+                    onClick={() => {
+                      const host = forward.localHost === "0.0.0.0" ? "127.0.0.1"
+                        : forward.localHost === "::" ? "::1" : forward.localHost;
+                      const address = host.includes(":") ? `[${host}]` : host;
+                      void openBrowser(`http://${address}:${forward.localPort}`).catch((cause: Error) => setError(cause.message));
+                    }}
+                  ><Icon name="globe" height="16" width="16" /></button> : null}
                   <button
                     aria-label="关闭此端口转发"
                     className="icon-button"

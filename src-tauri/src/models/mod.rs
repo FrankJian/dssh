@@ -8,3 +8,5 @@ pub mod terminal;
 pub mod workspace;
 
 pub mod server_snapshot;
+
+pub mod browser;

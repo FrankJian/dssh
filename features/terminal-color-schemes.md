@@ -16,7 +16,7 @@
 | `src/terminal/TerminalView.tsx` | 不透明度变化时调用 `applyTransparentTheme()` | 消除重新覆盖为固定 Graphite 的路径 |
 | `src/app/App.tsx`、`src/theme/global.css` | CSS 独立绘制背景，不透明度依赖 `--terminal-bg-rgb` | xterm 和 CSS 必须应用同一个解析结果 |
 | `src/settings/useTerminalSettings.ts` | 字体等设置分别写入 localStorage | 新配色使用独立、带版本的 store，不扩大为全部设置重构 |
-| `src/app/DetachedWorkspace.tsx` | 独立 renderer 和 registry | 共享初始化和订阅逻辑，不能只改主窗口 |
+| `src/app/App.tsx` | 主窗口与独立工作台共用 renderer | 初始化和订阅逻辑同时覆盖所有工作台 |
 | `src/theme/useTheme.ts` | 应用主题支持 system/light/dark | 监听解析后的 `data-theme`，在跟随模式下切换对应终端方案 |
 
 安装版本的 `@xterm/xterm` 6.x 类型已提供 `foreground`、`background`、光标、选区、16 ANSI 色和 `extendedAnsi`。主题可以通过 `terminal.options.theme` 更新；接口依据：[ITheme](https://xtermjs.org/docs/api/terminal/interfaces/itheme/) 与 [Terminal.options](https://xtermjs.org/docs/api/terminal/classes/terminal/)。实施以锁文件对应的本地类型和行为测试为准。

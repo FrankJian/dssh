@@ -81,10 +81,10 @@ Duo SSH 是面向开发与运维的**跨平台（Windows / macOS）SSH 管理器
 
 ### 3.3 标签独立窗口
 
-- 终端和 SFTP 标签可通过标签内的“移至新窗口”按钮拆为无侧栏的原生 Tauri 窗口。
+- 终端、SFTP 和浏览器标签可通过标签右键菜单拆为完整的原生 Tauri 工作台，可继续新建 SSH / 本地终端、浏览器、SFTP，使用连接管理、设置和助手。
 - 拆出终端时迁移的是一个完整的“终端 window”：单终端直接迁移；已分屏时连同 pane 树、比例与焦点一起迁移。Rust 侧 session ID 不变，不重新建立远端 shell。
 - 子窗口通过进程级 `DetachedWorkspaceManager` 登记归属；终端输出继续使用全局事件，并从 Rust 保留的 scrollback 初始化新 renderer。
-- 点击“合并回主窗口”或直接关闭原生子窗口会恢复原标签并自动聚焦原 session；点击子窗口标签内的关闭按钮则关闭对应终端 session，不再恢复。
+- 各窗口独立管理标签和会话；关闭窗口结束其中的会话和浏览器页面，运行中命令需要确认。不提供合并回主窗口，也不在其他窗口恢复标签。
 - `detached-*` 窗口使用独立 Tauri capability。新增或修改子窗口 API 权限后必须完整重启应用，Vite 热更新不足以刷新 capability。
 
 ## 4. 视觉系统（Graphite Glass）

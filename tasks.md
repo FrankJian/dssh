@@ -168,7 +168,7 @@
 - [ ] **G2.1 设置常量**：在 `src/settings/settings.ts` 增加 `appearanceGlassModeKey` / `appearanceGlassIntensityKey`、`GlassMode`（仅 `off | window`）/ `GlassIntensity` 类型、默认值与解析函数，沿用现有 `parseBoolean` 一类的容错风格。
 - [ ] **G2.2 `useGlassSettings`**：新增 hook 管理模式与强度，写 localStorage，写 `document.documentElement.dataset.windowMaterial` / `dataset.windowMaterialIntensity`，并**照抄 `useTheme` 的 `storage` 事件监听**实现跨窗口同步（现有 `useTerminalSettings` 没有这一层，不要以它为模板）。
 - [ ] **G2.3 外观设置 UI**：在 `SettingsDialog.tsx` 的 `“appearance“` 分类中，主题之后新增“原生窗口材质”区块：关闭 / 整窗两档（沿用 `.settings-theme__option` 的分段按钮样式）+ 可选强度；不支持的选项禁用并给出原因。不得提供关闭默认 Graphite Glass 的选项。
-- [ ] **G2.4 接线主窗口与独立窗口**：在 `App.tsx` 与 `DetachedWorkspace.tsx` 各接入 hook；确认独立窗口在无设置面板的情况下也能通过 `storage` 同步实时更新。
+- [ ] **G2.4 接线主窗口与独立窗口**：在主窗口与独立工作台共用的 `App.tsx` 中接入 hook；确认不同窗口能通过 `storage` 同步实时更新。
 - [ ] **G2.5 文案更新**：把“窗口对桌面的整体透明需要系统级窗口透明，暂未开启”改为说明“Graphite Glass 默认只作用于应用内 chrome / 浮层；整窗桌面透视需要系统级窗口透明”。
 
 **Phase 2 验收**：设置里切换模式与强度立即生效并持久化；重开应用与打开独立窗口都保持一致；`off` 状态保留默认 Graphite Glass。

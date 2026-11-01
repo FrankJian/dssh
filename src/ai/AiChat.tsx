@@ -296,6 +296,7 @@ function ToolCardView({
   onApprove: (callId: string, approved: boolean) => void;
 }) {
   const label = TOOL_LABELS[item.toolName] ?? item.toolName;
+  const browserTool = item.toolName.startsWith("browser_");
   const command = useMemo(() => extractCommand(item.args), [item.args]);
   const sshConnection = useMemo(() => extractSshConnection(item.args), [item.args]);
   const terminalInput = item.toolName === "write_terminal" && typeof item.args.input === "string"
@@ -320,7 +321,7 @@ function ToolCardView({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <Icon name={item.toolName === "open_ssh_session" ? "ssh" : "terminalTool"} height="15" width="15" />
+        <Icon name={browserTool ? "globe" : item.toolName === "open_ssh_session" ? "ssh" : "terminalTool"} height="15" width="15" />
         <span className="ai-tool__name">{label}</span>
         {terminalInput ? <span className="ai-tool__preview">{terminalInput.terminal} · {terminalInput.input} ↵</span> : sshConnection ? (
           <span className="ai-tool__preview">{sshConnection.username}@{sshConnection.host}:{sshConnection.port}</span>
@@ -340,6 +341,7 @@ function ToolCardView({
       </button>
       {expanded ? (
         <>
+          {browserTool ? <pre className="ai-tool__command">{JSON.stringify(item.args, null, 2)}</pre> : null}
           {terminalInput ? <pre className="ai-tool__command">{terminalInput.input}{"\n↵ 回车"}</pre> : !userQuestion && command ? <pre className="ai-tool__command">{command}</pre> : null}
           {userQuestion ? (
             <UserQuestionChoices
@@ -352,7 +354,9 @@ function ToolCardView({
           {needsApproval ? (
             <div className="ai-tool__approval">
               <span className="ai-tool__approval-hint">
-                {terminalInput
+                {browserTool
+                  ? item.toolName === "browser_read" ? "是否允许将此页面的可见正文和元素发送给当前 AI 模型？" : "是否允许执行以上浏览器操作？点击可能提交表单或产生外部副作用。"
+                  : terminalInput
                   ? `是否允许向终端“${terminalInput.terminal}”（${terminalInput.sessionId}）输入以上内容并按回车？`
                   : sshConnection
                   ? `是否允许在后台建立 SSH 连接“${sshConnection.name}”（${sshConnection.username}@${sshConnection.host}:${sshConnection.port}）？`
@@ -456,6 +460,11 @@ function UserQuestionChoices({
 }
 
 const TOOL_LABELS: Record<string, string> = {
+  browser_list_pages: "列出浏览器页面",
+  browser_open: "打开浏览器页面",
+  browser_read: "读取浏览器页面",
+  browser_navigate: "浏览器跳转",
+  browser_interact: "操作浏览器页面",
   list_servers: "列出服务器",
   run_command: "执行命令",
   open_ssh_session: "后台 SSH 连接",

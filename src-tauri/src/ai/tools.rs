@@ -17,7 +17,7 @@ const MAX_TERMINAL_TAIL_CHARS: usize = 8_000;
 
 /// The tool set exposed to the model for SSH server operations.
 pub fn tool_defs() -> Vec<Tool> {
-    vec![
+    let mut tools = vec![
         Tool::new("list_servers")
             .with_description(
                 "列出用户已保存的所有 SSH 服务器配置（返回 id、名称、主机、端口、用户名、标签、描述）。\
@@ -182,14 +182,22 @@ pub fn tool_defs() -> Vec<Tool> {
                 },
                 "additionalProperties": false
             })),
-    ]
+    ];
+    tools.extend(crate::browser::ai::tool_defs());
+    tools
 }
 
 /// Whether a tool requires explicit user approval before executing.
 pub fn tool_needs_approval(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "run_command" | "open_ssh_session" | "write_terminal"
+        "run_command"
+            | "open_ssh_session"
+            | "write_terminal"
+            | "browser_open"
+            | "browser_read"
+            | "browser_navigate"
+            | "browser_interact"
     )
 }
 
@@ -607,6 +615,20 @@ fn truncate_output(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{tool_defs, tool_needs_approval};
+
+    #[test]
+    fn browser_tools_require_explicit_approval_except_page_listing() {
+        for name in [
+            "browser_open",
+            "browser_read",
+            "browser_navigate",
+            "browser_interact",
+        ] {
+            assert!(tool_needs_approval(name));
+            assert!(tool_defs().iter().any(|tool| tool.name == name.into()));
+        }
+        assert!(!tool_needs_approval("browser_list_pages"));
+    }
 
     #[test]
     fn opening_an_ssh_session_requires_explicit_approval() {

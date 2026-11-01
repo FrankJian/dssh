@@ -55,6 +55,9 @@ export function useS3Profiles() {
 
   useEffect(() => {
     void reloadProfiles();
+    const refresh = () => { void reloadProfiles(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [reloadProfiles]);
 
   const filteredProfiles = useMemo(() => {

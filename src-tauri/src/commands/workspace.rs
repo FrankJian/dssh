@@ -1,10 +1,10 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State, Webview};
 
 use crate::{
     app::AppState,
     error::AppResult,
     models::workspace::{
-        DetachedWorkspace, OpenDetachedSftpRequest, OpenDetachedTerminalRequest,
+        DetachedWorkbench, DetachedWorkspace, OpenDetachedSftpRequest, OpenDetachedTerminalRequest,
         UpdateDetachedWorkspaceRequest,
     },
 };
@@ -62,6 +62,32 @@ pub fn update_detached_terminal_workspace(
 }
 
 #[tauri::command]
-pub fn discard_detached_workspace(state: State<'_, AppState>, label: String) -> AppResult<()> {
-    state.detached_workspaces.discard(&label)
+pub fn discard_detached_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    webview: Webview,
+) -> AppResult<()> {
+    crate::browser::trusted(&webview)?;
+    let label = webview.label();
+    if let Some(mut workspace) = state.detached_workspaces.get(label)? {
+        state.detached_workspaces.discard(label)?;
+        workspace.terminal = None;
+        workspace.sftp = None;
+        workspace.workbench = Some(DetachedWorkbench::default());
+        let _ = app.emit(crate::workspace::DETACHED_WORKSPACE_CLOSED_EVENT, workspace);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_detached_workbench(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    webview: Webview,
+    workbench: DetachedWorkbench,
+) -> AppResult<()> {
+    crate::browser::trusted(&webview)?;
+    state
+        .detached_workspaces
+        .update_workbench(&app, webview.label(), workbench)
 }

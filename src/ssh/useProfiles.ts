@@ -60,6 +60,9 @@ export function useProfiles() {
 
   useEffect(() => {
     void reloadProfiles();
+    const refresh = () => { void reloadProfiles(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [reloadProfiles]);
 
   const filteredProfiles = useMemo(

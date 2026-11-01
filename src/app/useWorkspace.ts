@@ -22,12 +22,13 @@ export type SftpTabPaths = Pick<SftpTab, "remotePath" | "localPath">;
  * (SFTP for now) and a single "active surface" selector on top: when
  * `activeSftpId` is set the SFTP tab is shown, otherwise the active terminal is.
  */
-export function useWorkspace() {
-  const [sftpTabs, setSftpTabs] = useState<SftpTab[]>([]);
-  const [activeSftpId, setActiveSftpId] = useState<string | null>(null);
+export function useWorkspace(initialTabs: SftpTab[] = [], initialOrder: string[] = []) {
+  const [sftpTabs, setSftpTabs] = useState<SftpTab[]>(initialTabs);
+  const [activeBrowserId, setActiveBrowserId] = useState<string | null>(null);
+  const [activeSftpId, setActiveSftpId] = useState<string | null>(initialTabs[0]?.id ?? null);
   // User-defined tab order (ids). Tabs missing from this list keep their natural
   // order and sort after the explicitly-ordered ones.
-  const [tabOrder, setTabOrder] = useState<string[]>([]);
+  const [tabOrder, setTabOrder] = useState<string[]>(initialOrder);
 
   /** Move `draggedId` to sit where `targetId` currently is. */
   const reorderTab = useCallback((draggedId: string, targetId: string, allIds: string[]) => {
@@ -52,6 +53,7 @@ export function useWorkspace() {
     setSftpTabs((current) =>
       current.some((tab) => tab.id === id) ? current : [...current, { id, profileId, title }],
     );
+    setActiveBrowserId(null);
     setActiveSftpId(id);
     return id;
   }, []);
@@ -59,6 +61,7 @@ export function useWorkspace() {
   const duplicateSftpTab = useCallback((source: SftpTab) => {
     const id = `sftp:${source.profileId}:${crypto.randomUUID()}`;
     setSftpTabs((current) => [...current, { ...source, id }]);
+    setActiveBrowserId(null);
     setActiveSftpId(id);
     return id;
   }, []);
@@ -90,15 +93,21 @@ export function useWorkspace() {
   }, []);
 
   const focusSftpTab = useCallback((id: string) => {
+    setActiveBrowserId(null);
     setActiveSftpId(id);
   }, []);
 
   /** Switch the main column back to the active terminal surface. */
   const focusTerminal = useCallback(() => {
+    setActiveBrowserId(null);
     setActiveSftpId(null);
   }, []);
 
+  const focusBrowserTab = useCallback((id: string) => { setActiveSftpId(null); setActiveBrowserId(id); }, []);
+
   return {
+    activeBrowserId,
+    focusBrowserTab,
     sftpTabs,
     activeSftpId,
     tabOrder,

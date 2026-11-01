@@ -37,6 +37,7 @@ interface SendArgs {
 
 export interface AiChat {
   conversationId: string;
+  ownsRun: (runId: string) => boolean;
   items: ChatItem[];
   isHistoryReady: boolean;
   isRunning: boolean;
@@ -321,6 +322,7 @@ export function useAiChat(): AiChat {
 
   return {
     conversationId: conversationIdRef.current,
+    ownsRun: (runId: string) => runIdRef.current === runId,
     items,
     isHistoryReady,
     isRunning,

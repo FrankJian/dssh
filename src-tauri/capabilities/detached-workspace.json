@@ -16,6 +16,11 @@
     "core:window:allow-set-title",
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "opener:default",
+    "opener:allow-open-url",
+    "updater:default",
+    "process:default",
+    "process:allow-restart"
   ]
 }

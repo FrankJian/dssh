@@ -1,6 +1,8 @@
 import type { SVGProps } from "react";
 
 export type IconName =
+  | "globe"
+  | "windowGlobe"
   | "arrowUp"
   | "arrowLeft"
   | "arrowRight"
@@ -24,6 +26,7 @@ export type IconName =
   | "ellipsis"
   | "eye"
   | "externalWindow"
+  | "arrowIntoWindow"
   | "file"
   | "fileArchive"
   | "fileCode"
@@ -104,6 +107,18 @@ export function Icon({ name, ...props }: IconProps) {
       width="18"
       {...props}
     >
+      {name === "windowGlobe" ? (
+        <>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M3 9h18M6 6.5h1M9 6.5h1" />
+          <circle cx="12" cy="14.5" r="3.5" />
+          <ellipse cx="12" cy="14.5" rx="1.5" ry="3.5" />
+          <path d="M8.5 14.5h7" />
+        </>
+      ) : null}
+      {name === "globe" ? <>
+        <circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" />
+      </> : null}
       {name === "monitor" ? (
         <>
           <rect height="12" rx="2" width="18" x="3" y="4" />
@@ -358,6 +373,12 @@ export function Icon({ name, ...props }: IconProps) {
         </>
       ) : null}
       {name === "stop" ? <rect height="10" rx="1.5" width="10" x="7" y="7" /> : null}
+      {name === "arrowIntoWindow" ? (
+        <>
+          <path d="M20 4 10 14M10 8v6h6" />
+          <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+        </>
+      ) : null}
       {name === "externalWindow" ? (
         <>
           <path d="M14 4h6v6" />
