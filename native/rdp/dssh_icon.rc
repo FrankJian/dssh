@@ -1,0 +1,2 @@
+// Lowest icon ID is also the executable's default Explorer icon.
+101 ICON "dssh-rdp.ico"

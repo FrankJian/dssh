@@ -30,13 +30,40 @@ if (createHash("sha256").update(readFileSync(archive)).digest("hex") !== checksu
 extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
-function adapt(file, anchor, replacement) {
+for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
+  copyFileSync(join(root, "native", "rdp", file), join(sdl, file));
+}
+copyFileSync(join(root, "native/rdp/icons/rdp.ico"), join(sdl, "dssh-rdp.ico"));
+// Embed the macOS Dock image: the worker is a standalone executable, not an .app.
+// No image path or external decoder is needed on the user's machine.
+const iconPng = readFileSync(join(root, "native/rdp/icons/rdp.png"));
+writeFileSync(join(sdl, "dssh_icon_data.hpp"), `#pragma once\nstatic const unsigned char dssh_icon_png[] = {\n${Array.from(iconPng, (byte) => `0x${byte.toString(16).padStart(2, "0")}`).join(",")}\n};\n`);
+function adapt(file, anchor, replacement, expectedCount = 1) {
   const contents = readFileSync(file, "utf8");
-  if (contents.split(anchor).length !== 2) throw new Error(`Pinned FreeRDP adaptation anchor changed: ${basename(file)}`);
-  writeFileSync(file, contents.replace(anchor, replacement));
+  if (contents.split(anchor).length !== expectedCount + 1) throw new Error(`Pinned FreeRDP adaptation anchor changed: ${basename(file)}`);
+  writeFileSync(file, contents.replaceAll(anchor, replacement));
 }
 const main = join(sdl, "sdl_freerdp.cpp");
-adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"');
+adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"');
+adapt(main, "\t/* Redirect SDL log messages to wLog */", "\tdssh_set_application_icon();\n\t/* Redirect SDL log messages to wLog */");
+const window = join(sdl, "sdl_window.cpp");
+adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"');
+// Initial window and fallback/recreated window must both retain the icon.
+adapt(window, "\t_window = SDL_CreateWindowWithProperties(props);", "\t_window = SDL_CreateWindowWithProperties(props);\n\tdssh_set_window_icon(_window);", 2);
+const clientCmake = join(sdl, "CMakeLists.txt");
+// Enable at the common root so sibling macOS targets share Objective-C rules.
+adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
+adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp)
+if(APPLE)
+  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m)
+  set_source_files_properties(dssh_icon.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+  target_link_libraries(\${MODULE_NAME} PRIVATE "-framework AppKit")
+elseif(WIN32)
+  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc)
+  target_include_directories(\${MODULE_NAME} PRIVATE \${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(\${MODULE_NAME} PRIVATE user32)
+endif()
+target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})`);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
 adapt(main, "\tsdl::win32::release_transient_console();", "\t// Duo SSH owns the inherited pipes.");
