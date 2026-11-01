@@ -37,10 +37,13 @@ function adapt(file, anchor, replacement) {
 }
 const main = join(sdl, "sdl_freerdp.cpp");
 adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"');
-adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);`);
+adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
 adapt(main, "\tsdl::win32::release_transient_console();", "\t// Duo SSH owns the inherited pipes.");
 adapt(main, "\tsdl_rdp->sdl->setMetadata();", "\tdssh_wipe_arguments(privateArgs);\n\tsdl_rdp->sdl->setMetadata();");
+adapt(main, "\tauto status = freerdp_client_settings_parse_command_line_ex(", '\tdssh_status("stage arguments");\n\tauto status = freerdp_client_settings_parse_command_line_ex(');
+adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");\n\t/* Basic SDL initialization */');
+adapt(main, "\tif (freerdp_client_start(context) != 0)", '\tdssh_status("stage connect");\n\tif (freerdp_client_start(context) != 0)');
 adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", "\t\t\t\tif (windowEvent.type == SDL_EVENT_USER) { dssh_focus_windows(); continue; }\n\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))");
 const context = join(sdl, "sdl_context.cpp");
 adapt(context, '#include "sdl_context.hpp"', '#include "sdl_context.hpp"\n#include "dssh_worker.hpp"');
@@ -74,6 +77,9 @@ const args = ["-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Rele
   "-DWITH_CUPS=OFF", "-DWITH_PCSC=OFF", "-DWITH_PCSC_WINPR=OFF", "-DWITH_ALSA=OFF", "-DWITH_PULSE=OFF",
   "-DWITH_GSSAPI=OFF", "-DWITH_KRB5=OFF", "-DWITH_JPEG=OFF", "-DWITH_OPENH264=OFF",
   "-DWITH_OPUS=OFF", "-DWITH_WEBP=OFF", "-DWITH_URBDRC=OFF", "-DWITH_SMARTCARD_EMULATE=OFF",
+  // NTLM/CredSSP must work on clean machines without OpenSSL's legacy module.
+  "-DWITH_INTERNAL_MD4=ON", "-DWITH_INTERNAL_RC4=ON",
+  "-DSDL_USE_COMPILED_RESOURCES=ON",
   "-DCHANNEL_URBDRC=OFF", "-DCHANNEL_SMARTCARD=OFF", "-DCHANNEL_DRIVE=OFF", "-DCHANNEL_PRINTER=OFF",
   "-DCHANNEL_SERIAL=OFF", "-DCHANNEL_PARALLEL=OFF", "-DCHANNEL_AUDIN=OFF", "-DCHANNEL_VIDEO=OFF",
   "-DWITH_WIN_CONSOLE=ON", "-DWITH_SDL_LINK_SHARED=ON", "-DOPENSSL_USE_STATIC_LIBS=ON",
@@ -138,6 +144,16 @@ if (windows) {
   copyFileSync(join(cache, "SDL_ttf-release-3.2.2/LICENSE.txt"), join(licenseDir, "SDL_ttf-LICENSE.txt"));
 }
 writeFileSync(join(runtime, "engine.json"), JSON.stringify({ protocol: 1, freerdp: version, sourceSha256: checksum }, null, 2));
+// Test the staged runtime without any build-host OpenSSL config/provider path.
+// TLS-only smoke tests do not exercise NTLM's MD4 and RC4 requirements.
+const cleanEnv = {};
+for (const key of ["HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"]) {
+  if (process.env[key] !== undefined) cleanEnv[key] = process.env[key];
+}
+cleanEnv.OPENSSL_MODULES = join(cache, "no-external-openssl-modules");
+cleanEnv.OPENSSL_CONF = join(cache, "no-external-openssl-config.cnf");
+const cryptoStatus = execFileSync(binary, ["--dssh-crypto-self-test"], { env: cleanEnv, encoding: "utf8", timeout: 10000, windowsHide: true });
+if (cryptoStatus.trim() !== "DSSH_RDP_V1 crypto-ok") throw new Error("RDP native crypto portability self-test failed");
 writeFileSync(join(runtime, ".gitkeep"), "");
 // Replace only after every library and license was successfully prepared.
 const previousRuntime = join(cache, "runtime-previous");

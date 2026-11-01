@@ -7,6 +7,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <winpr/crypto.h>
+#include <winpr/ssl.h>
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
@@ -16,6 +18,27 @@ inline void dssh_status(const char* status)
 {
     std::printf("DSSH_RDP_V1 %s\n", status);
     std::fflush(stdout);
+}
+
+// Public test vectors verify the exact primitives needed by NTLM/CredSSP.
+// This probe never accepts or prints user credentials.
+inline int dssh_crypto_self_test(bool announce = true)
+{
+    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);
+    if (!winpr_InitializeSSL(WINPR_SSL_INIT_DEFAULT)) return 180;
+    unsigned char digest[16] = {};
+    const unsigned char md4[] = {0xa4,0x48,0x01,0x7a,0xaf,0x21,0xd8,0x52,0x5f,0xc1,0x0a,0xe8,0x7a,0xa6,0x72,0x9d};
+    if (!winpr_Digest(WINPR_MD_MD4, "abc", 3, digest, sizeof(digest)) || std::memcmp(digest, md4, sizeof(md4)))
+    { dssh_status("crypto-md4-unavailable"); return 181; }
+    auto cipher = winpr_RC4_New("Key", 3);
+    if (!cipher) { dssh_status("crypto-rc4-unavailable"); return 182; }
+    unsigned char encrypted[9] = {};
+    const unsigned char rc4[] = {0xbb,0xf3,0x16,0xe8,0xd9,0x40,0xaf,0x0a,0xd3};
+    const bool valid = winpr_RC4_Update(cipher, sizeof(encrypted), "Plaintext", encrypted) && !std::memcmp(encrypted, rc4, sizeof(rc4));
+    winpr_RC4_Free(cipher);
+    if (!valid) { dssh_status("crypto-rc4-unavailable"); return 182; }
+    if (announce) dssh_status("crypto-ok");
+    return 0;
 }
 
 inline uint32_t dssh_read_u32()

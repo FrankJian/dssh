@@ -4,9 +4,6 @@ use crate::{
 };
 use zeroize::Zeroizing;
 
-pub const READY: &str = "DSSH_RDP_V1 ready";
-pub const CONNECTED: &str = "DSSH_RDP_V1 connected";
-
 /// A length-delimited private pipe protocol, never shell/argv or line based.
 /// The native adapter also enforces these bounds before invoking FreeRDP.
 pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroizing<Vec<u8>>> {

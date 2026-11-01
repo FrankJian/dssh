@@ -22,6 +22,16 @@
 
 FreeRDP 原生实现经过小范围、有锚点检查的适配：私有管道协议、状态消息、禁止交互式密码重试、固定证书严格匹配。修改由 `scripts/build-rdp.mjs` 对固定发行源应用；校验源归档 SHA-256，不跟随 master。
 
+### 安装包认证依赖修复
+
+开发机可连接、安装包失败时，曾定位到 OpenSSL legacy-provider 的隐式依赖：默认构建的 MD4 / RC4 由外部 provider 提供，但发布 runtime 没有携带构建机模块。在旧构建配置中，公开测试向量自检在本机 provider 可用时通过，指定不存在的模块目录后报 `crypto-md4-unavailable`。
+
+现在固定开启 FreeRDP/WinPR 的 `WITH_INTERNAL_MD4` / `WITH_INTERNAL_RC4`，并内嵌 SDL 字体资源。构建在替换 runtime 前强制运行不依赖 OpenSSL 安装目录的加密自检；CI 还会复制整个 runtime 到临时目录，清理环境后验证 MD4 / RC4 的公开测试向量。该修复保持 TLS / NLA 策略不变，不依赖用户另行安装 OpenSSL。
+
+修复后已在本机生成真正的 release 模式 macOS app，并直接对包内 worker 执行全部 5 项原生回归，均通过；`otool` 检查没有指向 Homebrew / 构建机的绝对动态库依赖。此验证覆盖加密组件、TLS 协商、私有管道与生命周期，不替代真实 Windows 桌面登录验收。修改必须重建原生 worker 和安装包，不能只用前端 HMR 或沿用旧的 runtime 目录。
+
+原生进程回传固定初始化阶段和数字错误码。Rust 在进程退出后等待并消费最后的状态消息，避免错误被退出竞态丢弃；用户提示附带阶段、退出码与 RDP 代码，区分加密组件、运行库、显示、网络和账号错误。密码、原始日志和服务器文本不进入诊断。
+
 首版不含自动发现证书 / 首次信任弹窗。保存指纹是显式信任操作；证书更换需管理员重新核对后编辑。RDP 也不保证共享当前物理屏幕，不支持把 Windows Home 用作内置 RDP 服务端。
 
 ## 本地构建与运行
@@ -72,9 +82,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-原生边界测试使用本机临时 TLS 探针，无真实 Windows / 凭据：覆盖协议长度上限、启动前 / 连接中父进程消失、未知 CA 拒绝、正确 pin 进入 CredSSP，以及已被 CA 信任的不同证书仍因错误 pin 被拒绝；显式跳过验证时，自签名和名称不匹配可继续进入 NLA 协商。测试需要 loopback bind 权限；Windows 上 TLS 探针暂跳过，仅运行协议 / 生命周期检查。
+原生边界测试使用本机临时 TLS 探针，无真实 Windows / 凭据：覆盖协议长度上限、启动前 / 连接中父进程消失、未知 CA 拒绝、正确 pin 进入 CredSSP，以及已被 CA 信任的不同证书仍因错误 pin 被拒绝；显式跳过验证时，自签名和名称不匹配可继续进入 NLA 协商。新增移目录、清理环境、禁用外部 provider 后的 NTLM 加密公开向量自检。测试需要 loopback bind 权限和 openssl CLI；仅缺少该 CLI 时跳过 TLS 探针，Windows 也按实际生产的 CREATE_NO_WINDOW 启动方式验证。
 
-本次 macOS 已通过 Rust 135 项测试（另 1 项按原有规则忽略）、TypeScript / 生产构建、3 项前端状态回归、4 项原生边界测试，并生成包含 worker / 动态库的隔离 app bundle。原生界面已验证创建配置、一次性密码提交、启动真实 worker、不可达地址错误与手动重连入口；隔离配置使用独立 app identifier，没有读取用户原有连接配置。证书跳过选项另已覆盖旧配置默认严格验证、开启 / 关闭持久化、保留 NLA、指纹恢复及原生自签名 / 名称不匹配的协议回归；该选项尚需真实 Windows Server 验收。
+本次 macOS 已通过 Rust 138 项测试（另 1 项按原有规则忽略）、TypeScript / 生产构建、3 项前端状态回归、7 项原生构建回归、5 项原生边界测试，并生成包含 worker / 动态库的隔离 app bundle。原生界面已验证创建配置、一次性密码提交、启动真实 worker、不可达地址错误与手动重连入口；隔离配置使用独立 app identifier，没有读取用户原有连接配置。证书跳过选项另已覆盖旧配置默认严格验证、开启 / 关闭持久化、保留 NLA、指纹恢复及原生自签名 / 名称不匹配的协议回归；该选项尚需真实 Windows Server 验收。
 
 前端回归覆盖迟到事件不复活已结束会话、并发事件不被旧快照删除，以及失败状态不被旧快照覆盖。Rust 覆盖配置验证、严格密码更新请求、迁移幂等与公开 DTO 隐藏 secret reference。
 

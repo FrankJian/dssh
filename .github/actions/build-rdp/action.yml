@@ -25,6 +25,6 @@ runs:
     - name: Compile native RDP worker
       shell: bash
       run: pnpm rdp:build
-    - name: Check worker startup and parent-death cleanup
+    - name: Check relocated crypto, TLS and worker lifecycle
       shell: bash
       run: python scripts/test-rdp-worker.py

@@ -2,6 +2,7 @@
 import hashlib
 import os
 import queue
+import shutil
 from pathlib import Path
 import socket
 import ssl
@@ -21,9 +22,23 @@ def packet(arguments):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_crypto_works_without_developer_openssl_installation(self):
+        with tempfile.TemporaryDirectory(prefix="dssh-rdp-relocated-") as directory:
+            runtime = Path(directory) / "runtime"
+            shutil.copytree(BINARY.parent, runtime)
+            env = {key: value for key, value in os.environ.items() if key.upper() in {"HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}}
+            env["OPENSSL_MODULES"] = str(Path(directory) / "no-provider-modules")
+            env["OPENSSL_CONF"] = str(Path(directory) / "no-config.cnf")
+            result = subprocess.run([str(runtime / BINARY.name), "--dssh-crypto-self-test"], env=env,
+                                    capture_output=True, text=True, timeout=10,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            self.assertEqual(result.returncode, 0, f"Relocated NTLM crypto self-test failed: {result.stdout.strip()}")
+            self.assertEqual(result.stdout.strip(), "DSSH_RDP_V1 crypto-ok")
+
     def spawn(self, env=None):
         process = subprocess.Popen([str(BINARY), "--dssh-worker-v1"], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.addCleanup(self.cleanup, process)
         ready = queue.Queue()
         threading.Thread(target=lambda: ready.put(process.stdout.readline(256)), daemon=True).start()
@@ -57,7 +72,7 @@ class WorkerTests(unittest.TestCase):
         process.stdin.close()
         self.assertEqual(process.wait(timeout=5), 0)
 
-    @unittest.skipIf(os.name == "nt", "Requires openssl CLI and POSIX pipes")
+    @unittest.skipUnless(shutil.which("openssl"), "Requires openssl CLI")
     def test_certificate_policies_and_explicit_skip(self):
         with tempfile.TemporaryDirectory(prefix="dssh-rdp-tls-") as directory:
             key, cert = Path(directory) / "key.pem", Path(directory) / "cert.pem"

@@ -1,5 +1,7 @@
+mod diagnostics;
 mod protocol;
 mod secrets;
+use diagnostics::{WorkerDiagnostics, WorkerStatus, parse_status};
 
 use crate::{
     app::AppState,
@@ -30,13 +32,12 @@ struct Runtime {
     commands: mpsc::Sender<Control>,
 }
 enum Control {
-    Ready,
     Close,
     Terminate,
     Focus,
-    Connected,
+    Status(WorkerStatus),
+    ReaderClosed,
     ProtocolFailed,
-    Error(u32),
 }
 struct ChildGuard(Child);
 impl Drop for ChildGuard {
@@ -428,21 +429,13 @@ impl RdpManager {
                     }
                     Ok(_) => {}
                 }
-                match line.trim_end() {
-                    protocol::READY if !ready => {
+                match parse_status(&line) {
+                    Some(WorkerStatus::Ready) if !ready => {
                         ready = true;
-                        let _ = sender.send(Control::Ready);
+                        let _ = sender.send(Control::Status(WorkerStatus::Ready));
                     }
-                    protocol::CONNECTED if ready => {
-                        let _ = sender.send(Control::Connected);
-                    }
-                    text if ready && text.starts_with("DSSH_RDP_V1 error ") => {
-                        if let Ok(code) = text[18..].parse::<u32>() {
-                            let _ = sender.send(Control::Error(code));
-                        } else {
-                            let _ = sender.send(Control::ProtocolFailed);
-                            break;
-                        }
+                    Some(status) if ready && status != WorkerStatus::Ready => {
+                        let _ = sender.send(Control::Status(status));
                     }
                     _ => {
                         let _ = sender.send(Control::ProtocolFailed);
@@ -450,16 +443,18 @@ impl RdpManager {
                     }
                 }
             }
+            let _ = sender.send(Control::ReaderClosed);
         });
         let handshake_deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match receiver.recv_timeout(Duration::from_millis(50)) {
-                Ok(Control::Ready) => break,
+                Ok(Control::Status(WorkerStatus::Ready)) => break,
                 Ok(Control::Close | Control::Terminate) => {
                     self.update(app, session_id, "closed", None);
                     return Ok(());
                 }
-                Ok(Control::ProtocolFailed) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Ok(Control::ProtocolFailed | Control::ReaderClosed)
+                | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(error("rdp_protocol", "RDP 引擎启动握手失败。"));
                 }
                 _ => {}
@@ -475,8 +470,8 @@ impl RdpManager {
         drop(payload);
         self.update(app, session_id, "connecting", None);
         let started = Instant::now();
-        let mut connected = false;
-        let mut connection_error = None;
+        let mut diagnostics = WorkerDiagnostics::default();
+        let mut reader_closed = false;
         let mut closing = None;
         loop {
             if let Some(status) = child
@@ -484,14 +479,33 @@ impl RdpManager {
                 .try_wait()
                 .map_err(|_| error("rdp_engine_wait", "无法读取远程桌面进程状态。"))?
             {
+                // Process exit can win the race against the stdout reader.
+                // Drain final structured errors before classifying the exit.
+                let deadline = Instant::now() + Duration::from_millis(250);
+                while !reader_closed && Instant::now() < deadline {
+                    match receiver.recv_timeout(Duration::from_millis(10)) {
+                        Ok(Control::Status(status)) => diagnostics.observe(status),
+                        Ok(Control::ReaderClosed) => reader_closed = true,
+                        Ok(Control::Close | Control::Terminate) => closing = Some(Instant::now()),
+                        _ => {}
+                    }
+                }
                 // These codes are pinned to FreeRDP 3.32.2 SDL's sdl::error enum.
                 let normal_exit = status
                     .code()
                     .is_some_and(|code| matches!(code, 0..=2 | 11 | 145));
-                if closing.is_some() || (normal_exit && connected) || status.code() == Some(145) {
+                if closing.is_some()
+                    || (normal_exit && diagnostics.connected)
+                    || status.code() == Some(145)
+                {
                     self.update(app, session_id, "closed", None);
                 } else {
-                    self.update(app, session_id, "failed", Some(connection_error.unwrap_or("RDP 连接已结束。请检查地址、NLA 账号及证书信任；自签名证书需填写已核对的 SHA-256 指纹。")));
+                    self.update(
+                        app,
+                        session_id,
+                        "failed",
+                        Some(&diagnostics.failure_message(status.code())),
+                    );
                 }
                 return Ok(());
             }
@@ -501,7 +515,10 @@ impl RdpManager {
                 self.update(app, session_id, "closed", None);
                 return Ok(());
             }
-            if !connected && closing.is_none() && started.elapsed() > Duration::from_secs(30) {
+            if !diagnostics.connected
+                && closing.is_none()
+                && started.elapsed() > Duration::from_secs(30)
+            {
                 return Err(error(
                     "rdp_connect_timeout",
                     "远程桌面连接超时，请检查网络和目标系统。",
@@ -524,26 +541,15 @@ impl RdpManager {
                     let _ = stdin.write_all(b"f");
                     let _ = stdin.flush();
                 }
-                Ok(Control::Connected) if closing.is_none() => {
-                    connected = true;
-                    self.update(app, session_id, "connected", None);
+                Ok(Control::Status(status)) => {
+                    diagnostics.observe(status);
+                    if status == WorkerStatus::Connected && closing.is_none() {
+                        self.update(app, session_id, "connected", None);
+                    }
                 }
+                Ok(Control::ReaderClosed) => reader_closed = true,
                 Ok(Control::ProtocolFailed) => {
                     return Err(error("rdp_protocol", "RDP 引擎协议不兼容或状态通道异常。"));
-                }
-                Ok(Control::Error(code)) => {
-                    connection_error = Some(match code {
-                        0x00020009 | 0x00020014 | 0x00020015 => {
-                            "Windows 身份验证失败或账号策略拒绝登录。请检查用户名、域和密码；不会自动重试。"
-                        }
-                        0x00020008 | 0x0002000d => {
-                            "TLS 或证书校验失败。请核对服务器证书 SHA-256 指纹及证书有效性。"
-                        }
-                        0x00020004..=0x00020006 => {
-                            "无法连接到 Windows RDP 服务，请检查主机、端口和网络。"
-                        }
-                        _ => "远程桌面协议连接失败，请检查目标系统和 NLA 配置。",
-                    });
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 _ => {}
