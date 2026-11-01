@@ -188,6 +188,10 @@ git push origin v0.5.0
 
 工作流会先校验 **tag（去掉 `v`）与 `Cargo.toml` 的 `version` 一致**（若 `tauri.conf.json` 显式写了 `version` 也一并校验），不一致直接失败，防止误发。
 
+发布使用 `GITHUB_TOKEN` 的 `contents: write` 权限。创建 Release 时，`releaseCommitish` 指向仓库默认分支：已存在的 tag 仍保持原来的提交，安装包也仍从触发事件的 tag 构建。这样可避免 tag 提交的工作流与默认分支不同而触发额外的 `workflows: write` 限制，无需为发布配置更高权限的个人 token。
+
+如果旧工作流在创建草稿 Release 时出现 `Resource not accessible by integration`，单纯重跑旧 tag 不会加载修改后的工作流。可在 GitHub Releases 页面为**已经存在的同名 tag**手动创建草稿 Release，再重跑失败任务，让其上传到该草稿；或者用包含工作流修正的新版本 tag 发布。看到 `Couldn't parse --config flag as inline JSON` 时，若参数是实际存在的配置文件路径，该提示可忽略；应以随后具体的构建 / API 错误为准。
+
 > 触发方式仅为**打 tag**，普通 `git push` 不会触发发布。
 
 ### 本地带签名构建（可选）
