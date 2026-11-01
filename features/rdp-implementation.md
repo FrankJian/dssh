@@ -45,6 +45,8 @@ pnpm tauri dev
 
 产物写到被 gitignore 的 `src-tauri/rdp-runtime/`，包含 worker 和运行库；缓存写到 `.cache/rdp/`。脚本可使用 `DSSH_RDP_ARCHIVE` / `DSSH_RDP_TTF_ARCHIVE` 指定离线源包，但仍强制校验摘要。
 
+解压统一通过 stdin 传入归档字节；Windows 显式使用 `%SystemRoot%\System32\tar.exe`，避免 Git Bash 的 GNU tar 把 `D:\...` 识别成远程归档地址。`pnpm test:rdp-build` 覆盖 Windows 工具选择、私有 stdin 调用与带空格路径的真实压缩包解压；原生构建 CI 在安装依赖前执行该回归。
+
 包含原生引擎的本地安装包：
 
 ```sh

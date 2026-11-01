@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, realpathSync, rmSync, renameSync } from "node:fs";
 import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractArchive } from "./rdp-archive.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const version = "3.32.2";
@@ -24,7 +25,7 @@ const run = (command, args) => execFileSync(command, args, { stdio: "inherit" })
 if (!existsSync(archive)) run("curl", ["-L", "--fail", "--retry", "3", `https://github.com/FreeRDP/FreeRDP/archive/refs/tags/${version}.tar.gz`, "-o", archive]);
 if (createHash("sha256").update(readFileSync(archive)).digest("hex") !== checksum) throw new Error("FreeRDP archive checksum mismatch");
 // Extract afresh so adaptation anchors are checked on every build.
-run("tar", ["-xzf", archive, "-C", cache]);
+extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 function adapt(file, anchor, replacement) {
@@ -56,7 +57,7 @@ if (!windows) {
   const ttfArchive = process.env.DSSH_RDP_TTF_ARCHIVE || join(cache, "SDL_ttf-3.2.2.tar.gz");
   if (!existsSync(ttfArchive)) run("curl", ["-L", "--fail", "--retry", "3", "https://github.com/libsdl-org/SDL_ttf/archive/refs/tags/release-3.2.2.tar.gz", "-o", ttfArchive]);
   if (createHash("sha256").update(readFileSync(ttfArchive)).digest("hex") !== "ff6b81d3dc39d843cc3ead6dedd68043a79513d266792ea89445547ef4e9b073") throw new Error("SDL_ttf checksum mismatch");
-  run("tar", ["-xzf", ttfArchive, "-C", cache]);
+  extractArchive(ttfArchive, cache);
   const prefix = nativePrefix;
   run("cmake", ["-S", join(cache, "SDL_ttf-release-3.2.2"), "-B", join(cache, "ttf-build"), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
     `-DCMAKE_INSTALL_PREFIX=${dependencies}`, `-DCMAKE_PREFIX_PATH=${prefix}`, "-DSDLTTF_VENDORED=OFF", "-DSDLTTF_HARFBUZZ=OFF", "-DSDLTTF_PLUTOSVG=OFF", "-DSDLTTF_SAMPLES=OFF"]);

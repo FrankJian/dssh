@@ -3,6 +3,9 @@ description: Compile the pinned FreeRDP worker and its native runtime
 runs:
   using: composite
   steps:
+    - name: Test native archive extraction
+      shell: bash
+      run: pnpm test:rdp-build
     - name: Install macOS native build dependencies
       if: runner.os == 'macOS'
       shell: bash
