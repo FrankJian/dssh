@@ -35,7 +35,7 @@ Rust `BrowserManager` 管理页面 ID、窗口归属、标题、URL 与带版本
 
 导航拒绝非 HTTP / HTTPS、应用内部域、配置的开发服务器源及内嵌用户名密码。TLS 使用系统默认校验。普通 `target="_blank"` 链接在当前页导航，原生新窗口回调同样验证 URL。下载请求拒绝。
 
-多 WebView 使用 Tauri `unstable` feature，见 [Tauri 文档](https://v2.tauri.app/reference/javascript/api/namespacewebview/)。创建子 WebView 前取得父窗口副本，避免持有 `window_ref` 锁等待 UI 线程时与并发 IPC 互相阻塞。macOS 独立浏览器使用 Overlay 标题栏与预留拖动区。
+多 WebView 使用 Tauri `unstable` feature，见 [Tauri 文档](https://v2.tauri.app/reference/javascript/api/namespacewebview/)。创建子 WebView 前取得父窗口副本，避免持有 `window_ref` 锁等待 UI 线程时与并发 IPC 互相阻塞。macOS 独立浏览器使用 Overlay 标题栏与预留拖动区。macOS 网页使用完整 Safari 兼容 User-Agent，避免部分站点（例如百度）对默认 WKWebView 标识返回同地址刷新循环；Windows 保留 WebView2 默认标识。
 
 站点 Cookie / 登录态由系统 WebView 数据存储处理；暂不提供独立 profile、清理站点数据、隐私浏览、书签历史、下载管理、扩展和独立 SOCKS 路由。网页不加入终端分屏树，也不与 SSH 生命周期绑定。
 
@@ -43,7 +43,7 @@ Rust `BrowserManager` 管理页面 ID、窗口归属、标题、URL 与带版本
 
 - `pnpm exec tsc --noEmit`、`pnpm build`、`node --experimental-strip-types --test src/browser/browserPreferences.test.mjs`。
 - `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
-- `cargo run --example browser_smoke`：需要图形桌面；临时本机 HTTP 服务，不使用模型、SSH 或用户数据库。覆盖 AI 正文 / 元素读取、敏感字段排除、确认目标、填写 / 点击、过期引用和 URL 拒绝、移窗保留表单状态与关闭回收。
+- `cargo run --example browser_smoke`：需要图形桌面；临时本机 HTTP 服务，不使用模型、SSH 或用户数据库。覆盖完整浏览器 User-Agent（不完整时模拟同地址刷新循环）、AI 正文 / 元素读取、敏感字段排除、确认目标、填写 / 点击、过期引用和 URL 拒绝、移窗保留表单状态与关闭回收。
 - macOS 主应用原生验证已覆盖标签 / 连接管理切换、表单保留、独立窗口往返、弹窗覆盖、终端 URL 点击自动新建浏览器标签和链接设置选项。
 - Windows WebView2、多显示器 DPI、真实 SSH 转发、外部浏览器安装路径和实际模型 / 登录环境仍需实机验收。
 

@@ -29,6 +29,13 @@ pub struct BrowserManager {
 }
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+// WKWebView's default UA omits the Safari product/version tokens. Some sites
+// (including Baidu) respond by redirecting to the same URL indefinitely. Use
+// a complete, stable Safari compatibility identity for browser content only;
+// Windows keeps its native WebView2 identity.
+#[cfg(target_os = "macos")]
+const MACOS_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
 // Remote content (including local-origin frames) cannot invoke any custom command.
 // Core and plugin commands are separately denied by capabilities.
 pub fn guard(
@@ -332,7 +339,12 @@ pub fn mount(
     let popup_id = id.to_owned();
     let load_id = id.to_owned();
     let title_id = id.to_owned();
-    let builder=WebviewBuilder::new(label(id),WebviewUrl::External(url)).devtools(false).focused(false)
+    let builder = WebviewBuilder::new(label(id), WebviewUrl::External(url))
+        .devtools(false)
+        .focused(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.user_agent(MACOS_BROWSER_USER_AGENT);
+    let builder = builder
         .initialization_script(r#"document.addEventListener('click', event => { const a=event.target instanceof Element?event.target.closest('a'):null; if(a && a.target.toLowerCase()==='_blank') a.target='_self'; },true);"#)
         .on_navigation(move |url| allowed(&nav_app,url))
         .on_new_window(move |url,_| { if allowed(&popup_app,&url) {

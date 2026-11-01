@@ -21,10 +21,24 @@ fn fixture() -> String {
         for mut stream in listener.incoming().flatten() {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut request = [0; 4096];
-            let _ = stream.read(&mut request);
+            let size = stream.read(&mut request).unwrap_or(0);
+            let headers = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+            // Reproduce sites which refresh forever for WKWebView's incomplete
+            // default UA. Exercise the real HTTP header, not a constant match.
+            let complete_browser_ua = !cfg!(target_os = "macos")
+                || headers.lines().any(|line| {
+                    line.starts_with("user-agent:")
+                        && line.contains("version/")
+                        && line.contains("safari/")
+                });
+            let body = if complete_browser_ua {
+                PAGE
+            } else {
+                r#"<!doctype html><meta http-equiv="refresh" content="0">"#
+            };
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
-                PAGE.len()
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
             );
             let _ = stream.write_all(response.as_bytes());
         }

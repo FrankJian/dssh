@@ -128,10 +128,12 @@ export function BrowserWorkspace({ tab, visible }: { tab: BrowserTab; visible: b
       <IconButton label="移至独立窗口" onClick={() => void detachBrowserTab(tab.id).catch((cause: Error) => setError(cause.message))}><Icon name="externalWindow" /></IconButton>
       <IconButton label="新建浏览器标签" onClick={() => void openBrowser().catch((cause: Error) => setError(cause.message))}><Icon name="plus" /></IconButton>
     </form>
-    {error || loading ? <div className={`browser-status${error ? " browser-status--error" : ""}`} role={error ? "alert" : "status"}>
-      {error || "正在加载…"}
+    {error ? <div className="browser-status browser-status--error" role="alert">
+      {error}
     </div> : null}
-    <div className="browser-content" ref={region}>
+    {/* Loading must not change this region's geometry: native page-load events
+        can arrive repeatedly during redirects or embedded content loads. */}
+    <div className="browser-content" ref={region} aria-busy={loading}>
       {!opened ? (
         <div className="browser-empty" role="img" aria-label="浏览器空白页，请在地址栏输入网址">
           <Icon name="windowGlobe" className="browser-empty__watermark" aria-hidden="true" />
