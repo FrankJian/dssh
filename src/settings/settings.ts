@@ -151,22 +151,6 @@ export const terminalBgGlassBlurKey = "dssh.terminal.bgGlassBlur";
 export const terminalWorkspaceInsetKey = "dssh.terminal.workspaceInset";
 export const terminalWorkspaceRightInsetKey = "dssh.terminal.workspaceRightInset";
 export const terminalWorkspaceBottomInsetKey = "dssh.terminal.workspaceBottomInset";
-/** Shared by the main window and detached ones, so a new window opens the way
- *  the user last left the chrome rather than re-showing a bar they hid.
- *
- *  Versioned because the previous key was rewritten on every mount: a stored
- *  `false` could not be told apart from "never touched it", so flipping the
- *  default below would have been invisible to anyone who had already run the
- *  app. The suffix bump retires those auto-written values once. */
-export const sessionBarHiddenKey = "dssh.sessionBar.hidden.v2";
-
-/** Hidden until asked for — the tab strip already names the active session, so
- *  the bar is mostly redundant chrome between the tabs and the terminal. */
-export const SESSION_BAR_HIDDEN_DEFAULT = true;
-
-export function loadSessionBarHidden(): boolean {
-  return parseBoolean(localStorage.getItem(sessionBarHiddenKey), SESSION_BAR_HIDDEN_DEFAULT);
-}
 export const s3UploadConcurrencyKey = "dssh.s3.uploadConcurrency";
 export const s3DownloadConcurrencyKey = "dssh.s3.downloadConcurrency";
 

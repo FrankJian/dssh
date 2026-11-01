@@ -28,7 +28,6 @@ import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
 import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
-import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
 import { SETTINGS_CATEGORIES, SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
@@ -50,6 +49,7 @@ import { PaneGrid } from "../terminal/PaneGrid";
 import { PortForwardDialog } from "../terminal/PortForwardDialog";
 import { TerminalFileLayout } from "../terminal/TerminalFileLayout";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { TerminalSessionMenu } from "../terminal/TerminalSessionMenu";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
 import { focusTerminalSession, releaseTerminal, restoreTerminalSnapshot, terminalSize } from "../terminal/terminalRegistry";
@@ -188,7 +188,6 @@ function MainApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
   );
-  const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
@@ -280,9 +279,6 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
   }, [sidebarCollapsed]);
-  useEffect(() => {
-    localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
-  }, [sessionBarHidden]);
   useEffect(() => {
     if (rightPanel) {
       localStorage.setItem(RIGHT_PANEL_KEY, rightPanel);
@@ -1196,10 +1192,6 @@ function MainApp() {
     setSidebarCollapsed((collapsed) => !collapsed);
   }, []);
 
-  const toggleSessionBar = useCallback(() => {
-    setSessionBarHidden((hidden) => !hidden);
-  }, []);
-
   const toggleRightPanel = useCallback((panel: RightPanelId) => {
     setRightPanel((current) => (current === panel ? null : panel));
   }, []);
@@ -1609,8 +1601,6 @@ function MainApp() {
   const terminalSurface = (
     <TerminalWorkspace
       activeSession={activeSession}
-      activeSessionLabel={activeSessionLabel}
-      canForward={canForward}
       copyOnSelect={copyOnSelect}
       fontFamily={fontFamily}
       fontSize={fontSize}
@@ -1627,26 +1617,13 @@ function MainApp() {
       onOpenConnections={() => setActiveActivity("connections")}
       onCreateProfile={openCreateProfile}
       onFontSizeChange={setFontSize}
-      onOpenHostTools={() => toggleRightPanel("hosttools")}
-      onOpenPortForward={handleOpenPortForward}
-      onReconnect={handleReconnectActiveSession}
-      onCancelReconnect={() => {
-        if (activeSession) {
-          cancelReconnect(activeSession.id);
-        }
-      }}
       onResize={resizeSession}
       onStartLocalSession={handleStartLocalSession}
       onWrite={writeToSession}
-      showSessionBar={!sessionBarHidden}
       subscribeOutput={subscribeOutput}
     />
   );
 
-  // The session bar lives inside `terminalSurface`, so the toggle is only
-  // offered on the surfaces that actually show one — a split replaces it with
-  // the pane grid, and an open file editor takes its place.
-  let hasSessionBar = false;
   let mainSurface: ReactNode;
   if (isConnections) {
     mainSurface = (
@@ -1682,7 +1659,6 @@ function MainApp() {
   } else if (isSftpActive && activeSftpTab) {
     mainSurface = null;
   } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
-    hasSessionBar = Boolean(activeSession) && !activeRemoteFilePath;
     mainSurface = (
       <TerminalFileLayout
         fileTree={
@@ -1753,7 +1729,6 @@ function MainApp() {
       />
     );
   } else {
-    hasSessionBar = Boolean(activeSession);
     mainSurface = terminalSurface;
   }
 
@@ -1821,16 +1796,6 @@ function MainApp() {
         keywords: "focus terminal",
         run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); },
       });
-      if (hasSessionBar) {
-        items.push({
-          id: "act:session-bar",
-          label: sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏",
-          hint: "布局",
-          icon: "panelTop",
-          keywords: "session bar status 状态栏",
-          run: toggleSessionBar,
-        });
-      }
       items.push({
         id: "act:terminal-fullscreen",
         label: terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏",
@@ -2090,18 +2055,80 @@ function MainApp() {
         titleBar={zenMode || terminalFullscreenPaneId ? null : (
           <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
             {isMacOS ? null : <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />}
+            {isS3 || isConnections ? null : (
+              <div className="titlebar__workspace">
+                <WorkspaceTabStrip
+                  tabs={workspaceTabs}
+                  onSelect={handleSelectTab}
+                  onDuplicate={(tab) => void handleDuplicateTab(tab)}
+                  onRename={handleRenameTab}
+                  onClose={handleCloseTab}
+                  onCloseMany={(tabs) => void handleCloseTabs(tabs)}
+                  onDetach={(tab) => void handleDetachTab(tab)}
+                  onReorder={(draggedId, targetId) =>
+                    reorderTab(
+                      draggedId,
+                      targetId,
+                      workspaceTabs.map((tab) => tab.id),
+                    )
+                  }
+                />
+              </div>
+            )}
             <div className="titlebar__drag" data-tauri-drag-region />
-            {hasSessionBar ? (
-              <button
-                aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-                aria-pressed={sessionBarHidden}
-                className={`titlebar__action${sessionBarHidden ? " is-active" : ""}`}
-                onClick={toggleSessionBar}
-                title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-                type="button"
-              >
-                <Icon name="panelTop" height="16" width="16" />
-              </button>
+            {!isS3 && !isConnections ? (
+              <>
+                <button
+                  className="tab-action titlebar__new-terminal"
+                  onClick={handleStartLocalSession}
+                  title="新建本地终端"
+                  aria-label="新建本地终端"
+                  type="button"
+                >
+                  <Icon name="plus" height="16" width="16" />
+                </button>
+                {activeSession ? (
+                  <div className="tab-actions">
+                    <TerminalSessionMenu
+                      session={activeSession}
+                      onReconnect={handleReconnectActiveSession}
+                      onCancelReconnect={() => cancelReconnect(activeSession.id)}
+                      onOpenHostTools={canForward ? () => toggleRightPanel("hosttools") : undefined}
+                      onOpenPortForward={canForward ? handleOpenPortForward : undefined}
+                    />
+                    <ServerSnapshotButton session={sessions.find(s => s.id === (activePaneLayout?.focusedPaneId ?? activeSession?.id)) ?? null} />
+                    <button
+                      className="tab-action"
+                      disabled={!activeCanSplit}
+                      onClick={() => void handleSplit("h")}
+                      title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`}
+                      aria-label="左右分屏"
+                      type="button"
+                    >
+                      <Icon name="splitH" height="15" width="15" />
+                    </button>
+                    <button
+                      className="tab-action"
+                      disabled={!activeCanSplit}
+                      onClick={() => void handleSplit("v")}
+                      title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`}
+                      aria-label="上下分屏"
+                      type="button"
+                    >
+                      <Icon name="splitV" height="15" width="15" />
+                    </button>
+                    <button
+                      aria-label={terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}
+                      className="tab-action"
+                      onClick={toggleTerminalFullscreen}
+                      title={`${terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
+                      type="button"
+                    >
+                      <Icon name={terminalFullscreenPaneId ? "restore" : "maximize"} height="15" width="15" />
+                    </button>
+                  </div>
+                ) : null}
+              </>
             ) : null}
             {appLock.status?.settings.enabled ? (
               <button
@@ -2131,71 +2158,6 @@ function MainApp() {
               onNewLocalTerminal={handleStartLocalSession}
               onOpenSettings={() => openSettings("appearance")}
             />
-          )
-        }
-        tabStrip={
-          zenMode || terminalFullscreenPaneId || isS3 || isConnections ? null : (
-            <>
-              <WorkspaceTabStrip
-                tabs={workspaceTabs}
-                onSelect={handleSelectTab}
-                onDuplicate={(tab) => void handleDuplicateTab(tab)}
-                onRename={handleRenameTab}
-                onClose={handleCloseTab}
-                onCloseMany={(tabs) => void handleCloseTabs(tabs)}
-                onDetach={(tab) => void handleDetachTab(tab)}
-                onReorder={(draggedId, targetId) =>
-                  reorderTab(
-                    draggedId,
-                    targetId,
-                    workspaceTabs.map((tab) => tab.id),
-                  )
-                }
-              />
-              <button
-                className="tab-add"
-                onClick={handleStartLocalSession}
-                title="新建本地终端"
-                aria-label="新建本地终端"
-                type="button"
-              >
-                <Icon name="plus" height="16" width="16" />
-              </button>
-              {activeSession ? (
-                <div className="tab-actions">
-                  <ServerSnapshotButton session={sessions.find(s => s.id === (activePaneLayout?.focusedPaneId ?? activeSession?.id)) ?? null} />
-                  <button
-                    className="tab-action"
-                    disabled={!activeCanSplit}
-                    onClick={() => void handleSplit("h")}
-                    title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`}
-                    aria-label="左右分屏"
-                    type="button"
-                  >
-                    <Icon name="splitH" height="15" width="15" />
-                  </button>
-                  <button
-                    className="tab-action"
-                    disabled={!activeCanSplit}
-                    onClick={() => void handleSplit("v")}
-                    title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`}
-                    aria-label="上下分屏"
-                    type="button"
-                  >
-                    <Icon name="splitV" height="15" width="15" />
-                  </button>
-                  <button
-                    aria-label={terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}
-                    className="tab-action"
-                    onClick={toggleTerminalFullscreen}
-                    title={`${terminalFullscreenPaneId ? "恢复终端视图" : "终端全屏"}（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`}
-                    type="button"
-                  >
-                    <Icon name={terminalFullscreenPaneId ? "restore" : "maximize"} height="15" width="15" />
-                  </button>
-                </div>
-              ) : null}
-            </>
           )
         }
         main={<>{mainSurface}{sftpTabSurfaces}</>}

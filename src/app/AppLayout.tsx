@@ -5,7 +5,6 @@ interface AppLayoutProps {
   titleBar: ReactNode;
   activityBar: ReactNode | null;
   sidebar: ReactNode | null;
-  tabStrip: ReactNode | null;
   main: ReactNode;
   /** Shared auxiliary dock: AI can move; host tools stay on the right. */
   rightPanel?: ReactNode | null;
@@ -18,7 +17,7 @@ interface AppLayoutProps {
   onPanelHeightChange?: (height: number) => void;
 }
 
-export function AppLayout({ titleBar, activityBar, sidebar, tabStrip, main, rightPanel,
+export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
   panelPosition = "right", sidebarWidth, onSidebarWidthChange, rightPanelWidth,
   onRightPanelWidthChange, panelHeight = 320, onPanelHeightChange,
 }: AppLayoutProps) {
@@ -108,7 +107,6 @@ export function AppLayout({ titleBar, activityBar, sidebar, tabStrip, main, righ
         aria-valuemin={Math.min(220, fitted.sidebarMax)} aria-valuemax={fitted.sidebarMax} aria-valuenow={fitted.sidebarWidth}
         title="拖动调整侧栏宽度；方向键微调，双击恢复默认" onDoubleClick={() => onSidebarWidthChange(288)} /> : null}
       <div className="main-column" style={{ gridArea: "main" }}>
-        {tabStrip ? <div className="main-column__tabs is-glass-chrome">{tabStrip}</div> : null}
         <div className="main-column__content">{main}</div>
       </div>
       {panelOpen ? <div className={`pane-resizer${bottom ? " pane-resizer--horizontal" : ""}`} style={{ gridArea: "dock-resizer" }}

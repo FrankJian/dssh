@@ -413,23 +413,48 @@ button {
   background: transparent;
 }
 
-.main-column__tabs {
+.titlebar__workspace {
   display: flex;
-  height: var(--tabbar-height);
-  flex: 0 0 auto;
+  min-width: 0;
+  flex: 0 1 auto;
   align-items: stretch;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-toolbar);
 }
 
-.main-column__tabs .tab-strip {
-  flex: 1 1 auto;
+.titlebar__workspace .workspace-tabs {
+  flex: 0 1 auto;
   height: 100%;
 }
 
-.main-column__tabs .tab-add {
-  align-self: center;
-  margin: 0 4px;
+.workspace-tabs {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.workspace-tabs .tab-strip { flex: 1 1 auto; }
+
+.workspace-tabs .tab__kind-icon.is-clipped,
+.workspace-tabs .tab__close.is-clipped { visibility: hidden; }
+
+.workspace-tabs__scroll {
+  display: inline-flex;
+  width: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.workspace-tabs__scroll:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-strong); }
+.workspace-tabs__scroll:disabled { visibility: hidden; }
+.workspace-tabs__scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+
+.titlebar__workspace .tab {
+  flex: 0 0 auto;
 }
 
 .main-column__content {
@@ -2532,6 +2557,8 @@ button {
 .titlebar {
   display: flex;
   height: var(--titlebar-height);
+  min-width: 0;
+  flex: 0 0 var(--titlebar-height);
   align-items: stretch;
   border-bottom: 1px solid var(--border-subtle);
   padding-left: 8px;
@@ -2545,15 +2572,22 @@ button {
 }
 
 .titlebar__drag {
-  min-width: 24px;
+  min-width: 64px;
   flex: 1;
   align-self: stretch;
+}
+
+.titlebar__new-terminal {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0 6px;
 }
 
 .titlebar__action,
 .titlebar__lock {
   display: inline-flex;
   width: 34px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -2652,6 +2686,7 @@ button {
 
 .window-controls {
   display: flex;
+  flex: 0 0 auto;
   align-items: stretch;
   align-self: stretch;
 }
@@ -4237,92 +4272,6 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
-}
-
-.session-bar {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 14px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-panel-muted);
-}
-
-.session-bar__status {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--text-faint);
-}
-
-.session-bar__status[data-status="connected"] {
-  background: var(--success);
-}
-
-.session-bar__status[data-status="disconnected"],
-.session-bar__status[data-status="failed"] {
-  background: var(--danger);
-}
-
-.session-bar__status[data-status="connecting"],
-.session-bar__status[data-status="reconnecting"] {
-  background: var(--warning);
-}
-
-.session-bar__reconnecting {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
-  color: var(--warning);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.session-bar__reconnecting > svg {
-  animation: ui-spin 1s linear infinite;
-}
-
-.session-bar__label {
-  overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--text-base);
-}
-
-.session-bar__spacer {
-  flex: 1;
-}
-
-.session-bar__action {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.session-bar__action:hover {
-  background: var(--bg-hover);
-  color: var(--text-base);
 }
 
 .terminal-stage {
@@ -9647,8 +9596,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   opacity: 0.4;
 }
 
-/* A toggle that is currently "on" (e.g. the status bar is hidden). Keeps the
-   state readable without relying on the tooltip. */
+/* Keep an open menu or active toggle readable without relying on its tooltip. */
 .tab-action.is-active {
   background: var(--bg-selected);
   color: var(--accent-strong);

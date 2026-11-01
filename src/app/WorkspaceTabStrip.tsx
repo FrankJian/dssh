@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
@@ -84,8 +84,76 @@ export function WorkspaceTabStrip({
   const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [scrollState, setScrollState] = useState({ overflow: false, left: false, right: false });
+  const activeTabId = tabs.find((tab) => tab.active)?.id;
+  const tabLayoutKey = JSON.stringify(tabs.map((tab) => [tab.id, tab.title]));
   const contextTab = contextMenu ? tabs.find((tab) => tab.id === contextMenu.tabId) : undefined;
   const contextTabIndex = contextTab ? tabs.findIndex((tab) => tab.id === contextTab.id) : -1;
+
+  const updateScrollState = useCallback(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const overflow = strip.scrollWidth > strip.clientWidth + 1;
+    const left = strip.scrollLeft > 1;
+    const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+    setScrollState((current) => current.overflow === overflow && current.left === left && current.right === right
+      ? current : { overflow, left, right });
+  }, []);
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const revealActive = () => {
+      const active = strip.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      if (active) {
+        const viewport = strip.getBoundingClientRect();
+        const bounds = active.getBoundingClientRect();
+        if (bounds.left < viewport.left) strip.scrollLeft += bounds.left - viewport.left;
+        else if (bounds.right > viewport.right) strip.scrollLeft += bounds.right - viewport.right;
+      }
+      updateScrollState();
+    };
+    revealActive();
+    const observer = new ResizeObserver(revealActive);
+    observer.observe(strip);
+    for (const child of strip.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [activeTabId, tabLayoutKey, updateScrollState]);
+
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    // A half-clipped close glyph looks like another scroll arrow. Keep the
+    // label visible, but only show an icon when its entire outline fits.
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        entry.target.classList.toggle("is-clipped", entry.intersectionRatio < 1);
+      }
+    }, { root: strip, threshold: [1] });
+    for (const icon of strip.querySelectorAll(".tab__kind-icon, .tab__close")) observer.observe(icon);
+    return () => observer.disconnect();
+  }, [tabLayoutKey]);
+
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || strip.scrollWidth <= strip.clientWidth) return;
+      if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+        event.preventDefault();
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? strip.clientWidth : 1;
+        strip.scrollLeft += event.deltaY * unit;
+      }
+    };
+    strip.addEventListener("wheel", wheel, { passive: false });
+    return () => strip.removeEventListener("wheel", wheel);
+  }, []);
+
+  function scrollTabs(direction: 1 | -1) {
+    const strip = stripRef.current;
+    if (strip) strip.scrollLeft += direction * Math.max(160, strip.clientWidth * 0.75);
+  }
 
   useEffect(() => {
     if (!contextTab) setContextMenu(null);
@@ -145,8 +213,17 @@ export function WorkspaceTabStrip({
   }
 
   return (
-    <div className="tab-strip" role="tablist" aria-label="工作区标签">
-      {tabs.map((tab) => (
+    <div className="workspace-tabs">
+      {scrollState.overflow ? <button
+        aria-label="向左滚动标签"
+        className="workspace-tabs__scroll"
+        disabled={!scrollState.left}
+        onClick={() => scrollTabs(-1)}
+        title="向左滚动标签"
+        type="button"
+      ><Icon name="arrowLeft" height="14" width="14" /></button> : null}
+      <div className="tab-strip" role="tablist" aria-label="工作区标签" ref={stripRef} onScroll={updateScrollState}>
+      {tabs.map((tab, tabIndex) => (
         <div
           aria-label={tab.running ? `${tab.title}，命令正在运行` : tab.title}
           aria-selected={tab.active}
@@ -209,6 +286,15 @@ export function WorkspaceTabStrip({
             }
           }}
           onKeyDown={(event) => {
+            const nextIndex = event.key === "ArrowLeft" ? (tabIndex - 1 + tabs.length) % tabs.length
+              : event.key === "ArrowRight" ? (tabIndex + 1) % tabs.length
+              : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+            if (nextIndex !== null) {
+              event.preventDefault();
+              onSelect(tabs[nextIndex]);
+              stripRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus({ preventScroll: true });
+              return;
+            }
             if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
               event.preventDefault();
               event.stopPropagation();
@@ -280,6 +366,15 @@ export function WorkspaceTabStrip({
           </span>
         </div>
       ))}
+      </div>
+      {scrollState.overflow ? <button
+        aria-label="向右滚动标签"
+        className="workspace-tabs__scroll"
+        disabled={!scrollState.right}
+        onClick={() => scrollTabs(1)}
+        title="向右滚动标签"
+        type="button"
+      ><Icon name="arrowRight" height="14" width="14" /></button> : null}
       {contextMenu && contextTab ? createPortal(
         <div
           aria-label="标签操作"

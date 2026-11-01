@@ -1,14 +1,14 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ServerSnapshotButton } from "../hosttools/snapshot/ServerSnapshotButton";
 import type { DetachedWorkspace } from "../models";
 import { FileBrowser } from "../sftp/FileBrowser";
 import { useProfiles } from "../ssh/useProfiles";
 import { profileIconName } from "../ssh/profileIcons";
-import { loadSessionBarHidden, sessionBarHiddenKey } from "../settings/settings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { PaneGrid } from "../terminal/PaneGrid";
 import { TerminalWorkspace } from "../terminal/TerminalWorkspace";
+import { TerminalSessionMenu } from "../terminal/TerminalSessionMenu";
 import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConflictDialog";
 import { TerminalTransferNotice } from "../terminal/TerminalTransferNotice";
 import { focusTerminalSession, serializeTerminal } from "../terminal/terminalRegistry";
@@ -45,8 +45,10 @@ function DetachedTitlebar({
   title,
   onClose,
   onReturn,
+  actions,
 }: {
   title: string;
+  actions?: ReactNode;
   onClose?: () => void;
   onReturn: () => void;
 }) {
@@ -54,6 +56,7 @@ function DetachedTitlebar({
     <div className={`titlebar detached-titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : ""}`}>
       <div className="titlebar__drag" data-tauri-drag-region />
       <div className="detached-titlebar__title" data-tauri-drag-region title={title}>{title}</div>
+      {actions ? <div className="tab-actions">{actions}</div> : null}
       <button
         aria-label="合并回主窗口"
         className="detached-titlebar__return"
@@ -138,7 +141,6 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
   const appliedInitialLayout = useRef(false);
   const [terminalFullscreenPaneId, setTerminalFullscreenPaneId] = useState<string | null>(null);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
-  const [sessionBarHidden, setSessionBarHidden] = useState<boolean>(() => loadSessionBarHidden());
   const [ownedSessionIds, setOwnedSessionIds] = useState<string[]>(() => descriptor?.sessionIds ?? []);
   const sessionCountRef = useRef(0);
   const handledShellExitsRef = useRef(new Set<string>());
@@ -176,9 +178,6 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     root.style.setProperty("--terminal-wallpaper-blur", `${settings.terminalBgGlassBlur}px`);
   }, [settings.terminalBgGlassBlur, settings.terminalBgOpacity, terminalBgDataUrl]);
 
-  useEffect(() => {
-    localStorage.setItem(sessionBarHiddenKey, String(sessionBarHidden));
-  }, [sessionBarHidden]);
 
   const layout = descriptor
     ? panes.findLayoutByTab(descriptor.tabSessionId)
@@ -430,15 +429,9 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
     }
   }, [handleShellExited, terminal.isSessionsLoaded, visibleSessions]);
 
-  const sessionLabel = activeSession
-    ? activeProfile ? `${activeProfile.username}@${activeProfile.host}:${activeProfile.port}` : activeSession.title
-    : "";
-
   const terminalSurface = (
     <TerminalWorkspace
       activeSession={activeSession}
-      activeSessionLabel={sessionLabel}
-      canForward={false}
       copyOnSelect={settings.copyOnSelect}
       fontFamily={settings.fontFamily}
       fontSize={settings.fontSize}
@@ -450,23 +443,14 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
       hasWallpaper={hasTerminalWallpaper}
       rightClick={settings.rightClick}
       hasProfiles={profilesState.profiles.length > 0}
-      onCancelReconnect={() => { if (activeSession) terminal.cancelReconnect(activeSession.id); }}
       onCreateProfile={() => {}}
       onFontSizeChange={settings.setFontSize}
-      onOpenHostTools={() => {}}
-      onOpenPortForward={() => {}}
-      onReconnect={() => { if (activeSession) void terminal.reconnectSession(activeSession.id); }}
       onResize={terminal.resizeSession}
       onStartLocalSession={() => void terminal.startLocalSession()}
       onWrite={terminal.writeToSession}
-      showSessionBar={!sessionBarHidden}
       subscribeOutput={terminal.subscribeOutput}
     />
   );
-
-  // The session bar belongs to the single-terminal surface; a split replaces
-  // that surface with the pane grid, leaving nothing to toggle.
-  const hasSessionBar = Boolean(activeSession) && !layout;
 
   if (!descriptor) {
     return <DetachedUnavailable message="终端独立窗口数据不完整。" />;
@@ -474,7 +458,13 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
 
   return (
     <div className={`detached-workspace${isMacOS && terminalFullscreenPaneId ? " detached-workspace--mac-chrome-hidden" : ""}`}>
-      {terminalFullscreenPaneId ? null : <DetachedTitlebar title={displayTitle} onReturn={handleReturn} />}
+      {terminalFullscreenPaneId ? null : <DetachedTitlebar title={displayTitle} onReturn={handleReturn} actions={activeSession ? (
+        <TerminalSessionMenu
+          session={activeSession}
+          onReconnect={() => void terminal.reconnectSession(activeSession.id)}
+          onCancelReconnect={() => terminal.cancelReconnect(activeSession.id)}
+        />
+      ) : null} />}
       {closeDialog}
       {terminalFullscreenPaneId ? null : <div className="detached-workspace__tabbar is-glass-chrome">
         <div className="detached-workspace__tab">
@@ -501,18 +491,6 @@ function DetachedTerminalWindow({ workspace }: DetachedWorkspaceProps) {
         <ServerSnapshotButton session={visibleSessions.find(s => s.id === (layout?.focusedPaneId ?? activeSession?.id)) ?? null} />
         <button aria-label="左右分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("h")} title={`左右分屏（同一主机）（${formatShortcut(getShortcutBinding("splitHorizontal"))}）`} type="button"><Icon name="splitH" height="15" width="15" /></button>
         <button aria-label="上下分屏" className="tab-action" disabled={!panes.canSplit(activeSession?.id ?? null)} onClick={() => void split("v")} title={`上下分屏（同一主机）（${formatShortcut(getShortcutBinding("splitVertical"))}）`} type="button"><Icon name="splitV" height="15" width="15" /></button>
-        {hasSessionBar ? (
-          <button
-            aria-label={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-            aria-pressed={sessionBarHidden}
-            className={`tab-action${sessionBarHidden ? " is-active" : ""}`}
-            onClick={() => setSessionBarHidden((hidden) => !hidden)}
-            title={sessionBarHidden ? "显示会话状态栏" : "隐藏会话状态栏"}
-            type="button"
-          >
-            <Icon name="panelTop" height="15" width="15" />
-          </button>
-        ) : null}
         <button aria-label="终端全屏" className="tab-action" onClick={toggleTerminalFullscreen} title={`终端全屏（${formatShortcut(getShortcutBinding("toggleTerminalFullscreen"))}）`} type="button"><Icon name="maximize" height="15" width="15" /></button>
       </div>}
       <main className="detached-workspace__content">

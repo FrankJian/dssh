@@ -21,6 +21,7 @@ export type IconName =
   | "copy"
   | "database"
   | "edit"
+  | "ellipsis"
   | "eye"
   | "externalWindow"
   | "file"
@@ -109,6 +110,11 @@ export function Icon({ name, ...props }: IconProps) {
           <path d="M8 20h8M12 16v4" />
         </>
       ) : null}
+      {name === "ellipsis" ? <>
+        <circle cx="5" cy="12" r="1" />
+        <circle cx="12" cy="12" r="1" />
+        <circle cx="19" cy="12" r="1" />
+      </> : null}
       {name === "arrowLeft" ? <path d="M19 12H5m6-6-6 6 6 6" /> : null}
       {name === "arrowRight" ? <path d="M5 12h14m-6-6 6 6-6 6" /> : null}
       {name === "clock" ? (
