@@ -48,11 +48,14 @@ function adapt(file, anchor, replacement, expectedCount = 1) {
   writeFileSync(file, contents.replaceAll(anchor, replacement));
 }
 const main = join(sdl, "sdl_freerdp.cpp");
-adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"');
+adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"');
 adapt(main, "\t/* Redirect SDL log messages to wLog */", "\tdssh_set_application_icon();\n\t/* Redirect SDL log messages to wLog */");
 const window = join(sdl, "sdl_window.cpp");
 adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"');
 adapt(window, "\tstd::ignore = resizeToScale();", "\tstd::ignore = resizeToScale();\n\tdssh_prepare_desktop_window(_window, id);");
+// Post-connect and fullscreen-exit events run after initial window creation.
+adapt(window, "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::ignore = SDL_SyncWindow(_window);",
+  "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::ignore = SDL_SyncWindow(_window);\n\tif (!enter) dssh_prepare_desktop_window(_window, _displayID);");
 // Initial window and fallback/recreated window must both retain the icon.
 adapt(window, "\t_window = SDL_CreateWindowWithProperties(props);", "\t_window = SDL_CreateWindowWithProperties(props);\n\tdssh_set_window_icon(_window);", 2);
 const clientCmake = join(sdl, "CMakeLists.txt");
@@ -87,7 +90,7 @@ target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
 target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
 add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp)
-target_link_libraries(dssh-rdp-window-test PRIVATE SDL3::SDL3${windows ? "-static" : ""})
+target_link_libraries(dssh-rdp-window-test PRIVATE freerdp SDL3::SDL3${windows ? "-static" : ""})
 `);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
@@ -104,7 +107,7 @@ adapt(assertion, "\twLog* _log_cached_ptr = WLog_Get(\"com.freerdp.winpr.assert\
 \tprintf("DSSH_RDP_V1 fault %u %zu\\n", (unsigned)site, line);
 \tfflush(stdout);
 \twLog* _log_cached_ptr = WLog_Get("com.freerdp.winpr.assert");`);
-adapt(main, "\tsdl_rdp->sdl->setMetadata();", "\tdssh_wipe_arguments(privateArgs);\n\tsdl_rdp->sdl->setMetadata();");
+adapt(main, "\tsdl_rdp->sdl->setMetadata();", "\tdssh_wipe_arguments(privateArgs);\n\tif (status == 0 && !dssh_apply_window_policy(settings)) return -1;\n\tsdl_rdp->sdl->setMetadata();");
 adapt(main, "\tauto status = freerdp_client_settings_parse_command_line_ex(", '\tdssh_status("stage arguments");\n\tauto status = freerdp_client_settings_parse_command_line_ex(');
 adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");\n\t/* Basic SDL initialization */');
 adapt(main, "\tif (freerdp_client_start(context) != 0)", '\tdssh_status("stage connect");\n\tif (freerdp_client_start(context) != 0)');

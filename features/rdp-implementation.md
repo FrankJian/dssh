@@ -71,6 +71,8 @@ CI 的安装包与 release 工作流已增加原生构建 action 和 `tauri.rdp.
 
 RDP 默认使用带系统标题栏的可缩放窗口，显式关闭初始全屏。初始客户区按显示器可用区域及标题栏 / 边框等比缩小、居中，避开本机任务栏和 Dock；配置中的远程桌面分辨率保持不变，拖动窗口边缘通过 smart sizing 缩放画面。原生构建运行独立窗口回归，检查边框、工作区适配、移动、缩放，以及 Windows 的标题栏 / 最小化 / 最大化 / 关闭样式；仍需新 Windows 安装包完成真实桌面与多 DPI 验收。
 
+原生层在参数解析完成后再次约束初始单窗口模式，关闭 fullscreen / multimon / span，并启用 decorations / smart sizing。连接完成后的 fullscreen-exit 事件也重新退出 SDL 全屏、恢复边框和适配工作区，避免只在窗口创建时调整尺寸。回归覆盖实际 fullscreen → windowed 转换；macOS 测试使用桌面全屏，避免临时测试程序触发 Spaces 动画。用户主动切换全屏仍使用默认的右 Shift + Enter。更新这些逻辑需要安装包含新 `rdp-runtime` 的完整包，仅替换主程序不会更新原生窗口实现。
+
 ## 检查与测试
 
 ```sh

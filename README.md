@@ -171,7 +171,9 @@ pnpm tauri build
 
 ### 发布新版本（打 tag 触发）
 
-`.github/workflows/release.yml` 会在推送 `v*` tag 时构建 **macOS Apple Silicon** 与 **Windows x64**，签名后上传到一个**草稿 Release**；全部平台构建完成后再自动取消草稿正式发布——这样更新器不会在构建过程中读到只包含部分平台的 `latest.json`。
+`.github/workflows/release.yml` 会在推送 `v*` tag 时构建 **macOS Apple Silicon** 与 **Windows x64**，生成自动更新签名后上传到一个**草稿 Release**；全部平台构建完成后再自动取消草稿正式发布——这样更新器不会在构建过程中读到只包含部分平台的 `latest.json`。
+
+这里的 `TAURI_SIGNING_PRIVATE_KEY` 仅用于 Duo SSH 自动更新包的完整性校验，不是 Windows Authenticode 代码签名。当前工作流未配置 Windows 发布者代码签名，Action 测试包与正式 Release 不能据此视为已获得 Windows 发布者信任。Chrome 的危险下载提示也不能仅凭“未签名”判定为误报，需要针对实际文件和检测结果复核；代码签名本身不保证解除恶意内容检测。
 
 **一次性准备**：在仓库 **Settings → Secrets and variables → Actions** 中新增 secret：
 

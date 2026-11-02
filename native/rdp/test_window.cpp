@@ -5,6 +5,23 @@
 
 int main()
 {
+    auto settings = freerdp_settings_new(0);
+    if (!settings) return 13;
+    freerdp_settings_set_bool(settings, FreeRDP_Fullscreen, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_UseMultimon, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_ForceMultimon, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_SpanMonitors, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_Decorations, FALSE);
+    freerdp_settings_set_bool(settings, FreeRDP_SmartSizing, FALSE);
+    const bool policy = dssh_apply_window_policy(settings) &&
+        !freerdp_settings_get_bool(settings, FreeRDP_Fullscreen) &&
+        !freerdp_settings_get_bool(settings, FreeRDP_UseMultimon) &&
+        !freerdp_settings_get_bool(settings, FreeRDP_ForceMultimon) &&
+        !freerdp_settings_get_bool(settings, FreeRDP_SpanMonitors) &&
+        freerdp_settings_get_bool(settings, FreeRDP_Decorations) &&
+        freerdp_settings_get_bool(settings, FreeRDP_SmartSizing);
+    freerdp_settings_free(settings);
+    if (!policy) return 14;
     // Oversized desktop on a secondary monitor, with a taskbar / title bar.
     const SDL_Rect usable{-1920, 40, 1920, 1000};
     const auto rect = dssh_window_geometry(3840, 2160, usable, 32, 8, 8, 8);
@@ -14,10 +31,20 @@ int main()
     if (std::abs(double(rect.w) / rect.h - 3840.0 / 2160.0) > 0.01) return 2;
     const auto small = dssh_window_geometry(640, 480, usable, 32, 8, 8, 8);
     if (small.w != 640 || small.h != 480) return 3;
+#if defined(__APPLE__)
+    // Keep this short-lived CI fixture off macOS Spaces; exercise SDL desktop
+    // fullscreen without an asynchronous system Space animation.
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO)) return 4;
     auto window = SDL_CreateWindow("Duo SSH window regression", 3840, 2160, SDL_WINDOW_RESIZABLE);
     if (!window) { SDL_Quit(); return 5; }
     const auto display = SDL_GetDisplayForWindow(window);
+    // Exercise a real fullscreen -> decorated-window transition, not only a
+    // newly created window that was already windowed.
+    SDL_SetWindowFullscreen(window, true);
+    SDL_SyncWindow(window);
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) return 15;
     dssh_prepare_desktop_window(window, display);
     const auto flags = SDL_GetWindowFlags(window);
     int width = 0, height = 0;

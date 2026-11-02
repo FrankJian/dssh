@@ -3,6 +3,8 @@
 void dssh_prepare_desktop_window(SDL_Window* window, SDL_DisplayID display)
 {
     if (!window) return;
+    SDL_SetWindowFullscreen(window, false);
+    SDL_SyncWindow(window);
     SDL_SetWindowBordered(window, true);
     SDL_SetWindowResizable(window, true);
     SDL_SyncWindow(window);

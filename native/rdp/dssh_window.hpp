@@ -1,7 +1,19 @@
 #pragma once
 #include <SDL3/SDL.h>
+#include <freerdp/settings.h>
 #include <algorithm>
 #include <cmath>
+
+// Enforce the managed desktop mode after parsing, before monitor negotiation.
+inline bool dssh_apply_window_policy(rdpSettings* settings)
+{
+    return freerdp_settings_set_bool(settings, FreeRDP_Fullscreen, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_UseMultimon, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_ForceMultimon, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_SpanMonitors, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_Decorations, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_SmartSizing, TRUE);
+}
 
 // SDL window sizes, border sizes and usable display bounds use logical units.
 // Fit the outer frame, preserving the desktop's aspect ratio when shrinking.
