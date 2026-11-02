@@ -29,8 +29,8 @@ int main()
         rect.x + rect.w + 8 > usable.x + usable.w ||
         rect.y + rect.h + 8 > usable.y + usable.h) return 1;
     if (std::abs(double(rect.w) / rect.h - 3840.0 / 2160.0) > 0.01) return 2;
-    const auto small = dssh_window_geometry(640, 480, usable, 32, 8, 8, 8);
-    if (small.w != 640 || small.h != 480) return 3;
+    const auto compactWindow = dssh_window_geometry(640, 480, usable, 32, 8, 8, 8);
+    if (compactWindow.w != 640 || compactWindow.h != 480) return 3;
 #if defined(__APPLE__)
     // Keep this short-lived CI fixture off macOS Spaces; exercise SDL desktop
     // fullscreen without an asynchronous system Space animation.
