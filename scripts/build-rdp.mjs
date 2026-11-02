@@ -30,6 +30,7 @@ if (createHash("sha256").update(readFileSync(archive)).digest("hex") !== checksu
 extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
+copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
 for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
   copyFileSync(join(root, "native", "rdp", file), join(sdl, file));
 }
@@ -64,9 +65,39 @@ elseif(WIN32)
   target_link_libraries(\${MODULE_NAME} PRIVATE user32)
 endif()
 target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})`);
+// Optional SDL preferences must not prevent a managed connection from starting.
+// ProgramData is a common folder: querying it as Default User (-1) can fail when
+// that profile's hive is unavailable. Use the current token (NULL) instead.
+adapt(join(source, "winpr/libwinpr/path/shell.c"),
+  "win_get_known_folder(&FOLDERID_ProgramData, FALSE)",
+  "win_get_known_folder(&FOLDERID_ProgramData, TRUE)");
+const preferences = join(source, "client/SDL/common/sdl_prefs.cpp");
+adapt(preferences, "\tfs::path config{ name.get() };\n\treturn config.string();",
+  '\t// Keep the UTF-8 path returned by WinPR; an unavailable optional path is empty.\n\treturn name ? std::string(name.get()) : std::string{};');
+adapt(preferences, "\tauto config = get_pref_file(systemConfigOnly);",
+  '\tauto config = get_pref_file(systemConfigOnly);\n\tif (config.empty()) return { nullptr, WINPR_JSON_Delete };');
+writeFileSync(clientCmake, readFileSync(clientCmake, "utf8") + `
+# Compile the real preferences code with a resolver that simulates missing paths.
+add_executable(dssh-rdp-prefs-test dssh_test_preferences.cpp ../common/sdl_prefs.cpp)
+target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
+target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
+target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
+`);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
 adapt(main, "\tsdl::win32::release_transient_console();", "\t// Duo SSH owns the inherited pipes.");
+adapt(main, "[[nodiscard]] static BOOL sdl_client_global_init()\n{", '[[nodiscard]] static BOOL sdl_client_global_init()\n{\n\tdssh_status("stage platform");');
+adapt(main, "\tsdl->sdl = new SdlContext(context);", '\tdssh_status("stage sdl-context");\n\tsdl->sdl = new SdlContext(context);');
+// Assertions remain fatal. Report only a hash of the compile-time source basename
+// and its line number; never expose conditions, paths, stack memory or raw logs.
+const assertion = join(source, "winpr/libwinpr/crt/assert.c");
+adapt(assertion, "\twLog* _log_cached_ptr = WLog_Get(\"com.freerdp.winpr.assert\");", `\tconst char* base = file;
+\tfor (const char* p = file; *p; p++) if (*p == '/' || *p == '\\\\') base = p + 1;
+\tuint32_t site = 2166136261u;
+\tfor (const unsigned char* p = (const unsigned char*)base; *p; p++) site = (site ^ *p) * 16777619u;
+\tprintf("DSSH_RDP_V1 fault %u %zu\\n", (unsigned)site, line);
+\tfflush(stdout);
+\twLog* _log_cached_ptr = WLog_Get("com.freerdp.winpr.assert");`);
 adapt(main, "\tsdl_rdp->sdl->setMetadata();", "\tdssh_wipe_arguments(privateArgs);\n\tsdl_rdp->sdl->setMetadata();");
 adapt(main, "\tauto status = freerdp_client_settings_parse_command_line_ex(", '\tdssh_status("stage arguments");\n\tauto status = freerdp_client_settings_parse_command_line_ex(');
 adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");\n\t/* Basic SDL initialization */');
@@ -119,7 +150,8 @@ if (windows) {
 }
 run("cmake", args);
 if (windows) validateWindowsRuntime(readFileSync(join(build, "CMakeCache.txt"), "utf8"));
-run("cmake", ["--build", build, "--target", "sdl3-freerdp", "--parallel", "4"]);
+run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "--parallel", "4"]);
+run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-prefs-test.exe" : "dssh-rdp-prefs-test"), []);
 const output = join(build, "client/SDL/SDL3", windows ? "sdl3-freerdp.exe" : "sdl3-freerdp");
 const binary = join(runtime, windows ? "dssh-rdp-client.exe" : "dssh-rdp-client");
 copyFileSync(output, binary);

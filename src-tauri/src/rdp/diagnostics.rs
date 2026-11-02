@@ -4,6 +4,7 @@ pub enum WorkerStatus {
     Connected,
     Stage(&'static str),
     Error(u32),
+    Fault { site: u32, line: u32 },
 }
 
 /// Parse only locally defined status messages; never forward raw native logs.
@@ -12,11 +13,22 @@ pub fn parse_status(line: &str) -> Option<WorkerStatus> {
         "DSSH_RDP_V1 ready" => Some(WorkerStatus::Ready),
         "DSSH_RDP_V1 connected" => Some(WorkerStatus::Connected),
         "DSSH_RDP_V1 stage context" => Some(WorkerStatus::Stage("引擎初始化")),
+        "DSSH_RDP_V1 stage platform" => Some(WorkerStatus::Stage("系统运行库初始化")),
+        "DSSH_RDP_V1 stage sdl-context" => Some(WorkerStatus::Stage("桌面上下文初始化")),
         "DSSH_RDP_V1 stage arguments" => Some(WorkerStatus::Stage("连接配置")),
         "DSSH_RDP_V1 stage display" => Some(WorkerStatus::Stage("显示初始化")),
         "DSSH_RDP_V1 stage connect" => Some(WorkerStatus::Stage("连接与认证")),
         "DSSH_RDP_V1 crypto-md4-unavailable" => Some(WorkerStatus::Error(0xd5500001)),
         "DSSH_RDP_V1 crypto-rc4-unavailable" => Some(WorkerStatus::Error(0xd5500002)),
+        text if text.starts_with("DSSH_RDP_V1 fault ") => {
+            let mut fields = text.strip_prefix("DSSH_RDP_V1 fault ")?.split(' ');
+            let site = fields.next()?.parse().ok()?;
+            let line = fields.next()?.parse().ok()?;
+            if fields.next().is_some() {
+                return None;
+            }
+            Some(WorkerStatus::Fault { site, line })
+        }
         text => text
             .strip_prefix("DSSH_RDP_V1 error ")?
             .parse()
@@ -29,6 +41,7 @@ pub struct WorkerDiagnostics {
     pub connected: bool,
     stage: &'static str,
     error: Option<u32>,
+    fault: Option<(u32, u32)>,
 }
 impl Default for WorkerDiagnostics {
     fn default() -> Self {
@@ -36,6 +49,7 @@ impl Default for WorkerDiagnostics {
             connected: false,
             stage: "启动",
             error: None,
+            fault: None,
         }
     }
 }
@@ -45,12 +59,19 @@ impl WorkerDiagnostics {
             WorkerStatus::Connected => self.connected = true,
             WorkerStatus::Stage(stage) => self.stage = stage,
             WorkerStatus::Error(code) => self.error = Some(code),
+            WorkerStatus::Fault { site, line } => self.fault = Some((site, line)),
             WorkerStatus::Ready => {}
         }
     }
 
     pub fn failure_message(&self, exit: Option<i32>) -> String {
         let message = match self.error {
+            Some(0xd5500011) => "RDP 引擎内存分配失败，请检查系统可用内存。",
+            Some(0xd5500012) => "RDP 引擎访问本机文件路径失败，请保留阶段与错误码以便排查。",
+            Some(0xd5500013) => "RDP 引擎系统调用失败，请保留阶段与错误码以便排查。",
+            Some(0xd5500010 | 0xd5500014) => {
+                "RDP 引擎出现本机运行库异常，请保留阶段与错误码以便排查。"
+            }
             Some(0xd5500001 | 0xd5500002) => {
                 "RDP 引擎缺少 NLA 所需的加密算法。请更新包含完整内置算法的安装包。"
             }
@@ -62,6 +83,9 @@ impl WorkerDiagnostics {
                 "无法连接到 Windows RDP 服务，请检查主机、端口和网络。"
             }
             _ => match exit.map(|code| code as u32) {
+                Some(3) => {
+                    "RDP 引擎在本机异常终止，可能是原生断言或运行库异常；此退出码不能判定为密码错误。"
+                }
                 Some(180..=182) => {
                     "RDP 引擎缺少 NLA 所需的加密算法。请更新包含完整内置算法的安装包。"
                 }
@@ -91,7 +115,14 @@ impl WorkerDiagnostics {
             .error
             .map(|code| format!("；RDP 代码 0x{code:08X}"))
             .unwrap_or_default();
-        format!("{message}（阶段：{}；退出代码 {exit}{native}）", self.stage)
+        let fault = self
+            .fault
+            .map(|(site, line)| format!("；断言位置 {site:08X}:{line}"))
+            .unwrap_or_default();
+        format!(
+            "{message}（阶段：{}；退出代码 {exit}{native}{fault}）",
+            self.stage
+        )
     }
 }
 
@@ -136,5 +167,24 @@ mod tests {
                 .contains("显示初始化失败")
         );
         assert!(diagnostics.failure_message(Some(-1)).contains("0xFFFFFFFF"));
+    }
+    #[test]
+    fn fatal_diagnostics_are_bounded_numeric_data() {
+        let mut diagnostics = WorkerDiagnostics::default();
+        diagnostics.observe(parse_status("DSSH_RDP_V1 stage sdl-context").unwrap());
+        diagnostics.observe(parse_status("DSSH_RDP_V1 fault 1234 87").unwrap());
+        let message = diagnostics.failure_message(Some(3));
+        assert!(message.contains("本机异常终止"));
+        assert!(message.contains("桌面上下文初始化"));
+        assert!(message.contains("000004D2:87"));
+        assert!(parse_status("DSSH_RDP_V1 fault secret 87").is_none());
+        assert!(parse_status("DSSH_RDP_V1 fault 1234 87 remote-text").is_none());
+        assert!(parse_status("DSSH_RDP_V1 fault 4294967296 87").is_none());
+        diagnostics.observe(WorkerStatus::Error(0xd5500012));
+        assert!(
+            diagnostics
+                .failure_message(Some(190))
+                .contains("本机文件路径")
+        );
     }
 }

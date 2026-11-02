@@ -35,15 +35,38 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, f"Relocated NTLM crypto self-test failed: {result.stdout.strip()}")
             self.assertEqual(result.stdout.strip(), "DSSH_RDP_V1 crypto-ok")
 
-    def spawn(self, env=None):
-        process = subprocess.Popen([str(BINARY), "--dssh-worker-v1"], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+    def spawn(self, env=None, binary=None, cwd=None):
+        process = subprocess.Popen([str(binary or BINARY), "--dssh-worker-v1"], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=cwd,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.addCleanup(self.cleanup, process)
         ready = queue.Queue()
         threading.Thread(target=lambda: ready.put(process.stdout.readline(256)), daemon=True).start()
         self.assertEqual(ready.get(timeout=5).strip(), b"DSSH_RDP_V1 ready")
         return process
+
+    def test_relocated_startup_reaches_connect_with_production_environment(self):
+        # Exercise context construction too: the crypto-only probe never gets there.
+        # Use a Unicode install path, no developer environment and no Windows console.
+        with tempfile.TemporaryDirectory(prefix="dssh-rdp-startup-") as directory:
+            runtime = Path(directory) / "安装目录 空格" / "runtime"
+            shutil.copytree(BINARY.parent, runtime)
+            env = {key: value for key, value in os.environ.items() if key.upper() in {
+                "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_CTYPE"}}
+            env["OPENSSL_MODULES"] = str(Path(directory) / "no-provider-modules")
+            env["OPENSSL_CONF"] = str(Path(directory) / "no-config.cnf")
+            process = self.spawn(env, runtime / BINARY.name, directory)
+            process.stdin.write(packet(["/v:127.0.0.1:9", "/u:test-only", "/p:test-only",
+                                        "/sec:nla", "/cert:ignore", "/log-level:OFF", "/timeout:1500",
+                                        "-auto-reconnect", "-clipboard"]))
+            process.stdin.flush()
+            code = process.wait(timeout=15)
+            output = process.stdout.read(8192).decode("ascii", errors="replace")
+            # Only our fixed/numeric protocol lines are reported on failure.
+            diagnostics = [line for line in output.splitlines() if line.startswith("DSSH_RDP_V1 ")]
+            self.assertIn("DSSH_RDP_V1 stage connect", diagnostics,
+                          f"Relocated startup exited {code}: {diagnostics}")
+            self.assertNotEqual(code, 3, diagnostics)
 
     @staticmethod
     def cleanup(process):

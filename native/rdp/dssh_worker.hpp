@@ -7,17 +7,47 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <exception>
+#include <filesystem>
+#include <new>
+#include <system_error>
 #include <winpr/crypto.h>
 #include <winpr/ssl.h>
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
+#include <crtdbg.h>
 #endif
 
 inline void dssh_status(const char* status)
 {
     std::printf("DSSH_RDP_V1 %s\n", status);
     std::fflush(stdout);
+}
+
+// Never print exception::what(), CRT expressions or credential-bearing arguments.
+inline void dssh_install_failure_handlers()
+{
+    std::set_terminate([] {
+        uint32_t code = 0xd5500010;
+        if (auto exception = std::current_exception())
+        {
+            try { std::rethrow_exception(exception); }
+            catch (const std::bad_alloc&) { code = 0xd5500011; }
+            catch (const std::filesystem::filesystem_error&) { code = 0xd5500012; }
+            catch (const std::system_error&) { code = 0xd5500013; }
+            catch (...) {}
+        }
+        std::printf("DSSH_RDP_V1 error %u\n", code);
+        std::fflush(stdout);
+        std::_Exit(190);
+    });
+#if defined(_WIN32)
+    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
+        dssh_status("error 3578789908"); // 0xd5500014: Windows CRT invalid parameter.
+        std::_Exit(190);
+    });
+#endif
 }
 
 // Public test vectors verify the exact primitives needed by NTLM/CredSSP.
@@ -58,6 +88,7 @@ inline bool dssh_arguments(int& argc, char**& argv, std::vector<std::string>& st
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
     dssh_status("ready");
+    dssh_install_failure_handlers();
     const auto count = dssh_read_u32();
     if (count == 0 || count > 64) return false;
     storage.reserve(count + 1);

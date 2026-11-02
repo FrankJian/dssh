@@ -56,6 +56,8 @@
 
 ### RDP 远程桌面验收与后续接入
 
+- Windows 0.6.6 仍有“引擎初始化 / 退出 0x00000003”的现场报告。已修正启动期间可选 SDL 配置路径为空时仍构造 `std::filesystem::path` 的缺陷，并将公共 ProgramData 查询从 Default User 改为当前用户 token；已增加直接编译实际 preferences 实现的缺失路径 / UTF-8 路径故障注入测试。原生断言位置、C++ / CRT 异常分类、分阶段诊断与清理环境的完整启动回归一并补齐；仍需用新 Windows 安装包复验，尚不能断定现场故障已解决。
+
 - 安装包认证失败已定位到默认构建依赖 OpenSSL 外部 legacy-provider 的可移植性问题；已开启内置 MD4 / RC4，并增加无开发机环境的公开向量自检、runtime 移目录测试与退出诊断保留。需在新的 macOS / Windows 安装包上复验真实目标认证，不能沿用旧引擎产物。
 
 - 连接管理、独立 profile / SQLite 迁移、系统凭据库、私有管道、FreeRDP 原生窗口、会话归属、应用锁断开、手动重连及原生构建 / 打包流程已接入。已增加默认关闭、逐连接保存的“跳过服务器证书验证（不安全）”，保持 TLS / NLA 和持续未验证标识；严格模式与显式跳过的原生边界回归通过，真实 Windows Server 仍待验收。当前首版只开放内网直连，优先验收 Windows Server，详见 [实施说明](features/rdp-implementation.md) 和 [完整方案](features/rdp-workspace.md)。
