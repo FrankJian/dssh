@@ -105,7 +105,7 @@ extern "C" void dssh_chrome_attach(SDL_Window* window)
     int length = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
     std::wstring caption(std::max(1, length), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, title, -1, caption.data(), length);
-    chrome->title = CreateWindowExW(0, L"STATIC", caption.c_str(), WS_CHILD | WS_VISIBLE | SS_END_ELLIPSIS,
+    chrome->title = CreateWindowExW(0, L"STATIC", caption.c_str(), WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
         0, 0, 0, 0, chrome->bar, nullptr, definition.hInstance, nullptr);
     const wchar_t* labels[] = {L"最小化", L"最大化", L"全屏", L"关闭"};
     const float scale = std::max(1.0f, SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(window)));
