@@ -1,5 +1,6 @@
 import { Suspense, useCallback } from "react";
-import type { SshProfile, TerminalSession } from "../models";
+import type { TerminalSession } from "../models";
+import type { ConnectionProfile } from "../ssh/connectionTypes";
 import type { RightClickAction } from "../settings/settings";
 import { EmptyTerminal } from "./EmptyTerminal";
 import { LazyTerminalView } from "./LazyTerminalView";
@@ -18,8 +19,8 @@ interface TerminalWorkspaceProps {
   letterSpacing: number;
   getBacklog: (sessionId: string) => string;
   hasProfiles: boolean;
-  recentProfiles?: SshProfile[];
-  onConnectProfile?: (profile: SshProfile) => void;
+  recentProfiles?: ConnectionProfile[];
+  onConnectProfile?: (profile: ConnectionProfile) => void;
   onOpenConnections?: () => void;
   onCreateProfile: () => void;
   onFontSizeChange: (size: number) => void;

@@ -1678,7 +1678,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       ) : (
         <SessionTree
           remoteDesktops={rdp.sessions.length ? <RdpSessionList sessions={rdp.sessions} onFocus={(id) => rdpAction(focusRdpSession(id))}
-            onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} /> : null}
+            onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} onRemove={rdp.dismissSession} /> : null}
           sessions={visibleSessions}
           terminalNames={Object.fromEntries(visibleSessions.map((session) => [session.id, terminalName(session)]))}
           paneNames={paneNames}
@@ -1731,9 +1731,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
       : null;
   const isLocalFileTree = fileTreeSession?.kind === "local";
+  const managedProfiles: ConnectionProfile[] = [...profiles, ...rdp.profiles, ...jumpservers.profiles.map(jumpServerConnectionProfile)];
   const recentProfiles = recentIds
-    .map((id) => profiles.find((profile) => profile.id === id))
-    .filter((profile): profile is SshProfile => Boolean(profile))
+    .map((id) => managedProfiles.find((profile) => profile.id === id))
+    .filter((profile): profile is ConnectionProfile => Boolean(profile))
     .slice(0, recentConnectionsLimit);
 
   const terminalSurface = (
@@ -1749,9 +1750,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       backgroundAlpha={terminalBgOpacity / 100}
       hasWallpaper={hasTerminalWallpaper}
       rightClick={rightClick}
-      hasProfiles={profiles.length > 0}
+      hasProfiles={managedProfiles.length > 0}
       recentProfiles={recentProfiles}
-      onConnectProfile={handleConnectProfile}
+      onConnectProfile={connectManagedProfile}
       onOpenConnections={() => setActiveActivity("connections")}
       onCreateProfile={openCreateProfile}
       onFontSizeChange={setFontSize}
@@ -1777,7 +1778,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     ) : (
       <SessionManager
         onCreateJumpServer={() => setJumpServerEditor({ profile: null })}
-        profiles={[...profiles, ...rdp.profiles, ...jumpservers.profiles.map(jumpServerConnectionProfile)]}
+        profiles={managedProfiles}
         recentIds={recentIds}
         recentLimit={recentConnectionsLimit}
         activeSessionCount={visibleSessions.length + rdp.sessions.filter((s) => !["closed", "failed"].includes(s.status)).length}

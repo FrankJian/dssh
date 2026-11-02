@@ -490,13 +490,8 @@ impl RdpManager {
                         _ => {}
                     }
                 }
-                // These codes are pinned to FreeRDP 3.32.2 SDL's sdl::error enum.
-                let normal_exit = status
-                    .code()
-                    .is_some_and(|code| matches!(code, 0..=2 | 11 | 145));
-                if closing.is_some()
-                    || (normal_exit && diagnostics.connected)
-                    || status.code() == Some(145)
+                if (closing.is_some() && diagnostics.is_clean_requested_exit(status.code()))
+                    || diagnostics.is_normal_exit(status.code())
                 {
                     self.update(app, session_id, "closed", None);
                 } else {
@@ -543,6 +538,10 @@ impl RdpManager {
                 }
                 Ok(Control::Status(status)) => {
                     diagnostics.observe(status);
+                    if status == WorkerStatus::UserClose && closing.is_none() {
+                        closing = Some(Instant::now());
+                        self.update(app, session_id, "disconnecting", None);
+                    }
                     if status == WorkerStatus::Connected && closing.is_none() {
                         self.update(app, session_id, "connected", None);
                     }

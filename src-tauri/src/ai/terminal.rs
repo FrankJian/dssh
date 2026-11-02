@@ -23,6 +23,10 @@ impl PreparedTerminalInput {
     }
 
     pub async fn execute(self, state: &AppState, app: &AppHandle) -> (String, bool) {
+        let signal = match state.sessions.output_signal(&self.session_id) {
+            Ok(signal) => signal,
+            Err(error) => return (error.message, true),
+        };
         let data = format!("{}\r", self.input);
         if let Err(error) = state.sessions.write_approved_input(
             &self.session_id,
@@ -44,8 +48,20 @@ impl PreparedTerminalInput {
         ) {
             return (error.message, true);
         }
-        tokio::time::sleep(std::time::Duration::from_millis(self.wait_ms)).await;
-        match state.sessions.read_session_output(&self.session_id) {
+        match super::output_wait::wait_for_output(
+            &signal,
+            &self.snapshot.output,
+            std::time::Duration::from_millis(self.wait_ms),
+            Some(&self.input),
+            || {
+                state
+                    .sessions
+                    .check_ai_access(&self.session_id, &self.conversation, false)?;
+                state.sessions.read_session_output(&self.session_id)
+            },
+        )
+        .await
+        {
             Ok(output) => {
                 let changed = output != self.snapshot.output;
                 let output = output

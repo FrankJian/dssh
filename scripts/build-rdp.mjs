@@ -31,7 +31,7 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
-for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp"]) {
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m"]) {
   copyFileSync(join(root, "native/rdp", file), join(sdl, file));
 }
 for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
@@ -48,11 +48,12 @@ function adapt(file, anchor, replacement, expectedCount = 1) {
   writeFileSync(file, contents.replaceAll(anchor, replacement));
 }
 const main = join(sdl, "sdl_freerdp.cpp");
-adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"');
+adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"\n#include "dssh_chrome.h"');
 adapt(main, "\t/* Redirect SDL log messages to wLog */", "\tdssh_set_application_icon();\n\t/* Redirect SDL log messages to wLog */");
 const window = join(sdl, "sdl_window.cpp");
-adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"');
-adapt(window, "\tstd::ignore = resizeToScale();", "\tstd::ignore = resizeToScale();\n\tdssh_prepare_desktop_window(_window, id);");
+adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"\n#include "dssh_chrome.h"');
+adapt(window, "\tstd::ignore = resizeToScale();", "\tstd::ignore = resizeToScale();\n\tdssh_prepare_desktop_window(_window, id);\n\tdssh_chrome_attach(_window);");
+adapt(window, "SdlWindow::~SdlWindow()\n{", "SdlWindow::~SdlWindow()\n{\n\tdssh_chrome_detach(_window);");
 // Post-connect and fullscreen-exit events run after initial window creation.
 adapt(window, "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::ignore = SDL_SyncWindow(_window);",
   "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::ignore = SDL_SyncWindow(_window);\n\tif (!enter) dssh_prepare_desktop_window(_window, _displayID);");
@@ -63,13 +64,13 @@ const clientCmake = join(sdl, "CMakeLists.txt");
 adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
 adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp)
 if(APPLE)
-  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m)
-  set_source_files_properties(dssh_icon.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m dssh_chrome_mac.m)
+  set_source_files_properties(dssh_icon.m dssh_chrome_mac.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
   target_link_libraries(\${MODULE_NAME} PRIVATE "-framework AppKit")
 elseif(WIN32)
-  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc)
+  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc dssh_chrome_win.cpp)
   target_include_directories(\${MODULE_NAME} PRIVATE \${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(\${MODULE_NAME} PRIVATE user32)
+  target_link_libraries(\${MODULE_NAME} PRIVATE user32 gdi32 ole32 uuid)
 endif()
 target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})`);
 // Optional SDL preferences must not prevent a managed connection from starting.
@@ -90,7 +91,15 @@ target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
 target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
 add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp)
+target_compile_definitions(dssh-rdp-window-test PRIVATE DSSH_CHROME_TESTING)
 target_link_libraries(dssh-rdp-window-test PRIVATE freerdp SDL3::SDL3${windows ? "-static" : ""})
+if(APPLE)
+  target_sources(dssh-rdp-window-test PRIVATE dssh_chrome_mac.m)
+  target_link_libraries(dssh-rdp-window-test PRIVATE "-framework AppKit")
+elseif(WIN32)
+  target_sources(dssh-rdp-window-test PRIVATE dssh_chrome_win.cpp)
+  target_link_libraries(dssh-rdp-window-test PRIVATE user32 gdi32 ole32 uuid)
+endif()
 `);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
@@ -111,10 +120,49 @@ adapt(main, "\tsdl_rdp->sdl->setMetadata();", "\tdssh_wipe_arguments(privateArgs
 adapt(main, "\tauto status = freerdp_client_settings_parse_command_line_ex(", '\tdssh_status("stage arguments");\n\tauto status = freerdp_client_settings_parse_command_line_ex(');
 adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");\n\t/* Basic SDL initialization */');
 adapt(main, "\tif (freerdp_client_start(context) != 0)", '\tdssh_status("stage connect");\n\tif (freerdp_client_start(context) != 0)');
-adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", "\t\t\t\tif (windowEvent.type == SDL_EVENT_USER) { dssh_focus_windows(); continue; }\n\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))");
+adapt(main, "\t\twhile (!sdl->shallAbort())\n\t\t{", "\t\twhile (!sdl->shallAbort())\n\t\t{\n\t\t\tdssh_chrome_tick();");
+adapt(main, "SDL_WaitEventTimeout(nullptr, 1000)", "SDL_WaitEventTimeout(nullptr, 50)");
+adapt(main, "\t\t\t\t/* Only poll standard SDL events", "\t\t\t\tdssh_chrome_tick();\n\t\t\t\t/* Only poll standard SDL events");
+adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", `\t\t\t\t// Capture native close/quit before dialog and display handlers can consume
+                // the event or fail while the desktop is being torn down.
+                const bool desktopClose = windowEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                    sdl->getWindowForId(windowEvent.window.windowID) != nullptr;
+                if (dssh_is_system_close(windowEvent, desktopClose)) {
+                    dssh_status("user-close");
+                    std::ignore = freerdp_abort_connect_context(sdl->context());
+                    continue;
+                }
+                if (windowEvent.type == SDL_EVENT_USER) {
+                    auto desktop = windowEvent.user.windowID ? SDL_GetWindowFromID(windowEvent.user.windowID) : nullptr;
+                    switch (windowEvent.user.code) {
+                        case DSSH_CHROME_MINIMIZE:
+                            if (desktop && !SDL_MinimizeWindow(desktop)) {
+                                std::ignore = sdl->setFullscreen(false);
+                                std::ignore = sdl->setMinimized();
+                            }
+                            break;
+                        case DSSH_CHROME_MAXIMIZE:
+                            if (sdl->fullscreen()) std::ignore = sdl->setFullscreen(false);
+                            else if (desktop && (SDL_GetWindowFlags(desktop) & SDL_WINDOW_MAXIMIZED)) SDL_RestoreWindow(desktop);
+                            else if (desktop) SDL_MaximizeWindow(desktop);
+                            break;
+                        case DSSH_CHROME_FULLSCREEN: std::ignore = sdl->toggleFullscreen(); break;
+                        case DSSH_CHROME_CLOSE:
+                            dssh_status("user-close");
+                            std::ignore = freerdp_abort_connect_context(sdl->context());
+                            break;
+                        default: dssh_focus_windows(); break;
+                    }
+                    continue;
+                }
+\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))`);
 const context = join(sdl, "sdl_context.cpp");
 adapt(context, "\tif (!sdl->setResizeable(false))", "\tif (!sdl->setResizeable(true))");
 adapt(context, '#include "sdl_context.hpp"', '#include "sdl_context.hpp"\n#include "dssh_worker.hpp"');
+adapt(context, '\t\t\tSDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Window closed, terminating RDP session...");', '\t\t\tdssh_status("user-close");\n\t\t\tSDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Window closed, terminating RDP session...");');
+const input = join(sdl, "sdl_input.cpp");
+adapt(input, '#include "sdl_input.hpp"', '#include "sdl_input.hpp"\n#include "dssh_worker.hpp"');
+adapt(input, '\t\t\t\tfreerdp_abort_connect_context(_sdl->context());', '\t\t\t\tdssh_status("user-close");\n\t\t\t\tfreerdp_abort_connect_context(_sdl->context());');
 adapt(context, "\tsdl->setConnected(true);", '\tsdl->setConnected(true);\n\tdssh_status("connected");');
 // Credentials are already supplied. Never open a retry/credential dialog or retry a bad password.
 adapt(context, "\tinstance->AuthenticateEx = sdl_authenticate_ex;", "\tinstance->AuthenticateEx = [](freerdp*, char**, char**, char**, rdp_auth_reason) -> BOOL { return FALSE; };");

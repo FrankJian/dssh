@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { RdpSession } from "../models/rdp";
 import { Icon } from "../ui/Icon";
 const labels: Record<RdpSession["status"], string> = { starting: "正在启动", connecting: "正在连接", connected: "已连接", disconnecting: "正在断开", closed: "已断开", failed: "连接失败" };
-export function RdpSessionList({ sessions, onFocus, onClose, onReconnect }: { sessions: RdpSession[]; onFocus: (id: string) => void; onClose: (id: string) => void; onReconnect: (profileId: string) => void }) {
+export function RdpSessionList({ sessions, onFocus, onClose, onReconnect, onRemove }: { sessions: RdpSession[]; onFocus: (id: string) => void; onClose: (id: string) => void; onReconnect: (profileId: string) => void; onRemove: (id: string) => void }) {
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   if (!sessions.length) return null;
   return <section className="rdp-sessions" aria-label="远程桌面会话">
@@ -26,7 +26,10 @@ export function RdpSessionList({ sessions, onFocus, onClose, onReconnect }: { se
           </button>
         </div>
         <div id={contentId} className="session-node__children" hidden={!expanded}>
-          {ended ? <button className="session-child" type="button" onClick={() => onReconnect(s.profileId)}><Icon name="refresh" height="15" width="15" /><span>重新连接</span></button> : <>
+          {ended ? <>
+            <button className="session-child" type="button" onClick={() => onReconnect(s.profileId)}><Icon name="refresh" height="15" width="15" /><span>重新连接</span></button>
+            <button className="session-child" type="button" onClick={() => onRemove(s.id)}><Icon name="close" height="15" width="15" /><span>移除会话</span></button>
+          </> : <>
             <button className="session-child" type="button" onClick={() => onFocus(s.id)} disabled={s.status !== "connected"}><Icon name="externalWindow" height="15" width="15" /><span>打开窗口</span></button>
             <button className="session-child session-child--danger" type="button" onClick={() => onClose(s.id)} disabled={s.status === "disconnecting"}><Icon name="unplug" height="15" width="15" /><span>断开连接</span></button>
           </>}

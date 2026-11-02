@@ -1,4 +1,4 @@
-import type { SshProfile } from "../models";
+import { isJumpServerProfile, isRdpProfile, type ConnectionProfile } from "../ssh/connectionTypes";
 import { profileIconName } from "../ssh/profileIcons";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -7,8 +7,8 @@ interface EmptyTerminalProps {
   mode: "home" | "session" | "terminal";
   onCreateProfile: () => void;
   onStartLocalSession?: () => void;
-  recentProfiles?: SshProfile[];
-  onConnectProfile?: (profile: SshProfile) => void;
+  recentProfiles?: ConnectionProfile[];
+  onConnectProfile?: (profile: ConnectionProfile) => void;
   onOpenConnections?: () => void;
 }
 
@@ -36,7 +36,7 @@ export function EmptyTerminal({
             <ul className="terminal-empty__recent-list">
               {recentProfiles.map((profile) => {
                 const host = profile.host.includes(":") && !profile.host.startsWith("[") ? `[${profile.host}]` : profile.host;
-                const address = `${profile.username}@${host}:${profile.port}`;
+                const address = isJumpServerProfile(profile) ? profile.coreUrl : `${profile.username}@${host}:${profile.port}`;
                 return (
                   <li key={profile.id}>
                     <button
@@ -47,7 +47,7 @@ export function EmptyTerminal({
                       type="button"
                     >
                       <span className="terminal-empty__recent-icon">
-                        <Icon name={profileIconName(profile.icon)} height="18" width="18" />
+                        <Icon name={isJumpServerProfile(profile) ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : profileIconName(profile.icon)} height="18" width="18" />
                       </span>
                       <span className="terminal-empty__recent-details">
                         <span className="terminal-empty__recent-name">{profile.name}</span>

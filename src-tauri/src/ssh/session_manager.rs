@@ -23,7 +23,7 @@ use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::TcpStream,
-    sync::{Mutex as AsyncMutex, mpsc, oneshot, watch},
+    sync::{Mutex as AsyncMutex, Notify, mpsc, oneshot, watch},
 };
 
 use crate::{
@@ -113,6 +113,7 @@ struct SessionHandle {
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
     /// to answer AI `read_terminal` requests about the visible session.
     output: Arc<Mutex<String>>,
+    output_changed: Arc<Notify>,
     input_revision: u64,
     status: SessionStatus,
     background: Option<BackgroundOwner>,
@@ -454,6 +455,7 @@ impl SessionManager {
                 tx,
                 closed,
                 output: output.clone(),
+                output_changed: Arc::new(Notify::new()),
                 input_revision: 0,
                 status: SessionStatus::Connecting,
                 background,
@@ -520,8 +522,10 @@ impl SessionManager {
                 );
             }
 
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&task_session_id);
+            if let Ok(mut sessions) = sessions.lock()
+                && let Some(session) = sessions.remove(&task_session_id)
+            {
+                session.output_changed.notify_waiters();
             }
             let _ = closed_tx.send(true);
         });
@@ -558,6 +562,7 @@ impl SessionManager {
                 tx,
                 closed,
                 output: output.clone(),
+                output_changed: Arc::new(Notify::new()),
                 input_revision: 0,
                 status: SessionStatus::Connecting,
                 background: None,
@@ -591,8 +596,10 @@ impl SessionManager {
                 );
             }
 
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&task_session_id);
+            if let Ok(mut sessions) = sessions.lock()
+                && let Some(session) = sessions.remove(&task_session_id)
+            {
+                session.output_changed.notify_waiters();
             }
             let _ = closed_tx.send(true);
         });
@@ -970,7 +977,17 @@ impl SessionManager {
             probe.disconnected();
         }
         session.status = status;
+        session.output_changed.notify_waiters();
         session.hidden()
+    }
+
+    pub(crate) fn output_signal(&self, id: &str) -> AppResult<Arc<Notify>> {
+        self.sessions
+            .lock()
+            .map_err(lock_error)?
+            .get(id)
+            .map(|session| session.output_changed.clone())
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))
     }
 
     /// Return the accumulated terminal output (including ANSI sequences) for a
@@ -3815,12 +3832,16 @@ struct OutputSink {
     app_handle: AppHandle,
     session_id: String,
     output: Arc<Mutex<String>>,
+    output_changed: Option<Arc<Notify>>,
     pending: Arc<Mutex<PendingOutput>>,
     snapshot: Option<Arc<Mutex<crate::ssh::interactive_snapshot::TerminalSnapshotState>>>,
 }
 
 impl OutputSink {
     fn new(app_handle: AppHandle, session_id: String, output: Arc<Mutex<String>>) -> Self {
+        let output_changed = app_handle
+            .try_state::<crate::app::AppState>()
+            .and_then(|state| state.sessions.output_signal(&session_id).ok());
         let snapshot = app_handle
             .try_state::<crate::app::AppState>()
             .and_then(|state| {
@@ -3835,6 +3856,7 @@ impl OutputSink {
             app_handle,
             session_id,
             output,
+            output_changed,
             pending: Arc::new(Mutex::new(PendingOutput::default())),
             snapshot,
         }
@@ -3877,6 +3899,9 @@ impl OutputSink {
             return;
         };
         push_session_output(&self.output, &text);
+        if let Some(signal) = &self.output_changed {
+            signal.notify_waiters();
+        }
         emit_output(&self.app_handle, &self.session_id, text);
     }
 }
@@ -4254,6 +4279,7 @@ mod tests {
                 tx,
                 closed,
                 output: Arc::new(Mutex::new("Welcome to JumpServer\nOpt> ".into())),
+                output_changed: Arc::new(tokio::sync::Notify::new()),
                 input_revision: 0,
                 status: crate::models::terminal::SessionStatus::Connected,
                 background: None,

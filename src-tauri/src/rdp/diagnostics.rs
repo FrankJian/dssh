@@ -2,6 +2,7 @@
 pub enum WorkerStatus {
     Ready,
     Connected,
+    UserClose,
     Stage(&'static str),
     Error(u32),
     Fault { site: u32, line: u32 },
@@ -12,6 +13,7 @@ pub fn parse_status(line: &str) -> Option<WorkerStatus> {
     match line.trim_end() {
         "DSSH_RDP_V1 ready" => Some(WorkerStatus::Ready),
         "DSSH_RDP_V1 connected" => Some(WorkerStatus::Connected),
+        "DSSH_RDP_V1 user-close" => Some(WorkerStatus::UserClose),
         "DSSH_RDP_V1 stage context" => Some(WorkerStatus::Stage("引擎初始化")),
         "DSSH_RDP_V1 stage platform" => Some(WorkerStatus::Stage("系统运行库初始化")),
         "DSSH_RDP_V1 stage sdl-context" => Some(WorkerStatus::Stage("桌面上下文初始化")),
@@ -42,6 +44,7 @@ pub struct WorkerDiagnostics {
     stage: &'static str,
     error: Option<u32>,
     fault: Option<(u32, u32)>,
+    user_closed: bool,
 }
 impl Default for WorkerDiagnostics {
     fn default() -> Self {
@@ -50,6 +53,7 @@ impl Default for WorkerDiagnostics {
             stage: "启动",
             error: None,
             fault: None,
+            user_closed: false,
         }
     }
 }
@@ -57,6 +61,7 @@ impl WorkerDiagnostics {
     pub fn observe(&mut self, status: WorkerStatus) {
         match status {
             WorkerStatus::Connected => self.connected = true,
+            WorkerStatus::UserClose => self.user_closed = true,
             WorkerStatus::Stage(stage) => self.stage = stage,
             WorkerStatus::Error(code) => self.error = Some(code),
             WorkerStatus::Fault { site, line } => self.fault = Some((site, line)),
@@ -64,8 +69,36 @@ impl WorkerDiagnostics {
         }
     }
 
+    pub fn is_normal_exit(&self, exit: Option<i32>) -> bool {
+        if self.fault.is_some() {
+            return false;
+        }
+        let Some(code) = exit else {
+            return false;
+        };
+        if self.user_closed && self.is_clean_requested_exit(exit) {
+            return true;
+        }
+        let benign = matches!(
+            self.error,
+            None | Some(0 | 0x10002 | 0x1000b | 0x1000c | 0x2000b)
+        );
+        benign && (code == 145 || (self.connected && matches!(code, 0 | 2 | 11)))
+    }
+
+    pub fn is_clean_requested_exit(&self, exit: Option<i32>) -> bool {
+        // SDL3 can return CONN_FAILED (131) when a local abort wakes the
+        // event-handle loop before it observes the disconnect flag. Callers
+        // must establish explicit close intent before using this predicate.
+        self.fault.is_none() && matches!(exit, Some(0..=2 | 11 | 131 | 145))
+    }
+
     pub fn failure_message(&self, exit: Option<i32>) -> String {
         let message = match self.error {
+            Some(0x10001) => "RDP 服务端结束了会话，请检查服务端会话策略。",
+            Some(0x10003) => "RDP 会话因空闲超时被服务端断开。",
+            Some(0x10004) => "RDP 登录会话超时，服务端已断开连接。",
+            Some(0x10005) => "RDP 会话被另一个连接替代。",
             Some(0xd5500011) => "RDP 引擎内存分配失败，请检查系统可用内存。",
             Some(0xd5500012) => "RDP 引擎访问本机文件路径失败，请保留阶段与错误码以便排查。",
             Some(0xd5500013) => "RDP 引擎系统调用失败，请保留阶段与错误码以便排查。",
@@ -129,6 +162,50 @@ impl WorkerDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sdl_abort_exit_131_requires_explicit_close_intent() {
+        // Cover title-bar / toolbar status arriving both before process exit
+        // and in the final stdout drain, with or without a connected event.
+        for connected in [false, true] {
+            let mut diagnostics = WorkerDiagnostics::default();
+            if connected {
+                diagnostics.observe(WorkerStatus::Connected);
+            }
+            assert!(!diagnostics.is_normal_exit(Some(0x83)));
+            // The workbench's explicit Close control uses this predicate.
+            assert!(diagnostics.is_clean_requested_exit(Some(0x83)));
+            diagnostics.observe(parse_status("DSSH_RDP_V1 user-close").unwrap());
+            assert!(diagnostics.is_normal_exit(Some(0x83)));
+            // Teardown may also emit a generic transport error after abort.
+            diagnostics.observe(WorkerStatus::Error(0x20006));
+            assert!(diagnostics.is_normal_exit(Some(0x83)));
+            assert!(!diagnostics.is_normal_exit(Some(3)));
+            assert!(!diagnostics.is_normal_exit(Some(0xc0000005u32 as i32)));
+            diagnostics.observe(WorkerStatus::Fault { site: 1, line: 2 });
+            assert!(!diagnostics.is_normal_exit(Some(0x83)));
+            assert!(!diagnostics.is_clean_requested_exit(Some(0x83)));
+        }
+    }
+
+    #[test]
+    fn user_closes_disappear_but_failures_remain() {
+        let mut diagnostics = WorkerDiagnostics::default();
+        diagnostics.observe(WorkerStatus::Connected);
+        assert!(diagnostics.is_normal_exit(Some(0)));
+        diagnostics.observe(WorkerStatus::Error(0x20006));
+        assert!(!diagnostics.is_normal_exit(Some(0)));
+        assert!(!diagnostics.is_normal_exit(Some(131)));
+        diagnostics.observe(parse_status("DSSH_RDP_V1 user-close").unwrap());
+        assert!(diagnostics.is_normal_exit(Some(145)));
+        assert!(!diagnostics.is_normal_exit(Some(3)));
+        assert!(!diagnostics.is_clean_requested_exit(Some(3)));
+        assert!(!diagnostics.is_clean_requested_exit(Some(0xc0000005u32 as i32)));
+        assert!(diagnostics.is_clean_requested_exit(Some(145)));
+        assert!(!diagnostics.is_normal_exit(None));
+        diagnostics.observe(WorkerStatus::Fault { site: 1, line: 2 });
+        assert!(!diagnostics.is_normal_exit(Some(0)));
+        assert!(!diagnostics.is_clean_requested_exit(Some(0)));
+    }
     #[test]
     fn only_known_diagnostics_cross_the_process_boundary() {
         assert_eq!(

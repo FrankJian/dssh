@@ -154,13 +154,13 @@ pub fn tool_defs() -> Vec<Tool> {
             .with_description("列出用户可见终端和本对话的后台交互会话，返回 session_id、名称、profile_id、类型、真实 status 和 background。优先复用本对话 background=true 的会话；该 ID 与服务器配置 server_id 不同。")
             .with_schema(json!({"type":"object", "properties":{}, "additionalProperties":false})),
         Tool::new("write_terminal")
-            .with_description("向已打开的交互式终端输入一行文本并按一次回车，随后返回该终端的新输出。用于 JumpServer/KoKo 的 Opt> 选服提示输入目的 IP、搜索资产、选择实际列出的资产/账号编号，也可在已连接的目标 shell 中执行单条命令。必须先 read_terminal 观察当前提示，每次仅提交一行并等待结果，不要预先串联多步；每次写入都需要用户确认。不要输入密码、口令或验证码。session_id 省略时使用本轮开始时的活动终端；不确定时先 list_terminal_sessions。")
+            .with_description("向已打开的交互式终端输入一行文本并按一次回车，随后返回该终端的新输出。用于 JumpServer/KoKo 的 Opt> 选服提示输入目的 IP、搜索资产、选择实际列出的资产/账号编号，也可在已连接的目标 shell 中执行单条命令。必须先观察 open_ssh_session / read_terminal / write_terminal 最近返回的真实输出；输出已清晰时无需重复 read_terminal。每次仅提交一行并等待结果，不要预先串联多步；每次写入都需要用户确认。不要输入密码、口令或验证码。session_id 省略时使用本轮开始时的活动终端；不确定时先 list_terminal_sessions。")
             .with_schema(json!({
                 "type":"object",
                 "properties":{
                     "session_id":{"type":"string","description":"已打开的终端 ID，来自 list_terminal_sessions 或 read_terminal；不是服务器配置 ID。"},
                     "input":{"type":"string","description":"要输入的单行文本，例如用户指定的目标 IP 或菜单中显示的编号。不包含回车，工具会自动按一次回车。","minLength":1,"maxLength":1024},
-                    "wait_ms":{"type":"integer","description":"提交后等待输出的毫秒数，默认 2000，最大 10000。","minimum":200,"maximum":10000}
+                    "wait_ms":{"type":"integer","description":"提交后等待输出的最长毫秒数，默认 2000，最大 10000；新输出稳定后提前返回，不代表命令已完成。","minimum":200,"maximum":10000}
                 },
                 "required":["input"],"additionalProperties":false
             })),
@@ -178,7 +178,7 @@ pub fn tool_defs() -> Vec<Tool> {
                         "type": "string",
                         "description": "要读取的终端会话 id；省略时读取用户当前活动的会话。"
                     },
-                    "wait_ms": {"type":"integer","description":"读取前等待的毫秒数，默认 0，最大 10000。","minimum":0,"maximum":10000}
+                    "wait_ms": {"type":"integer","description":"等待新输出的最长毫秒数，默认 0，最大 10000；新输出稳定后提前返回。","minimum":0,"maximum":10000}
                 },
                 "additionalProperties": false
             })),
@@ -350,9 +350,7 @@ pub async fn execute_tool(
         "ask_user_question" => ("正在等待用户选择。".to_string(), false),
         "open_ssh_session" => ("请通过后台会话管理器建立 SSH 连接。".to_string(), false),
         "read_terminal" => {
-            let wait_ms = args.get("wait_ms").and_then(Value::as_u64).unwrap_or(0).min(10_000);
-            if wait_ms > 0 { tokio::time::sleep(Duration::from_millis(wait_ms)).await; }
-            execute_read_terminal(state, args, current.and_then(|c| c.session_id.as_deref()), conversation)
+            execute_read_terminal(state, args, current.and_then(|c| c.session_id.as_deref()), conversation).await
         }
         other => (format!("未知的工具：{other}"), true),
     }
@@ -508,7 +506,7 @@ async fn run_local_command(command: &str, timeout_secs: u64) -> (String, bool) {
     }
 }
 
-fn execute_read_terminal(
+async fn execute_read_terminal(
     state: &AppState,
     args: &Value,
     current_session_id: Option<&str>,
@@ -538,7 +536,33 @@ fn execute_read_terminal(
     {
         return (error.message, true);
     }
-    match state.sessions.read_session_output(&session_id) {
+    let output = async {
+        let wait_ms = args
+            .get("wait_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(10_000);
+        if wait_ms == 0 {
+            return state.sessions.read_session_output(&session_id);
+        }
+        let signal = state.sessions.output_signal(&session_id)?;
+        let baseline = state.sessions.read_session_output(&session_id)?;
+        super::output_wait::wait_for_output(
+            &signal,
+            &baseline,
+            Duration::from_millis(wait_ms),
+            None,
+            || {
+                state
+                    .sessions
+                    .check_ai_access(&session_id, conversation, false)?;
+                state.sessions.read_session_output(&session_id)
+            },
+        )
+        .await
+    }
+    .await;
+    match output {
         Ok(raw) => {
             let clean = strip_ansi(&raw);
             let trimmed = clean.trim();

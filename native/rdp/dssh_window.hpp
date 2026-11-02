@@ -4,6 +4,14 @@
 #include <algorithm>
 #include <cmath>
 
+// SDL emits WINDOW_CLOSE_REQUESTED for the title bar and QUIT for OS quit
+// actions. Dialog windows must retain their own close handling.
+inline bool dssh_is_system_close(const SDL_Event& event, bool desktopWindow)
+{
+    return event.type == SDL_EVENT_QUIT ||
+           (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && desktopWindow);
+}
+
 // Enforce the managed desktop mode after parsing, before monitor negotiation.
 inline bool dssh_apply_window_policy(rdpSettings* settings)
 {

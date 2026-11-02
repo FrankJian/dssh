@@ -7,12 +7,13 @@ import { RenameTagDialog } from "./RenameTagDialog";
 import {
   CONNECTION_TYPE_OPTIONS,
   connectionTypeForProfile,
+  connectionTypeLabel,
   type ConnectionType,
   type ConnectionProfile,
 } from "./connectionTypes";
 
 import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
-type Scope = "all" | "favorites" | "recent" | "untagged" | `tag:${string}`;
+type Scope = "all" | "favorites" | "recent" | "untagged" | `tag:${string}` | `type:${ConnectionType}`;
 type SortKey = "recent" | "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
@@ -132,6 +133,7 @@ export function SessionManager({
   }
 
   function changeTypeFilter(next: ConnectionTypeFilter) {
+    if (scope.startsWith("type:")) setScope("all");
     setTypeFilter(next);
     localStorage.setItem(TYPE_FILTER_KEY, next);
   }
@@ -144,14 +146,21 @@ export function SessionManager({
   const recentSet = useMemo(() => new Set(recentIds.filter((id) => profiles.some((profile) => profile.id === id)).slice(0, recentLimit)), [profiles, recentIds, recentLimit]);
   const favoriteCount = profiles.filter((profile) => profile.favorite).length;
   const untaggedCount = profiles.filter((profile) => profile.tags.length === 0).length;
+  const typeCategories = CONNECTION_TYPE_OPTIONS.map((option) => ({ ...option,
+    count: profiles.filter((profile) => connectionTypeForProfile(profile) === option.id).length,
+  })).filter((option) => option.count > 0);
   // Return to all connections when a category becomes empty and disappears.
   const scopeIsEmpty = (scope.startsWith("tag:") && !tags.includes(scope.slice(4)))
+    || (scope.startsWith("type:") && !typeCategories.some((option) => `type:${option.id}` === scope))
     || (scope === "favorites" && favoriteCount === 0)
     || (scope === "recent" && recentSet.size === 0)
     || (scope === "untagged" && untaggedCount === 0);
   const activeScope = scopeIsEmpty ? "all" : scope;
+  const activeTypeFilter: ConnectionTypeFilter = activeScope.startsWith("type:")
+    ? activeScope.slice(5) as ConnectionType : typeFilter;
   const scopeLabel = activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
-    : activeScope === "untagged" ? "未分组" : activeScope.startsWith("tag:") ? activeScope.slice(4) : "全部连接";
+    : activeScope === "untagged" ? "未分组" : activeScope.startsWith("tag:") ? activeScope.slice(4)
+    : activeScope.startsWith("type:") ? connectionTypeLabel(activeTypeFilter as ConnectionType) : "全部连接";
 
   const filtered = useMemo(() => {
     return profiles.filter((profile) => {
@@ -159,7 +168,7 @@ export function SessionManager({
       if (activeScope === "recent" && !recentSet.has(profile.id)) return false;
       if (activeScope === "untagged" && profile.tags.length > 0) return false;
       if (activeScope.startsWith("tag:") && !profile.tags.includes(activeScope.slice(4))) return false;
-      if (typeFilter !== "all" && connectionTypeForProfile(profile) !== typeFilter) {
+      if (activeTypeFilter !== "all" && connectionTypeForProfile(profile) !== activeTypeFilter) {
         return false;
       }
       if (!isSearching) {
@@ -169,7 +178,7 @@ export function SessionManager({
         `${profile.name} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.description ?? ""}`.toLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [profiles, normalizedQuery, isSearching, typeFilter, activeScope, recentSet]);
+  }, [profiles, normalizedQuery, isSearching, activeTypeFilter, activeScope, recentSet]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -216,7 +225,10 @@ export function SessionManager({
         setTagMenu({ tag: label, x: Math.max(8, Math.min(rect.left, window.innerWidth - 228)),
           y: Math.max(8, Math.min(rect.bottom, window.innerHeight - 56)) });
       }}
-      aria-current={activeScope === id ? "page" : undefined} onClick={() => setScope(id)} title={label}>
+      aria-current={activeScope === id ? "page" : undefined} onClick={() => {
+        if (id.startsWith("type:") || scope.startsWith("type:")) changeTypeFilter("all");
+        setScope(id);
+      }} title={label}>
       <Icon name={icon} height="16" width="16" />
       <span className="session-manager__nav-label">{label}</span><span className="session-manager__nav-count">{count}</span>
     </button>;
@@ -229,8 +241,8 @@ export function SessionManager({
   }
 
   function createConnection() {
-    if (typeFilter === "jumpserver") { onCreateJumpServer(); return; }
-    (typeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
+    if (activeTypeFilter === "jumpserver") { onCreateJumpServer(); return; }
+    (activeTypeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
   }
 
   function renderCards(list: ConnectionProfile[]) {
@@ -272,6 +284,7 @@ export function SessionManager({
           {renderScope("all", "全部连接", "connections", profiles.length)}
           {renderScope("favorites", "收藏", "star", favoriteCount)}
           {renderScope("recent", "最近使用", "clock", recentSet.size)}
+          {typeCategories.map((option) => renderScope(`type:${option.id}`, option.label, option.icon, option.count))}
           <div className="session-manager__nav-title" title="按连接标签自动分组；一个连接可以属于多个分组">标签分组</div>
           {tags.map((tag) => renderScope(`tag:${tag}`, tag, "folder", profiles.filter((profile) => profile.tags.includes(tag)).length))}
           {renderScope("untagged", "未分组", "folder", untaggedCount)}
@@ -300,7 +313,7 @@ export function SessionManager({
                 ariaLabel="连接类型筛选"
                 onChange={(value) => changeTypeFilter(value as ConnectionTypeFilter)}
                 options={TYPE_FILTER_OPTIONS.map((option) => ({ label: option.label, value: option.id }))}
-                value={typeFilter}
+                value={activeTypeFilter}
               />
             </div>
           </div>

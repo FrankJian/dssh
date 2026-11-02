@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RdpConnectionProfile, RdpEngineStatus, RdpSession } from "../models/rdp";
 import { listRdpProfiles, listRdpSessions, onRdpSession, rdpEngineStatus } from "../services/rdpService";
 
-import { mergeRdpSession, reconcileRdpSnapshot } from "./sessionState";
+import { dismissRdpSession, mergeRdpSession, reconcileRdpSnapshot, visibleRdpSessions } from "./sessionState";
 export function useRdp(locked: boolean) {
   const [profiles, setProfiles] = useState<RdpConnectionProfile[]>([]);
   const [sessions, setSessions] = useState<RdpSession[]>([]);
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [engine, setEngine] = useState<RdpEngineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
@@ -32,5 +33,9 @@ export function useRdp(locked: boolean) {
     window.addEventListener("focus", focus);
     return () => { cancelled = true; window.removeEventListener("focus", focus); void listener.then((dispose) => dispose()).catch(() => undefined); };
   }, [locked, reload]);
-  return { profiles, sessions, engine, error, reload };
+  const dismissSession = useCallback((id: string) => {
+    setDismissed((current) => dismissRdpSession(sessions, current, id));
+  }, [sessions]);
+  const visibleSessions = useMemo(() => visibleRdpSessions(sessions, dismissed), [sessions, dismissed]);
+  return { profiles, sessions: visibleSessions, engine, error, reload, dismissSession };
 }
