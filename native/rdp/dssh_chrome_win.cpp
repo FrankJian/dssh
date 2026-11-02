@@ -21,6 +21,15 @@ struct Chrome {
 };
 std::vector<Chrome*> bars;
 
+void layoutControls(Chrome* chrome, int width, int height, float scale)
+{
+    const int buttonWidth = std::min(int(72 * scale), std::max(1, width / 5));
+    const int buttonStart = width - buttonWidth * 4 - int(4 * scale);
+    MoveWindow(chrome->title, int(10 * scale), int(10 * scale), std::max(0, buttonStart - int(16 * scale)), int(20 * scale), TRUE);
+    for (int i = 0; i < 4; i++)
+        MoveWindow(chrome->buttons[i], buttonStart + i * buttonWidth, int(4 * scale), buttonWidth, height - int(8 * scale), TRUE);
+}
+
 void tick(Chrome* chrome)
 {
     const auto flags = SDL_GetWindowFlags(chrome->desktop);
@@ -47,11 +56,7 @@ void tick(Chrome* chrome)
     if (!visible) { ShowWindow(chrome->bar, SW_HIDE); return; }
     SetWindowPos(chrome->bar, HWND_TOPMOST, frame.left, frame.top, width, height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    const int buttonWidth = std::min(int(72 * scale), std::max(1, width / 5));
-    const int buttonStart = width - buttonWidth * 4 - int(4 * scale);
-    MoveWindow(chrome->title, int(10 * scale), int(10 * scale), std::max(0, buttonStart - int(16 * scale)), int(20 * scale), TRUE);
-    for (int i = 0; i < 4; i++)
-        MoveWindow(chrome->buttons[i], buttonStart + i * buttonWidth, int(4 * scale), buttonWidth, height - int(8 * scale), TRUE);
+    layoutControls(chrome, width, height, scale);
     SetWindowTextW(chrome->buttons[1], (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) ? L"还原" : L"最大化");
     SetWindowTextW(chrome->buttons[2], (flags & SDL_WINDOW_FULLSCREEN) ? L"退出全屏" : L"全屏");
 }
@@ -160,6 +165,14 @@ extern "C" bool dssh_chrome_test_click(SDL_Window* window, int action)
     auto chrome = static_cast<Chrome*>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), propertyName, nullptr));
     const int index = action - DSSH_CHROME_MINIMIZE;
     if (!chrome || index < 0 || index >= 4) return false;
+    // BM_CLICK simulates mouse down/up. The production bar starts hidden and
+    // its children have zero-sized client areas until the first edge reveal.
+    // Arrange actual controls before clicking; CI must not depend on pointer
+    // position or foreground activation to prepare the fixture.
+    if (!chrome->buttons[index] || !IsWindow(chrome->buttons[index])) return false;
+    layoutControls(chrome, 460, 38, 1.0f);
+    if (!SetWindowPos(chrome->bar, nullptr, 0, 0, 460, 38,
+                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)) return false;
     SendMessageW(chrome->buttons[index], BM_CLICK, 0, 0);
     return true;
 }

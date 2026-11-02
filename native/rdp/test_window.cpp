@@ -2,6 +2,7 @@
 #include "dssh_chrome.h"
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -98,12 +99,32 @@ int main(int argc, char** argv)
         SDL_DestroyWindow(window); SDL_Quit(); return 0;
     }
     for (int action = DSSH_CHROME_MINIMIZE; action <= DSSH_CHROME_CLOSE; action++) {
-        if (!dssh_chrome_test_click(window, action)) return 23;
+        // Exercise delivery even when a previous SDL poll cycle ended before
+        // the callback queued its event. PollEvent may stop at this sentinel.
+        SDL_Event sentinel = {};
+        sentinel.type = SDL_EVENT_POLL_SENTINEL;
+        if (!SDL_PushEvent(&sentinel)) {
+            std::fprintf(stderr, "Could not queue poll sentinel: %s\n", SDL_GetError());
+            return 29;
+        }
+        if (!dssh_chrome_test_click(window, action)) {
+            std::fprintf(stderr, "Native toolbar click failed: action=%d SDL=%s\n", action, SDL_GetError());
+            return 23;
+        }
+        SDL_PumpEvents();
         SDL_Event event = {};
         bool received = false;
-        while (SDL_PollEvent(&event))
+        // Native button callbacks enqueue synchronously. Read their exact
+        // event range, independent of unrelated window events and sentinels.
+        int count = 0;
+        while ((count = SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER)) > 0)
             if (event.type == SDL_EVENT_USER && event.user.code == action && event.user.windowID == SDL_GetWindowID(window)) received = true;
-        if (!received) return 24;
+        SDL_FlushEvent(SDL_EVENT_POLL_SENTINEL);
+        if (count < 0 || !received) {
+            std::fprintf(stderr, "Missing toolbar event: action=%d window=%u queue=%d SDL=%s\n",
+                         action, SDL_GetWindowID(window), count, SDL_GetError());
+            return 24;
+        }
     }
     const auto flags = SDL_GetWindowFlags(window);
     int width = 0, height = 0;
