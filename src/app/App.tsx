@@ -1677,8 +1677,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         />
       ) : (
         <SessionTree
-          remoteDesktops={<RdpSessionList sessions={rdp.sessions} onFocus={(id) => rdpAction(focusRdpSession(id))}
-            onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} />}
+          remoteDesktops={rdp.sessions.length ? <RdpSessionList sessions={rdp.sessions} onFocus={(id) => rdpAction(focusRdpSession(id))}
+            onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} /> : null}
           sessions={visibleSessions}
           terminalNames={Object.fromEntries(visibleSessions.map((session) => [session.id, terminalName(session)]))}
           paneNames={paneNames}

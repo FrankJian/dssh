@@ -3,16 +3,17 @@
 .rdp-editor__form > p { margin: 0; }
 .rdp-editor__row { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-3); }
 .rdp-editor__row > * { min-width: 0; }
-.rdp-editor__actions, .rdp-sessions__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.rdp-sessions { border-top: 1px solid var(--border-subtle); padding: var(--space-3); }
-.rdp-sessions h3 { display: flex; gap: var(--space-2); align-items: center; font-size: var(--rdp-text-size); color: var(--text-muted); }
-.rdp-sessions__item { padding-block: var(--space-2); }
-.rdp-sessions__title { display: flex; gap: var(--space-2); justify-content: space-between; font-size: var(--rdp-text-size); }
-.rdp-sessions__title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rdp-sessions__title > span:last-child, .rdp-sessions p { color: var(--text-muted); font-size: var(--rdp-caption-size); }
-.rdp-sessions p { overflow-wrap: anywhere; }
-.rdp-editor .rdp-security-warning, .rdp-sessions .rdp-security-warning { color: var(--warning); font-size: var(--rdp-text-size); }
+.rdp-editor__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.rdp-sessions { min-width: 0; }
+.rdp-sessions__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin: 0; }
+.rdp-session__icon { flex: 0 0 auto; color: var(--text-faint); }
+.rdp-session__meta { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-2); color: var(--text-muted); font-size: var(--rdp-caption-size); }
+.rdp-session__trust { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--warning); }
+.rdp-session__trust > svg { flex: 0 0 auto; }
+.rdp-session .session-node__status[data-status="closed"] { background: var(--text-faint); }
+.rdp-session .session-node__children[hidden] { display: none; }
+.rdp-session .session-child:disabled { color: var(--text-faint); opacity: var(--rdp-disabled-opacity); cursor: default; background: transparent; }
+.rdp-session .session-child:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.rdp-session__message { min-width: 0; margin: var(--space-1) var(--space-2); color: var(--danger); font-size: var(--rdp-caption-size); line-height: 1.6; overflow-wrap: anywhere; }
+.rdp-editor .rdp-security-warning { color: var(--warning); font-size: var(--rdp-text-size); }
 .rdp-editor input:disabled { opacity: var(--rdp-disabled-opacity); cursor: not-allowed; }
-.rdp-sessions__actions button { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-base); font-size: var(--rdp-caption-size); cursor: pointer; }
-.rdp-sessions__actions button:disabled { opacity: var(--rdp-disabled-opacity); cursor: default; }
-.rdp-sessions__actions button:focus-visible { outline: 1px solid var(--accent); }

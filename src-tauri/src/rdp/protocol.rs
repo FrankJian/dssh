@@ -34,6 +34,8 @@ pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroi
             }
         ),
         "/sec:nla".into(),
+        "-f".into(),
+        "+decorations".into(),
         "-auto-reconnect".into(),
         "-clipboard".into(),
         "-drives".into(),
@@ -91,6 +93,9 @@ mod tests {
         assert!(!p.skip_certificate_verification);
         let strict = decode_arguments(&encode_arguments(&p, "test-only").unwrap());
         assert!(strict.iter().any(|a| a == "/cert:deny"));
+        assert!(strict.iter().any(|a| a == "-f"));
+        assert!(strict.iter().any(|a| a == "+decorations"));
+        assert!(strict.iter().any(|a| a == "/smart-sizing"));
         p.certificate_fingerprint = "ab".repeat(32);
         let pinned = decode_arguments(&encode_arguments(&p, "test-only").unwrap());
         assert!(pinned.iter().any(|a| a.starts_with("/cert:fingerprint:")));

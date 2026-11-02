@@ -58,6 +58,7 @@ class WorkerTests(unittest.TestCase):
             process = self.spawn(env, runtime / BINARY.name, directory)
             process.stdin.write(packet(["/v:127.0.0.1:9", "/u:test-only", "/p:test-only",
                                         "/sec:nla", "/cert:ignore", "/log-level:OFF", "/timeout:1500",
+                                        "-f", "+decorations", "/smart-sizing",
                                         "-auto-reconnect", "-clipboard"]))
             process.stdin.flush()
             code = process.wait(timeout=15)

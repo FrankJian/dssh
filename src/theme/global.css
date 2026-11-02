@@ -936,6 +936,26 @@ button {
   overflow: hidden;
 }
 
+.session-sidebar__sessions {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+  padding-right: var(--space-1);
+}
+
+.session-sidebar__sessions > .session-tree {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.session-sidebar__sessions > .session-tree--empty {
+  flex: 1 1 auto;
+}
+
 .session-tree {
   display: flex;
   min-height: 0;

@@ -167,6 +167,7 @@ export function SessionTree({
       <div className="sidebar__top">
         <SectionHeader title="会话" />
       </div>
+      <div className="session-sidebar__sessions">
       {remoteDesktops}
 
       {nodes.length > 0 ? (
@@ -401,13 +402,14 @@ export function SessionTree({
             );
           })}
         </div>
-      ) : (
+      ) : remoteDesktops ? null : (
         <div className="session-tree session-tree--empty">
           <Icon name="sessions" height="24" width="24" />
           <p className="session-tree__empty-title">暂无活动会话</p>
           <p className="session-tree__empty-hint">从下方收藏或「连接管理」里连接一台主机。</p>
         </div>
       )}
+      </div>
 
       <div className="session-fav">
         <div className="session-fav__head">

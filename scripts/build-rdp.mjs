@@ -31,6 +31,9 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp"]) {
+  copyFileSync(join(root, "native/rdp", file), join(sdl, file));
+}
 for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
   copyFileSync(join(root, "native", "rdp", file), join(sdl, file));
 }
@@ -48,13 +51,14 @@ const main = join(sdl, "sdl_freerdp.cpp");
 adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"');
 adapt(main, "\t/* Redirect SDL log messages to wLog */", "\tdssh_set_application_icon();\n\t/* Redirect SDL log messages to wLog */");
 const window = join(sdl, "sdl_window.cpp");
-adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"');
+adapt(window, '#include "sdl_window.hpp"', '#include "sdl_window.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"');
+adapt(window, "\tstd::ignore = resizeToScale();", "\tstd::ignore = resizeToScale();\n\tdssh_prepare_desktop_window(_window, id);");
 // Initial window and fallback/recreated window must both retain the icon.
 adapt(window, "\t_window = SDL_CreateWindowWithProperties(props);", "\t_window = SDL_CreateWindowWithProperties(props);\n\tdssh_set_window_icon(_window);", 2);
 const clientCmake = join(sdl, "CMakeLists.txt");
 // Enable at the common root so sibling macOS targets share Objective-C rules.
 adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
-adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp)
+adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp)
 if(APPLE)
   target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m)
   set_source_files_properties(dssh_icon.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
@@ -82,6 +86,8 @@ add_executable(dssh-rdp-prefs-test dssh_test_preferences.cpp ../common/sdl_prefs
 target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
 target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
+add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp)
+target_link_libraries(dssh-rdp-window-test PRIVATE SDL3::SDL3${windows ? "-static" : ""})
 `);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);
 // Keep Windows inherited private pipes; never detach their console handles.
@@ -104,6 +110,7 @@ adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");
 adapt(main, "\tif (freerdp_client_start(context) != 0)", '\tdssh_status("stage connect");\n\tif (freerdp_client_start(context) != 0)');
 adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", "\t\t\t\tif (windowEvent.type == SDL_EVENT_USER) { dssh_focus_windows(); continue; }\n\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))");
 const context = join(sdl, "sdl_context.cpp");
+adapt(context, "\tif (!sdl->setResizeable(false))", "\tif (!sdl->setResizeable(true))");
 adapt(context, '#include "sdl_context.hpp"', '#include "sdl_context.hpp"\n#include "dssh_worker.hpp"');
 adapt(context, "\tsdl->setConnected(true);", '\tsdl->setConnected(true);\n\tdssh_status("connected");');
 // Credentials are already supplied. Never open a retry/credential dialog or retry a bad password.
@@ -150,8 +157,9 @@ if (windows) {
 }
 run("cmake", args);
 if (windows) validateWindowsRuntime(readFileSync(join(build, "CMakeCache.txt"), "utf8"));
-run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "--parallel", "4"]);
+run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "dssh-rdp-window-test", "--parallel", "4"]);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-prefs-test.exe" : "dssh-rdp-prefs-test"), []);
+run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-window-test.exe" : "dssh-rdp-window-test"), []);
 const output = join(build, "client/SDL/SDL3", windows ? "sdl3-freerdp.exe" : "sdl3-freerdp");
 const binary = join(runtime, windows ? "dssh-rdp-client.exe" : "dssh-rdp-client");
 copyFileSync(output, binary);
