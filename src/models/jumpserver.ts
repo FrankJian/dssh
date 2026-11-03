@@ -10,6 +10,7 @@ export interface JumpServerAccount { alias: string; name: string; username: stri
 export interface JumpServerPage<T> { results: T[]; count: number | null; hasMore: boolean }
 export interface JumpServerTarget { profileId: string; generation: string; assetId: string; assetName: string; accountAlias: string; accountLabel: string }
 export interface SaveJumpServerProfile {
+  cloneSourceId?: string;
   id?: string; name: string; coreUrl: string; keyId: string; orgId: string;
   authKind: JumpServerAuthKind; username: string; sshProfileId?: string | null;
   /** Write-only. Never retained in profile responses or localStorage. */

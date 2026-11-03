@@ -81,9 +81,37 @@ impl JumpServerManager {
     pub fn save(
         &self,
         repo: &ProfileRepository,
-        request: SaveJumpServerProfile,
+        mut request: SaveJumpServerProfile,
     ) -> AppResult<JumpServerProfile> {
         let core_url = api::core_url(&request.core_url)?.to_string();
+        if let Some(source_id) = &request.clone_source_id {
+            if request.id.is_some() {
+                return Err(error(
+                    "jumpserver_invalid",
+                    "克隆必须创建新的 JumpServer 连接。",
+                ));
+            }
+            let (source, reference) = repo.get_jumpserver_profile(source_id)?;
+            if request.remember_secret && request.secret.as_ref().is_none_or(|s| s.is_empty()) {
+                let same_identity = source.core_url == core_url
+                    && source.auth_kind == request.auth_kind
+                    && source.key_id == request.key_id
+                    && source.username == request.username.trim();
+                if !same_identity {
+                    return Err(error(
+                        "jumpserver_secret_required",
+                        "更改地址、认证方式或用户身份时，请重新输入密码 / Secret。",
+                    ));
+                }
+                if let Some(reference) = reference {
+                    request.secret = Some(Zeroizing::new(
+                        entry(&reference)?
+                            .get_password()
+                            .map_err(|_| credential_error())?,
+                    ));
+                }
+            }
+        }
         if request.secret.as_ref().is_some_and(|s| s.len() > 4096) {
             return Err(error("jumpserver_invalid", "Secret 长度超过限制。"));
         }
@@ -623,6 +651,43 @@ fn source_profile(id: &str, target: &JumpServerTarget, platform: &str) -> SshPro
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn cloning_a_platform_creates_a_new_identity_without_a_login() {
+        let dir = std::env::temp_dir().join(format!("dssh-jms-clone-{}", nonce()));
+        let repo = ProfileRepository::initialize(&dir, "test.db").unwrap();
+        let manager = JumpServerManager::default();
+        let source = manager
+            .save(
+                &repo,
+                serde_json::from_value(serde_json::json!({
+                    "name":"Original", "coreUrl":"https://example.invalid/", "authKind":"password",
+                    "username":"alice", "orgId":"org-a", "rememberSecret":false
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let mut request = serde_json::json!({"cloneSourceId":source.id, "name":"Original 克隆",
+            "coreUrl":source.core_url, "authKind":"password", "username":"alice", "orgId":"org-a", "rememberSecret":false});
+        request["id"] = serde_json::json!(source.id);
+        assert!(
+            manager
+                .save(&repo, serde_json::from_value(request.clone()).unwrap())
+                .is_err()
+        );
+        request.as_object_mut().unwrap().remove("id");
+        let clone = manager
+            .save(&repo, serde_json::from_value(request).unwrap())
+            .unwrap();
+        assert_ne!(clone.id, source.id);
+        assert_eq!(clone.core_url, source.core_url);
+        assert_eq!(clone.username, source.username);
+        assert!(!clone.has_credential);
+        assert!(!manager.lock().unwrap().logins.contains_key(&clone.id));
+        manager.delete(&repo, &source.id).unwrap();
+        assert!(repo.get_jumpserver_profile(&clone.id).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
     use super::*;
     #[test]
     fn logout_invalidates_pending_login_and_target_generation() {

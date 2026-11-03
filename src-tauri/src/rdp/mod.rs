@@ -112,6 +112,21 @@ impl RdpManager {
             .lock()
             .map_err(|_| error("rdp_busy", "RDP 管理器暂不可用。"))?;
         request.profile.normalize_and_validate()?;
+        if let Some(source_id) = &request.clone_source_id {
+            if !request.profile.id.is_empty() {
+                return Err(error("rdp_invalid", "克隆必须创建新的 RDP 连接。"));
+            }
+            let source = repository
+                .get_rdp_profile(source_id)?
+                .ok_or_else(|| error("rdp_profile_missing", "原 RDP 连接已删除，无法克隆。"))?;
+            if matches!(request.password, PasswordUpdate::Keep {})
+                && let Some(reference) = source.secret_ref
+            {
+                request.password = PasswordUpdate::Replace {
+                    value: secrets::read(&reference)?,
+                };
+            }
+        }
         let existing = if request.profile.id.is_empty() {
             None
         } else {
@@ -554,5 +569,42 @@ impl RdpManager {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod clone_tests {
+    use super::*;
+
+    #[test]
+    fn clone_creates_a_new_record_and_rejects_overwriting_the_source() {
+        let directory = std::env::temp_dir().join(format!("dssh-rdp-clone-{}", id()));
+        let repository = ProfileRepository::initialize(&directory, "test.db").unwrap();
+        let manager = RdpManager::default();
+        let source = manager.save(&repository, serde_json::from_value(serde_json::json!({
+            "profile": {"id":"", "name":"Original", "host":"windows.example.test", "port":3389,
+                "username":"user", "domain":"EXAMPLE", "certificateFingerprint":"", "width":1920, "height":1080,
+                "favorite":true, "tags":["production"], "description":"Desktop", "hasPassword":false, "createdAt":"", "updatedAt":""},
+            "password":{"action":"keep"}
+        })).unwrap()).unwrap();
+        let mut value = serde_json::json!({"profile":source, "password":{"action":"keep"}, "cloneSourceId":source.id});
+        assert!(
+            manager
+                .save(&repository, serde_json::from_value(value.clone()).unwrap())
+                .is_err()
+        );
+        value["profile"]["id"] = serde_json::json!("");
+        value["profile"]["name"] = serde_json::json!("Original 克隆");
+        let clone = manager
+            .save(&repository, serde_json::from_value(value).unwrap())
+            .unwrap();
+        assert_ne!(source.id, clone.id);
+        assert_eq!(source.host, clone.host);
+        assert_eq!(source.domain, clone.domain);
+        assert_eq!(source.tags, clone.tags);
+        assert!(!clone.has_password);
+        manager.delete(&repository, &source.id).unwrap();
+        assert!(repository.get_rdp_profile(&clone.id).unwrap().is_some());
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

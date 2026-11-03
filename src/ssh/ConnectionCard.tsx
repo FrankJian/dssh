@@ -8,6 +8,7 @@ interface ConnectionCardProps {
   variant: "grid" | "list";
   onConnect: () => void;
   onEdit: () => void;
+  onClone: () => void;
   onDelete: () => void;
   onToggleFavorite: () => void;
 }
@@ -21,6 +22,7 @@ export function ConnectionCard({
   variant,
   onConnect,
   onEdit,
+  onClone,
   onDelete,
   onToggleFavorite,
 }: ConnectionCardProps) {
@@ -72,6 +74,9 @@ export function ConnectionCard({
         </button>
         <IconButton label="编辑" onClick={onEdit}>
           <Icon name="edit" height="16" width="16" />
+        </IconButton>
+        <IconButton label="克隆" onClick={onClone}>
+          <Icon name="copy" height="16" width="16" />
         </IconButton>
         <IconButton label="删除" onClick={onDelete}>
           <Icon name="trash" height="16" width="16" />

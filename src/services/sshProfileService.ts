@@ -26,6 +26,10 @@ export function createSshProfile(request: CreateSshProfileRequest) {
   return invokeCommand<SshProfile>("create_ssh_profile", { request });
 }
 
+export function cloneSshProfile(sourceId: string, request: CreateSshProfileRequest) {
+  return invokeCommand<SshProfile>("clone_ssh_profile", { sourceId, request });
+}
+
 export function updateSshProfile(request: UpdateSshProfileRequest) {
   return invokeCommand<SshProfile>("update_ssh_profile", { request });
 }

@@ -8,11 +8,11 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { useDialogFocus } from "../rdp/useDialogFocus";
 
-export function JumpServerProfileEditor({ profile, onClose, onSaved }: {
-  profile: JumpServerProfile | null; onClose: () => void; onSaved: (profile: JumpServerProfile) => Promise<void> | void;
+export function JumpServerProfileEditor({ profile, clone = false, onClose, onSaved }: {
+  profile: JumpServerProfile | null; clone?: boolean; onClose: () => void; onSaved: (profile: JumpServerProfile) => Promise<void> | void;
 }) {
   const ref = useDialogFocus();
-  const [name, setName] = useState(profile?.name ?? "");
+  const [name, setName] = useState(profile ? (clone ? `${profile.name} 克隆` : profile.name) : "");
   const [coreUrl, setCoreUrl] = useState(profile?.coreUrl ?? "");
   const [authKind, setAuthKind] = useState<JumpServerAuthKind>(profile?.authKind ?? (profile ? "accessKey" : "password"));
   const [username, setUsername] = useState(profile?.username ?? "");
@@ -37,15 +37,15 @@ export function JumpServerProfileEditor({ profile, onClose, onSaved }: {
     e.preventDefault(); if (busy) return;
     setBusy(true); setError("");
     try {
-      const saved = await saveJumpServerProfile({ id: profile?.id, name, coreUrl, keyId: authKind === "accessKey" ? keyId : "", authKind, username: authKind === "password" ? username : "", sshProfileId: sshProfileId || null, orgId, secret: secret || undefined, rememberSecret: remember });
+      const saved = await saveJumpServerProfile({ id: clone ? undefined : profile?.id, cloneSourceId: clone ? profile?.id : undefined, name, coreUrl, keyId: authKind === "accessKey" ? keyId : "", authKind, username: authKind === "password" ? username : "", sshProfileId: sshProfileId || null, orgId, secret: secret || undefined, rememberSecret: remember });
       setSecret(""); await onSaved(saved);
     } catch (e) { setError(e instanceof Error ? e.message : "保存失败。"); }
     finally { setBusy(false); }
   }
   return <div className="profile-editor-backdrop" role="presentation">
-    <section ref={ref} className="profile-editor is-glass-overlay rdp-editor" role="dialog" aria-modal="true" aria-label={profile ? "编辑 JumpServer 连接" : "新建 JumpServer 连接"}
+    <section ref={ref} className="profile-editor is-glass-overlay rdp-editor" role="dialog" aria-modal="true" aria-label={profile && !clone ? "编辑 JumpServer 连接" : "新建 JumpServer 连接"}
       onKeyDown={(e) => { if (e.key === "Escape" && !busy) onClose(); }}>
-      <header className="profile-editor__topbar"><h2>{profile ? "编辑" : "新建"} JumpServer 连接</h2><button className="icon-button" type="button" disabled={busy} aria-label="关闭编辑器" onClick={onClose}><Icon name="close" /></button></header>
+      <header className="profile-editor__topbar"><h2>{profile && !clone ? "编辑" : "新建"} JumpServer 连接</h2><button className="icon-button" type="button" disabled={busy} aria-label="关闭编辑器" onClick={onClose}><Icon name="close" /></button></header>
       <form className="rdp-editor__form" onSubmit={submit}>
         {error && <p className="form-errors" role="alert">{error}</p>}
         <p className="profile-form__hint">使用用户名、密码与 OTP 登录资产目录，也可选择 Access Key。资产连接继续经过 KoKo。</p>

@@ -15,6 +15,7 @@ import { validateProfileDraft } from "./profileStore";
 import {
   createEmptyProfileDraft,
   profileToDraft,
+  profileToCloneDraft,
   type ProfileDraft,
   type ProfileEditorMode,
 } from "./profileTypes";
@@ -43,13 +44,13 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
 
 export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
-    profile ? profileToDraft(profile) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] },
+    profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] },
   );
   const [connectionType, setConnectionType] = useState<ConnectionType>("ssh");
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    setDraft(profile ? profileToDraft(profile) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] });
+    setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] });
     setConnectionType("ssh");
     setErrors([]);
   }, [initialTags, mode, profile]);
@@ -109,7 +110,7 @@ export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, p
   }
 
   const title = mode === "create" ? `新建 ${connectionTypeLabel(connectionType)} 连接` : "编辑 SSH 连接";
-  const passwordLabel = mode === "create" ? "密码" : "密码（留空则保持不变）";
+  const passwordLabel = profile ? "密码（留空则保留原配置密码）" : "密码";
   const connectionRoute: ConnectionRoute = draft.useProxy ? draft.proxyType : "direct";
   const proxyLabel = connectionRoute === "http" ? "HTTP 代理" : "SOCKS5 代理";
 
@@ -212,6 +213,7 @@ export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, p
           </aside>
 
           <div className="profile-form__main">
+            {mode === "create" && profile ? <p className="profile-form__hint">正在克隆“{profile.name}”。留空沿用原配置的密码、密钥口令和代理密码；填写新值可替换。保存后创建独立连接。</p> : null}
             <div className="profile-form__connection-grid">
               <label className="field">
                 <span>连接方式</span>

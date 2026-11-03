@@ -70,6 +70,10 @@ export function profileToDraft(profile: SshProfile): ProfileDraft {
     description: profile.description ?? "",
     favorite: profile.favorite,
     icon: profile.icon ?? "ssh",
-    tags: profile.tags ?? [],
+    tags: [...(profile.tags ?? [])],
   };
+}
+
+export function profileToCloneDraft(profile: SshProfile): ProfileDraft {
+  return { ...profileToDraft(profile), name: `${profile.name} 克隆` };
 }

@@ -15,10 +15,10 @@ const RESOLUTION_PRESETS = [
   { value: "4k", label: "4K / UHD · 3840 × 2160", width: 3840, height: 2160 },
 ];
 
-interface Props { profile: RdpProfile | null; initialTags?: string[]; allTags: string[]; engine: RdpEngineStatus | null; onClose: () => void; onSaved: () => Promise<void> }
-export function RdpProfileEditor({ profile, initialTags, allTags, engine, onClose, onSaved }: Props) {
+interface Props { profile: RdpProfile | null; clone?: boolean; initialTags?: string[]; allTags: string[]; engine: RdpEngineStatus | null; onClose: () => void; onSaved: () => Promise<void> }
+export function RdpProfileEditor({ profile, clone = false, initialTags, allTags, engine, onClose, onSaved }: Props) {
   const dialogRef = useDialogFocus();
-  const [draft, setDraft] = useState<RdpProfile>(() => profile ? { ...profile } : { ...emptyRdpProfile(), tags: initialTags ?? [] });
+  const [draft, setDraft] = useState<RdpProfile>(() => profile ? { ...profile, id: clone ? "" : profile.id, name: clone ? `${profile.name} 克隆` : profile.name, tags: [...profile.tags] } : { ...emptyRdpProfile(), tags: initialTags ?? [] });
   const [resolution, setResolution] = useState(() =>
     RESOLUTION_PRESETS.find((preset) => preset.width === draft.width && preset.height === draft.height)?.value ?? "custom");
   const [password, setPassword] = useState("");
@@ -30,15 +30,15 @@ export function RdpProfileEditor({ profile, initialTags, allTags, engine, onClos
     event.preventDefault(); if (busy) return;
     setBusy(true); setError("");
     try {
-      await saveRdpProfile(draft, passwordAction === "replace" ? { action: "replace", value: password } : { action: passwordAction });
+      await saveRdpProfile(draft, passwordAction === "replace" ? { action: "replace", value: password } : { action: passwordAction }, clone ? profile?.id : undefined);
       setPassword(""); await onSaved(); onClose();
     } catch (e) { setError(e instanceof Error ? e.message : "保存失败。"); }
     finally { setBusy(false); }
   }
   return <div className="profile-editor-backdrop" role="presentation">
-    <section ref={dialogRef} className="profile-editor is-glass-overlay rdp-editor" role="dialog" aria-modal="true" aria-label={profile ? "编辑 RDP 连接" : "新建 RDP 连接"}
+    <section ref={dialogRef} className="profile-editor is-glass-overlay rdp-editor" role="dialog" aria-modal="true" aria-label={profile && !clone ? "编辑 RDP 连接" : "新建 RDP 连接"}
       onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
-      <header className="profile-editor__topbar"><h2>{profile ? "编辑" : "新建"} RDP 连接</h2>
+      <header className="profile-editor__topbar"><h2>{profile && !clone ? "编辑" : "新建"} RDP 连接</h2>
         <button className="icon-button" type="button" aria-label="关闭编辑器" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>
       <form className="rdp-editor__form" onSubmit={submit}>
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
@@ -55,7 +55,7 @@ export function RdpProfileEditor({ profile, initialTags, allTags, engine, onClos
         </div>
         <div className="field"><span>保存的密码{profile?.hasPassword ? "（已保存在系统凭据库）" : ""}</span>
           <SelectMenu ariaLabel="密码更新方式" value={passwordAction} onChange={(v) => { setPasswordAction(v as PasswordUpdate["action"]); setPassword(""); }}
-            options={[{ value: "keep", label: profile?.hasPassword ? "保留现有密码" : "不保存，连接时输入" }, { value: "replace", label: "保存新密码到系统凭据库" }, { value: "clear", label: "清除保存的密码" }]} />
+            options={[{ value: "keep", label: profile?.hasPassword ? "保留原配置密码" : "不保存，连接时输入" }, { value: "replace", label: "保存新密码到系统凭据库" }, { value: "clear", label: "清除保存的密码" }]} />
         </div>
         {passwordAction === "replace" ? <label className="field"><span>新密码</span><input required type="password" autoComplete="new-password" maxLength={4096} value={password} onChange={(e) => setPassword(e.target.value)} /></label> : null}
         <label className="checkbox-field"><input type="checkbox" checked={draft.skipCertificateVerification}

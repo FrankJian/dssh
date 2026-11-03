@@ -31,6 +31,7 @@ pub struct JumpServerProfile {
 #[serde(rename_all = "camelCase")]
 pub struct SaveJumpServerProfile {
     pub id: Option<String>,
+    pub clone_source_id: Option<String>,
     pub name: String,
     pub core_url: String,
     #[serde(default)]

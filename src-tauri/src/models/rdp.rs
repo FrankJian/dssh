@@ -51,6 +51,7 @@ pub enum PasswordUpdate {
 pub struct SaveRdpProfileRequest {
     pub profile: RdpProfile,
     pub password: PasswordUpdate,
+    pub clone_source_id: Option<String>,
 }
 
 impl RdpProfile {

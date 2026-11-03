@@ -60,6 +60,7 @@ interface SessionManagerProps {
   onCreateRdp: (initialTags?: string[]) => void;
   onCreateJumpServer: () => void;
   onEdit: (profile: ConnectionProfile) => void;
+  onClone: (profile: ConnectionProfile) => void;
   onDelete: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
@@ -77,6 +78,7 @@ export function SessionManager({
   onCreateRdp,
   onCreateJumpServer,
   onEdit,
+  onClone,
   onDelete,
   onToggleFavorite,
   onRenameTag,
@@ -255,6 +257,7 @@ export function SessionManager({
             variant={cardVariant}
             onConnect={() => onConnect(profile)}
             onEdit={() => onEdit(profile)}
+            onClone={() => onClone(profile)}
             onDelete={() => onDelete(profile)}
             onToggleFavorite={() => onToggleFavorite(profile)}
           />

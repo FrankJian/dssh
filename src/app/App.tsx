@@ -235,7 +235,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
   const [editorState, setEditorState] = useState<EditorState | null>(null);
-  const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[] } | null>(null);
+  const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[]; clone?: boolean } | null>(null);
   const [rdpConnectTarget, setRdpConnectTarget] = useState<RdpProfile | null>(null);
   const [rdpDeleteTarget, setRdpDeleteTarget] = useState<RdpProfile | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
@@ -415,7 +415,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const s3Profiles = useS3Profiles();
   const jumpservers = useJumpServerProfiles(appLock.status?.locked ?? true);
   const [jumpServerOpen, setJumpServerOpen] = useState<string | null>(null);
-  const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null } | null>(null);
+  const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null; clone?: boolean } | null>(null);
   const [jumpServerDelete, setJumpServerDelete] = useState<JumpServerProfile | null>(null);
   const {
     activeSessionId,
@@ -993,7 +993,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     if (editorState?.mode === "edit" && editorState.profile) {
       await updateProfile(editorState.profile.id, draft);
     } else {
-      await createProfile(draft);
+      await createProfile(draft, editorState?.profile?.id);
     }
 
     closeEditor();
@@ -1788,6 +1788,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         onCreate={(initialTags) => setEditorState({ mode: "create", profile: null, initialTags })}
         onCreateRdp={(initialTags) => setRdpEditor({ profile: null, initialTags })}
         onEdit={(profile) => { if (isJumpServerProfile(profile)) setJumpServerEditor({ profile }); else if (isRdpProfile(profile)) setRdpEditor({ profile }); else openEditProfile(profile); }}
+        onClone={(profile) => {
+          if (isJumpServerProfile(profile)) setJumpServerEditor({ profile, clone: true });
+          else if (isRdpProfile(profile)) setRdpEditor({ profile, clone: true });
+          else setEditorState({ mode: "create", profile });
+        }}
         onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
         onToggleFavorite={(profile) => { if (isJumpServerProfile(profile)) return; if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
         onRenameTag={async (oldTag, newTag) => {
@@ -2351,6 +2356,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         />
       ) : null}
       {jumpServerEditor ? <JumpServerProfileEditor profile={jumpServerEditor.profile}
+        clone={jumpServerEditor.clone}
         onClose={() => setJumpServerEditor(null)} onSaved={async (profile) => {
           await jumpservers.reload(); setJumpServerEditor(null); setJumpServerOpen(profile.id); setActiveActivity("connections");
         }} /> : null}
@@ -2361,6 +2367,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           setJumpServerDelete(null);
         }} /> : null}
       {rdpEditor ? <RdpProfileEditor profile={rdpEditor.profile} initialTags={rdpEditor.initialTags}
+        clone={rdpEditor.clone}
         allTags={[...new Set([...allTags, ...rdp.profiles.flatMap((p) => p.tags)])]} engine={rdp.engine}
         onClose={() => setRdpEditor(null)} onSaved={rdp.reload} /> : null}
       {rdpConnectTarget ? <RdpConnectDialog profile={rdpConnectTarget} onClose={() => setRdpConnectTarget(null)} onConnect={(password) => connectRdp(rdpConnectTarget, password)} /> : null}

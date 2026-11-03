@@ -86,6 +86,29 @@ impl ProfileRepository {
         Ok(profile)
     }
 
+    pub fn clone_profile(
+        &self,
+        source_id: &str,
+        mut request: CreateSshProfileRequest,
+    ) -> AppResult<SshProfile> {
+        let source = self
+            .get_profile(source_id)?
+            .ok_or_else(|| AppError::new("profile_not_found", "原连接已删除，无法克隆。"))?;
+        // Resolve credentials only here; cloning never sends saved secrets to the UI.
+        // A newly uploaded key must not inherit a different key's passphrase.
+        if !matches!(
+            &request.auth_method,
+            AuthMethod::PrivateKey {
+                key_data: Some(_),
+                ..
+            }
+        ) {
+            request.auth_method = merge_auth_method(source.auth_method, request.auth_method);
+        }
+        request.proxy = merge_proxy(source.proxy, request.proxy)?;
+        self.create_profile(request)
+    }
+
     pub fn update_profile(&self, request: UpdateSshProfileRequest) -> AppResult<SshProfile> {
         let existing = self.get_profile(&request.id)?.ok_or_else(|| {
             AppError::new(
@@ -1433,6 +1456,71 @@ impl From<&AuthMethod> for AuthFields {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_clone_keeps_private_fields_in_rust_and_creates_an_independent_profile() {
+        let directory = std::env::temp_dir().join(format!("dssh-clone-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let source = SshProfile {
+            id: "clone-source".into(),
+            name: "Original".into(),
+            host: "original.example.test".into(),
+            port: 22,
+            username: "deploy".into(),
+            // Generated sentinels exercise preservation without using real credential material.
+            auth_method: AuthMethod::PrivateKey {
+                key_data: Some(create_id()),
+                key_name: Some("deployment.key".into()),
+                passphrase_ref: Some(create_id()),
+            },
+            proxy: Some(SshProxy {
+                proxy_type: "socks5".into(),
+                host: "proxy.example.test".into(),
+                port: 1080,
+                username: None,
+                password: Some(create_id()),
+            }),
+            description: None,
+            favorite: false,
+            icon: "ssh".into(),
+            tags: vec!["production".into()],
+            created_at: timestamp(),
+            updated_at: timestamp(),
+        };
+        insert_profile(&repository.connection().unwrap(), &source).unwrap();
+        let mut request: CreateSshProfileRequest =
+            serde_json::from_value(serde_json::to_value(&source).unwrap()).unwrap();
+        request.name = "Original 克隆".into();
+        request.host = "clone.example.test".into();
+        let cloned = repository
+            .clone_profile(&source.id, request.clone())
+            .unwrap();
+        assert_ne!(cloned.id, source.id);
+        assert_eq!(cloned.host, "clone.example.test");
+        assert_eq!(cloned.tags, source.tags);
+        assert!(matches!(
+            &cloned.auth_method,
+            AuthMethod::PrivateKey {
+                key_data: Some(_),
+                passphrase_ref: Some(_),
+                ..
+            }
+        ));
+        assert!(cloned.proxy.as_ref().unwrap().password.is_some());
+        let payload = serde_json::to_value(&cloned).unwrap();
+        assert!(payload["authMethod"].get("keyData").is_none());
+        assert!(payload["authMethod"].get("passphraseRef").is_none());
+        assert!(payload["proxy"].get("password").is_none());
+        assert_eq!(
+            repository.get_profile(&source.id).unwrap().unwrap().host,
+            source.host
+        );
+        repository.delete_profile(&source.id).unwrap();
+        assert!(repository.get_profile(&cloned.id).unwrap().is_some());
+        assert!(repository.clone_profile(&source.id, request).is_err());
+        assert_eq!(repository.list_profiles().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn ssh_tag_rename_is_atomic_and_merges_exact_matches() {

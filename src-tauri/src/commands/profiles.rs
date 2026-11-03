@@ -20,6 +20,15 @@ pub fn create_ssh_profile(
 }
 
 #[tauri::command]
+pub fn clone_ssh_profile(
+    state: State<'_, AppState>,
+    source_id: String,
+    request: CreateSshProfileRequest,
+) -> AppResult<SshProfile> {
+    state.profiles.clone_profile(&source_id, request)
+}
+
+#[tauri::command]
 pub fn update_ssh_profile(
     state: State<'_, AppState>,
     request: UpdateSshProfileRequest,

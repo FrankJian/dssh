@@ -87,6 +87,7 @@ pub fn run() {
             commands::app_lock::lock_app_if_idle,
             commands::profiles::list_ssh_profiles,
             commands::profiles::create_ssh_profile,
+            commands::profiles::clone_ssh_profile,
             commands::profiles::update_ssh_profile,
             commands::profiles::delete_ssh_profile,
             commands::profiles::rename_ssh_tag,

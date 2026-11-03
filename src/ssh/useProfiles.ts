@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SshProfile } from "../models";
 import {
   createSshProfile,
+  cloneSshProfile,
   deleteSshProfile,
   listSshProfiles,
   renameSshTag,
@@ -86,8 +87,9 @@ export function useProfiles() {
     return Array.from(tags).sort((a, b) => a.localeCompare(b));
   }, [profiles]);
 
-  async function createProfile(draft: ProfileDraft) {
-    const profile = await createSshProfile(createProfileRequestFromDraft(draft));
+  async function createProfile(draft: ProfileDraft, sourceId?: string) {
+    const request = createProfileRequestFromDraft(draft);
+    const profile = await (sourceId ? cloneSshProfile(sourceId, request) : createSshProfile(request));
     setProfiles((currentProfiles) => [profile, ...currentProfiles]);
     setSelectedProfileId(profile.id);
   }
