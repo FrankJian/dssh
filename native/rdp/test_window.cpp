@@ -5,6 +5,7 @@
 #include <cstdio>
 #if defined(_WIN32)
 #include <windows.h>
+#include <imm.h>
 #endif
 
 int main(int argc, char** argv)
@@ -154,8 +155,30 @@ int main(int argc, char** argv)
                                                         SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
     const LONG_PTR controls = WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     if (!hwnd || (GetWindowLongPtrW(hwnd, GWL_STYLE) & controls) != controls) result = 12;
+    auto context = ImmGetContext(hwnd);
+    if (context) { ImmReleaseContext(hwnd, context); result = 30; }
+    if (SDL_TextInputActive(window)) result = 31;
+    dssh_restore_desktop_input(window);
+    // Attach a real local IME context, then verify repeated focus preparation
+    // detaches it and restores the same handle without destroying SDL's owner.
+    auto fixture = ImmCreateContext();
+    if (!fixture) { std::fprintf(stderr, "ImmCreateContext failed: %lu\n", GetLastError()); result = 32; }
+    else {
+        auto previous = ImmAssociateContext(hwnd, fixture);
+        dssh_prepare_desktop_input(window);
+        dssh_prepare_desktop_input(window);
+        auto detached = ImmGetContext(hwnd);
+        if (detached) { ImmReleaseContext(hwnd, detached); result = 33; }
+        dssh_restore_desktop_input(window);
+        auto restored = ImmGetContext(hwnd);
+        if (restored != fixture) result = 34;
+        if (restored) ImmReleaseContext(hwnd, restored);
+        ImmAssociateContext(hwnd, previous);
+        ImmDestroyContext(fixture);
+    }
 #endif
     dssh_chrome_detach(window);
+    dssh_restore_desktop_input(window);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return result;
