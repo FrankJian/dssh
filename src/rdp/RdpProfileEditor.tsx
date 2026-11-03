@@ -42,7 +42,7 @@ export function RdpProfileEditor({ profile, initialTags, allTags, engine, onClos
         <button className="icon-button" type="button" aria-label="关闭编辑器" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>
       <form className="rdp-editor__form" onSubmit={submit}>
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
-        <p className="profile-form__hint">独立原生桌面窗口 · Windows Pro / Enterprise / Server · NLA。首版仅直连，剪贴板与设备重定向关闭；暂不参与 YAML 导入导出。</p>
+        <p className="profile-form__hint">独立原生桌面窗口 · Windows Pro / Enterprise / Server · NLA。仅直连，磁盘与设备重定向关闭；暂不参与 YAML 导入导出。</p>
         {engine && !engine.available ? <p className="profile-form__hint" role="status">{engine.message}</p> : null}
         <label className="field"><span>名称</span><input autoFocus required maxLength={160} value={draft.name} onChange={(e) => field("name", e.target.value)} /></label>
         <div className="rdp-editor__row">
@@ -67,6 +67,12 @@ export function RdpProfileEditor({ profile, initialTags, allTags, engine, onClos
           <input disabled={draft.skipCertificateVerification} spellCheck={false} maxLength={95} value={draft.certificateFingerprint} onChange={(e) => field("certificateFingerprint", e.target.value)} />
           <small className="profile-form__hint">{draft.skipCertificateVerification ? "已保存的指纹暂不使用，关闭跳过验证后恢复生效。" : "留空校验证书链和主机名。自签名证书请先通过可信渠道核对完整指纹；更改此字段即更改信任的服务器证书。"}</small>
         </label>
+        <div className="field"><span>剪贴板共享</span>
+          <SelectMenu ariaLabel="剪贴板共享" value={draft.clipboardMode} disabled={busy}
+            options={[{ value: "off", label: "关闭（默认）" }, { value: "text", label: "仅文本 · 双向复制粘贴" }, { value: "textAndFiles", label: "文本和文件 · 双向复制粘贴" }]}
+            onChange={(value) => field("clipboardMode", value as RdpProfile["clipboardMode"])} />
+          <small className="profile-form__hint">{draft.clipboardMode === "off" ? "不共享本机和远端的剪贴板。" : draft.clipboardMode === "text" ? "只共享纯文本，不传输图片或文件。" : "双方可复制、粘贴文本和文件；不会共享整个磁盘。传输需要远端策略允许。"} 保存后，下次连接生效。</small>
+        </div>
         <div className="field"><span>桌面分辨率</span>
           <SelectMenu ariaLabel="桌面分辨率" value={resolution}
             options={[...RESOLUTION_PRESETS, { value: "custom", label: "自定义" }]}

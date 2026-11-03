@@ -38,7 +38,7 @@ FreeRDP 原生实现经过小范围、有锚点检查的适配：私有管道协
 
 日常前端与 Rust 检查不要求安装 RDP 编译依赖。需要实际打开桌面时，先构建原生引擎。
 
-macOS 构建依赖：CMake、Ninja、SDL3、OpenSSL 3/4、FreeType、json-c。Apple Silicon 默认使用 `/opt/homebrew`；Intel / 自定义前缀可设置 `DSSH_RDP_PREFIX`。脚本构建固定 SDL_ttf 3.2.2，FreeRDP 固定 3.32.2。
+macOS 构建依赖：CMake、Ninja、SDL3、OpenSSL 3/4、FreeType、json-c。Apple Silicon 默认使用 `/opt/homebrew`；Intel / 自定义前缀可设置 `DSSH_RDP_PREFIX`。脚本构建固定 SDL_ttf 3.2.2，FreeRDP 固定 3.33.0；引擎构建目录包含版本号。
 
 ```sh
 pnpm rdp:build
@@ -110,6 +110,6 @@ cargo test
 
 - 只支持直连与 NLA，手动重连；SSH 隧道、RD Gateway、自动恢复后续接入。
 - 固定远端分辨率、本地窗口缩放；动态分辨率和多显示器后续验证。
-- 剪贴板、文件 / 磁盘、音频与外设重定向默认关闭；没有 AI 桌面读取或操作入口。
+- 剪贴板共享默认关闭，可在连接设置选择仅文本或文本和文件，重新连接生效；见[剪贴板接入与验收边界](rdp-clipboard.md)。磁盘、音频与外设重定向保持关闭；没有 AI 桌面读取或操作入口。
 - RDP 暂不参与现有 YAML / 加密配置导入导出，SSH 和 S3 的既有行为保持。
 - 原生状态仅允许固定协议消息与数字错误码；面向用户的错误由 Rust 映射，不回传远端或库原始诊断文本。

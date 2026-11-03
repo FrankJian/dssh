@@ -6,16 +6,17 @@ import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractArchive } from "./rdp-archive.mjs";
 import { WINDOWS_TRIPLET, windowsCmakeArguments, validateWindowsRuntime } from "./rdp-windows.mjs";
+import { adaptClipboard } from "./rdp-clipboard.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const version = "3.32.2";
+const version = "3.33.0";
 const windows = process.platform === "win32";
-const checksum = "9ccb8357bf0188044a460de775c7ea289ca7d2a2a917eca0f0a7c4dc9c8b08ea";
+const checksum = "3b5e7733e667ad66f54e0db51d952268c9d08b2e71a4fade44c716ab29dd5657";
 const cache = join(root, ".cache", "rdp");
 const archive = process.env.DSSH_RDP_ARCHIVE || join(cache, `FreeRDP-${version}.tar.gz`);
 const source = join(cache, `FreeRDP-${version}`);
 // Isolate the corrected static CRT build from caches made with static-md.
-const build = join(cache, windows ? "build-windows-static" : "build");
+const build = join(cache, `build-${version}-${windows ? "windows-static" : "macos"}`);
 const dependencies = join(cache, "dependencies");
 const installedRuntime = join(root, "src-tauri", "rdp-runtime");
 const runtime = join(cache, "runtime-stage");
@@ -31,7 +32,7 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
-for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m"]) {
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp"]) {
   copyFileSync(join(root, "native/rdp", file), join(sdl, file));
 }
 for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
@@ -48,6 +49,7 @@ function adapt(file, anchor, replacement, expectedCount = 1) {
   writeFileSync(file, contents.replaceAll(anchor, replacement));
 }
 const main = join(sdl, "sdl_freerdp.cpp");
+adaptClipboard(source, sdl, adapt);
 adapt(main, '#include "sdl_utils.hpp"', '#include "sdl_utils.hpp"\n#include "dssh_worker.hpp"\n#include "dssh_icon.hpp"\n#include "dssh_window.hpp"\n#include "dssh_chrome.h"');
 adapt(main, "\t/* Redirect SDL log messages to wLog */", "\tdssh_set_application_icon();\n\t/* Redirect SDL log messages to wLog */");
 const window = join(sdl, "sdl_window.cpp");
@@ -68,9 +70,9 @@ if(APPLE)
   set_source_files_properties(dssh_icon.m dssh_chrome_mac.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
   target_link_libraries(\${MODULE_NAME} PRIVATE "-framework AppKit")
 elseif(WIN32)
-  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc dssh_chrome_win.cpp)
+  target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc dssh_chrome_win.cpp dssh_clipboard_win.c)
   target_include_directories(\${MODULE_NAME} PRIVATE \${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(\${MODULE_NAME} PRIVATE user32 gdi32 ole32 uuid)
+  target_link_libraries(\${MODULE_NAME} PRIVATE user32 gdi32 ole32 shell32 uuid)
 endif()
 target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})`);
 // Optional SDL preferences must not prevent a managed connection from starting.
@@ -86,6 +88,8 @@ adapt(preferences, "\tauto config = get_pref_file(systemConfigOnly);",
   '\tauto config = get_pref_file(systemConfigOnly);\n\tif (config.empty()) return { nullptr, WINPR_JSON_Delete };');
 writeFileSync(clientCmake, readFileSync(clientCmake, "utf8") + `
 # Compile the real preferences code with a resolver that simulates missing paths.
+add_executable(dssh-rdp-clipboard-test test_clipboard.cpp)
+target_link_libraries(dssh-rdp-clipboard-test PRIVATE freerdp)
 add_executable(dssh-rdp-prefs-test dssh_test_preferences.cpp ../common/sdl_prefs.cpp)
 target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
@@ -121,6 +125,20 @@ adapt(main, "\tauto status = freerdp_client_settings_parse_command_line_ex(", '\
 adapt(main, "\t/* Basic SDL initialization */", '\tdssh_status("stage display");\n\t/* Basic SDL initialization */');
 adapt(main, "\tif (freerdp_client_start(context) != 0)", '\tdssh_status("stage connect");\n\tif (freerdp_client_start(context) != 0)');
 adapt(main, "\t\twhile (!sdl->shallAbort())\n\t\t{", "\t\twhile (!sdl->shallAbort())\n\t\t{\n\t\t\tdssh_chrome_tick();");
+adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", `#if !defined(_WIN32)
+                if (windowEvent.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+                    size_t count = 0;
+                    auto mimes = SDL_GetClipboardMimeTypes(&count);
+                    SDL_ClipboardEvent clipboardEvent = {};
+                    clipboardEvent.type = SDL_EVENT_CLIPBOARD_UPDATE;
+                    clipboardEvent.timestamp = SDL_GetTicksNS();
+                    clipboardEvent.num_mime_types = static_cast<Sint32>(count);
+                    clipboardEvent.mime_types = const_cast<const char**>(mimes);
+                    std::ignore = sdl->getClipboardChannelContext().handleEvent(clipboardEvent);
+                    SDL_free(mimes);
+                }
+#endif
+\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))`);
 adapt(main, "SDL_WaitEventTimeout(nullptr, 1000)", "SDL_WaitEventTimeout(nullptr, 50)");
 adapt(main, "\t\t\t\t/* Only poll standard SDL events", "\t\t\t\tdssh_chrome_tick();\n\t\t\t\t/* Only poll standard SDL events");
 adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", `\t\t\t\t// Capture native close/quit before dialog and display handlers can consume
@@ -208,7 +226,8 @@ if (windows) {
 }
 run("cmake", args);
 if (windows) validateWindowsRuntime(readFileSync(join(build, "CMakeCache.txt"), "utf8"));
-run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "dssh-rdp-window-test", "--parallel", "4"]);
+run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "dssh-rdp-window-test", "dssh-rdp-clipboard-test", "--parallel", "4"]);
+run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-clipboard-test.exe" : "dssh-rdp-clipboard-test"), []);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-prefs-test.exe" : "dssh-rdp-prefs-test"), []);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-window-test.exe" : "dssh-rdp-window-test"), []);
 const output = join(build, "client/SDL/SDL3", windows ? "sdl3-freerdp.exe" : "sdl3-freerdp");

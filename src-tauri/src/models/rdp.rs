@@ -3,6 +3,15 @@ use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ClipboardMode {
+    #[default]
+    Off,
+    Text,
+    TextAndFiles,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RdpProfile {
@@ -17,6 +26,8 @@ pub struct RdpProfile {
     /// Explicit per-profile opt-out. Legacy profiles keep strict verification.
     #[serde(default)]
     pub skip_certificate_verification: bool,
+    #[serde(default)]
+    pub clipboard_mode: ClipboardMode,
     pub width: u16,
     pub height: u16,
     pub favorite: bool,
@@ -145,6 +156,7 @@ mod tests {
             domain: String::new(),
             certificate_fingerprint: String::new(),
             skip_certificate_verification: false,
+            clipboard_mode: ClipboardMode::Off,
             width: 1920,
             height: 1080,
             favorite: false,

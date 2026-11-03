@@ -1,6 +1,6 @@
 use crate::{
     error::{AppError, AppResult},
-    models::rdp::RdpProfile,
+    models::rdp::{ClipboardMode, RdpProfile},
 };
 use zeroize::Zeroizing;
 
@@ -37,7 +37,6 @@ pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroi
         "-f".into(),
         "+decorations".into(),
         "-auto-reconnect".into(),
-        "-clipboard".into(),
         "-drives".into(),
         "-multimon".into(),
         "-dynamic-resolution".into(),
@@ -45,6 +44,17 @@ pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroi
         "/log-level:OFF".into(),
         "/timeout:15000".into(),
     ]);
+    match profile.clipboard_mode {
+        ClipboardMode::Off => args.push("-clipboard".into()),
+        mode => {
+            args.push("+clipboard".into());
+            args.push(if mode == ClipboardMode::Text {
+                "/clipboard:direction-to:all,files-to:off".into()
+            } else {
+                "/clipboard:direction-to:all,files-to:all".into()
+            });
+        }
+    }
     if profile.skip_certificate_verification {
         args.push("/cert:ignore".into());
     } else if profile.certificate_fingerprint.is_empty() {
@@ -67,6 +77,46 @@ pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clipboard_modes_are_explicit_and_never_enable_drives() {
+        let json = serde_json::json!({"id":"rdp:test","name":"PC","host":"pc","port":3389,
+            "username":"user","domain":"","certificateFingerprint":"","width":1920,"height":1080,"favorite":false,
+            "tags":[],"description":"","hasPassword":false,"createdAt":"1","updatedAt":"1"});
+        let mut profile: RdpProfile = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(profile.clipboard_mode, ClipboardMode::Off);
+        for (mode, expected) in [
+            (ClipboardMode::Off, "-clipboard"),
+            (
+                ClipboardMode::Text,
+                "/clipboard:direction-to:all,files-to:off",
+            ),
+            (
+                ClipboardMode::TextAndFiles,
+                "/clipboard:direction-to:all,files-to:all",
+            ),
+        ] {
+            profile.clipboard_mode = mode;
+            let args = decode_arguments(&encode_arguments(&profile, "test-only").unwrap());
+            assert!(args.iter().any(|arg| arg == expected));
+            assert!(args.iter().any(|arg| arg == "-drives"));
+            assert!(
+                !args
+                    .iter()
+                    .any(|arg| arg.starts_with("/drive:") || arg == "+drives")
+            );
+            assert_eq!(
+                args.iter().any(|arg| arg == "+clipboard"),
+                mode != ClipboardMode::Off
+            );
+            let stored = serde_json::to_value(&profile).unwrap();
+            let restored: RdpProfile = serde_json::from_value(stored).unwrap();
+            assert_eq!(restored.clipboard_mode, mode);
+        }
+        let mut unknown = json;
+        unknown["clipboardMode"] = serde_json::json!("allowEverything");
+        assert!(serde_json::from_value::<RdpProfile>(unknown).is_err());
+    }
+
     fn decode_arguments(bytes: &[u8]) -> Vec<String> {
         let count = u32::from_be_bytes(bytes[..4].try_into().unwrap());
         let mut cursor = 4;
