@@ -1,3 +1,5 @@
+import { ConnectionFolderField } from "../ssh/ConnectionFolderField";
+import { normalizeConnectionFolder } from "../ssh/connectionFolders";
 import { useEffect, useState, type FormEvent } from "react";
 import type { JumpServerAuthKind, JumpServerProfile } from "../models/jumpserver";
 import { saveJumpServerProfile } from "../services/jumpserverService";
@@ -8,10 +10,11 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { useDialogFocus } from "../rdp/useDialogFocus";
 
-export function JumpServerProfileEditor({ profile, clone = false, onClose, onSaved }: {
-  profile: JumpServerProfile | null; clone?: boolean; onClose: () => void; onSaved: (profile: JumpServerProfile) => Promise<void> | void;
+export function JumpServerProfileEditor({ profile, initialFolder, clone = false, onClose, onSaved }: {
+  profile: JumpServerProfile | null; clone?: boolean; initialFolder?: string; onClose: () => void; onSaved: (profile: JumpServerProfile) => Promise<void> | void;
 }) {
   const ref = useDialogFocus();
+  const [folder, setFolder] = useState(profile?.folder ?? initialFolder ?? "");
   const [name, setName] = useState(profile ? (clone ? `${profile.name} 克隆` : profile.name) : "");
   const [coreUrl, setCoreUrl] = useState(profile?.coreUrl ?? "");
   const [authKind, setAuthKind] = useState<JumpServerAuthKind>(profile?.authKind ?? (profile ? "accessKey" : "password"));
@@ -37,7 +40,7 @@ export function JumpServerProfileEditor({ profile, clone = false, onClose, onSav
     e.preventDefault(); if (busy) return;
     setBusy(true); setError("");
     try {
-      const saved = await saveJumpServerProfile({ id: clone ? undefined : profile?.id, cloneSourceId: clone ? profile?.id : undefined, name, coreUrl, keyId: authKind === "accessKey" ? keyId : "", authKind, username: authKind === "password" ? username : "", sshProfileId: sshProfileId || null, orgId, secret: secret || undefined, rememberSecret: remember });
+      const saved = await saveJumpServerProfile({ id: clone ? undefined : profile?.id, cloneSourceId: clone ? profile?.id : undefined, name, folder: normalizeConnectionFolder(folder), coreUrl, keyId: authKind === "accessKey" ? keyId : "", authKind, username: authKind === "password" ? username : "", sshProfileId: sshProfileId || null, orgId, secret: secret || undefined, rememberSecret: remember });
       setSecret(""); await onSaved(saved);
     } catch (e) { setError(e instanceof Error ? e.message : "保存失败。"); }
     finally { setBusy(false); }
@@ -49,6 +52,7 @@ export function JumpServerProfileEditor({ profile, clone = false, onClose, onSav
       <form className="rdp-editor__form" onSubmit={submit}>
         {error && <p className="form-errors" role="alert">{error}</p>}
         <p className="profile-form__hint">使用用户名、密码与 OTP 登录资产目录，也可选择 Access Key。资产连接继续经过 KoKo。</p>
+        <ConnectionFolderField value={folder} disabled={busy} onChange={setFolder} />
         <label className="field"><span>连接名称</span><input autoFocus required maxLength={128} value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label className="field"><span>Core HTTPS 地址</span><input required type="url" spellCheck={false} placeholder="https://jumpserver.example.com" value={coreUrl} onChange={(e) => setCoreUrl(e.target.value)} /><small className="profile-form__hint">填写站点根地址。KoKo 的 SSH 端点会从连接描述读取。</small></label>
         <label className="field"><span>认证方式</span><SelectMenu ariaLabel="JumpServer 认证方式" value={authKind} disabled={busy}

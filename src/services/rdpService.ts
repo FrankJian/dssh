@@ -7,9 +7,9 @@ export async function listRdpProfiles(): Promise<RdpConnectionProfile[]> {
 }
 export function saveRdpProfile(profile: RdpProfile, password: PasswordUpdate, cloneSourceId?: string) {
   // The UI discriminator never enters the persisted DTO.
-  const { id, name, host, port, username, domain, certificateFingerprint, skipCertificateVerification, clipboardMode, width, height, favorite,
+  const { id, name, folder, host, port, username, domain, certificateFingerprint, skipCertificateVerification, clipboardMode, width, height, favorite,
     tags, description, hasPassword, createdAt, updatedAt } = profile;
-  return invokeCommand<RdpProfile>("save_rdp_profile", { request: { profile: { id, name, host, port, username, domain,
+  return invokeCommand<RdpProfile>("save_rdp_profile", { request: { profile: { id, name, folder, host, port, username, domain,
     certificateFingerprint, skipCertificateVerification, clipboardMode, width, height, favorite, tags, description, hasPassword, createdAt, updatedAt }, password, cloneSourceId } });
 }
 export const deleteRdpProfile = (id: string) => invokeCommand<void>("delete_rdp_profile", { id });

@@ -1,3 +1,6 @@
+import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
+import { renameConnectionFolder } from "../services/sshProfileService";
+import { findSftpTerminal } from "./sftpTerminal";
 import { JumpServerWorkspace } from "../jumpserver/JumpServerWorkspace";
 import { isJumpServerSource, type JumpServerProfile } from "../models/jumpserver";
 import { useJumpServerProfiles } from "../jumpserver/useJumpServerProfiles";
@@ -123,6 +126,7 @@ interface EditorState {
   mode: ProfileEditorMode;
   profile: SshProfile | null;
   initialTags?: string[];
+  initialFolder?: string;
 }
 
 interface S3EditorState {
@@ -234,8 +238,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   );
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
   const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
+  const connectionGroupSequence = useRef(0);
+  const [connectionGroupRequest, setConnectionGroupRequest] = useState<ConnectionGroupRequest | null>(null);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
-  const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[]; clone?: boolean } | null>(null);
+  const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[]; initialFolder?: string; clone?: boolean } | null>(null);
   const [rdpConnectTarget, setRdpConnectTarget] = useState<RdpProfile | null>(null);
   const [rdpDeleteTarget, setRdpDeleteTarget] = useState<RdpProfile | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
@@ -415,7 +421,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const s3Profiles = useS3Profiles();
   const jumpservers = useJumpServerProfiles(appLock.status?.locked ?? true);
   const [jumpServerOpen, setJumpServerOpen] = useState<string | null>(null);
-  const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null; clone?: boolean } | null>(null);
+  const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null; initialFolder?: string; clone?: boolean } | null>(null);
   const [jumpServerDelete, setJumpServerDelete] = useState<JumpServerProfile | null>(null);
   const {
     activeSessionId,
@@ -438,7 +444,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     startSession,
     attachSession,
     subscribeOutput,
-    writeToActiveSession,
     writeToSession,
   } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined);
   const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
@@ -482,6 +487,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     if (isJumpServerProfile(profile)) { setJumpServerOpen(profile.id); recordUse(profile.id); setActiveActivity("connections"); }
     else if (isRdpProfile(profile)) openRdp(profile); else handleConnectProfile(profile);
   }
+  function editManagedProfile(profile: ConnectionProfile) {
+    if (isJumpServerProfile(profile)) setJumpServerEditor({ profile });
+    else if (isRdpProfile(profile)) setRdpEditor({ profile });
+    else openEditProfile(profile);
+  }
+
   function reconnectRdp(profileId: string) {
     const profile = rdp.profiles.find((p) => p.id === profileId);
     if (profile) openRdp(profile); else toast("RDP 配置已删除，请重新创建。", "error");
@@ -662,7 +673,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // alive while the user temporarily switches to a terminal or another tab.
   const sftpTabSurfaces = sftpTabs
     .map((tab) => {
-      const isActive = isSftpActive && tab.id === activeSftpId;
+      const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !appLock.status?.locked;
+      const terminal = findSftpTerminal(sessions, tab.profileId, activeSessionId);
       return (
         <div aria-hidden={!isActive} className="sftp-tab" hidden={!isActive} key={tab.id}>
           <FileBrowser
@@ -671,12 +683,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             onTabPathsChange={updateSftpTabPaths}
             profileId={tab.profileId}
             tabId={tab.id}
-            onOpenInTerminal={(dir) => {
+            onOpenInTerminal={terminal ? (dir) => {
               const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
-              // Surface the terminal so the cd is visible, then send it.
-              focusTerminal();
-              void writeToActiveSession(`cd ${quoted}\r`);
-            }}
+              handleFocusTerminal(terminal.id);
+              void writeToSession(terminal.id, `cd ${quoted}\r`);
+            } : undefined}
           />
         </div>
       );
@@ -1191,6 +1202,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   function handleOpenSftpForProfile(profile: SshProfile) {
+    setActiveActivity("sessions");
     openSftpTab(profile.id, profile.name);
   }
 
@@ -1777,7 +1789,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       }} />
     ) : (
       <SessionManager
-        onCreateJumpServer={() => setJumpServerEditor({ profile: null })}
+        onCreateJumpServer={(initialFolder) => setJumpServerEditor({ profile: null, initialFolder })}
+        groupRequest={connectionGroupRequest}
+        onGroupRequestHandled={(requestId) => setConnectionGroupRequest((current) => current?.requestId === requestId ? null : current)}
         profiles={managedProfiles}
         recentIds={recentIds}
         recentLimit={recentConnectionsLimit}
@@ -1785,9 +1799,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         isLoading={isLoading || jumpservers.loading}
         errorMessage={errorMessage ?? rdp.error ?? jumpservers.error}
         onConnect={connectManagedProfile}
-        onCreate={(initialTags) => setEditorState({ mode: "create", profile: null, initialTags })}
-        onCreateRdp={(initialTags) => setRdpEditor({ profile: null, initialTags })}
-        onEdit={(profile) => { if (isJumpServerProfile(profile)) setJumpServerEditor({ profile }); else if (isRdpProfile(profile)) setRdpEditor({ profile }); else openEditProfile(profile); }}
+        onOpenSftp={handleOpenSftpForProfile}
+        onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder })}
+        onCreateRdp={(initialTags, initialFolder) => setRdpEditor({ profile: null, initialTags, initialFolder })}
+        onEdit={editManagedProfile}
         onClone={(profile) => {
           if (isJumpServerProfile(profile)) setJumpServerEditor({ profile, clone: true });
           else if (isRdpProfile(profile)) setRdpEditor({ profile, clone: true });
@@ -1795,6 +1810,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         }}
         onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
         onToggleFavorite={(profile) => { if (isJumpServerProfile(profile)) return; if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
+        onRenameFolder={async (oldPath, newName) => {
+          await renameConnectionFolder(oldPath, newName);
+          await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload()]);
+        }}
         onRenameTag={async (oldTag, newTag) => {
           await renameTag(oldTag, newTag);
           await Promise.all(rdp.profiles.filter((p) => p.tags.includes(oldTag)).map((p) => saveRdpProfile({ ...p, tags: p.tags.map((t) => t === oldTag ? newTag : t) }, { action: "keep" })));
@@ -1899,16 +1918,20 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     void openBrowser().catch((error: Error) => toast(error.message, "error"));
   }
 
+  function openConnectionGroup(scope: ConnectionGroupRequest["scope"]) {
+    setJumpServerOpen(null);
+    setActiveActivity("connections");
+    setConnectionGroupRequest({ scope, requestId: ++connectionGroupSequence.current });
+  }
+
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
       { id: "act:new-rdp", label: "新建 RDP 远程桌面", hint: "连接", icon: "monitor", keywords: "windows remote desktop 远程桌面", run: () => setRdpEditor({ profile: null }) },
-      ...rdp.profiles.map((profile): PaletteItem => ({ id: `rdp:${profile.id}`, label: `远程桌面 · ${profile.name}`, hint: profile.host, icon: "monitor", keywords: `rdp windows ${profile.username} ${profile.tags.join(" ")}`, run: () => openRdp(profile) })),
       ...rdp.sessions.filter((s) => s.status === "connected").map((session): PaletteItem => ({ id: `rdp-focus:${session.id}`, label: `打开桌面窗口 · ${session.title}`, hint: "活动会话", icon: "monitor", keywords: "rdp focus desktop", run: () => rdpAction(focusRdpSession(session.id)) })),
       { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
       { id: "act:jumpserver", label: "新建 JumpServer 连接", hint: "连接", icon: "stackedHexagon", keywords: "jumpserver 堡垒机 资产", run: () => setJumpServerEditor({ profile: null }) },
-      ...jumpservers.profiles.map((profile): PaletteItem => ({ id: `jumpserver:${profile.id}`, label: `打开资产 · ${profile.name}`, hint: "JumpServer", icon: "stackedHexagon", keywords: `jumpserver ${profile.coreUrl}`, run: () => connectManagedProfile(jumpServerConnectionProfile(profile)) })),
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
@@ -1927,6 +1950,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       { id: "act:theme-light", label: "主题：浅色", hint: "外观", icon: "sun", keywords: "theme light", run: () => setThemeMode("light") },
       { id: "act:theme-system", label: "主题：跟随系统", hint: "外观", icon: "system", keywords: "theme system", run: () => setThemeMode("system") },
     ];
+    items.push(...connectionActionPaletteItems(managedProfiles, { onOpen: connectManagedProfile, onEdit: editManagedProfile }));
+    items.push(...connectionGroupPaletteItems(managedProfiles, openConnectionGroup));
     for (const category of SETTINGS_CATEGORIES) {
       if (category.id === "s3" && !navigationIcons.includes("s3")) continue;
       if (category.id === "ai" && !navigationIcons.includes("assistant")) continue;
@@ -2137,35 +2162,19 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
     for (const profile of profiles) {
       items.push({
-        id: `conn:${profile.id}`,
-        label: `连接 SSH：${profile.name}`,
-        hint: `${profile.username}@${profile.host}:${profile.port}`,
-        icon: "ssh",
-        keywords: `${profile.host} ${profile.tags.join(" ")} connect 连接`,
-        run: () => void handleConnectProfile(profile),
-      });
-      items.push({
         id: `conn:sftp:${profile.id}`,
         label: `打开 SFTP：${profile.name}`,
         hint: "SSH 配置",
         icon: "folder",
-        keywords: `${profile.host} ${profile.tags.join(" ")} sftp files`,
-        run: () => { setActiveActivity("sessions"); handleOpenSftpForProfile(profile); },
-      });
-      items.push({
-        id: `conn:edit:${profile.id}`,
-        label: `编辑 SSH 配置：${profile.name}`,
-        hint: "SSH 配置",
-        icon: "edit",
-        keywords: `${profile.host} ${profile.tags.join(" ")} edit`,
-        run: () => openEditProfile(profile),
+        keywords: `${connectionSearchKeywords(profile)} sftp files`,
+        run: () => handleOpenSftpForProfile(profile),
       });
       items.push({
         id: `conn:favorite:${profile.id}`,
         label: `${profile.favorite ? "取消收藏" : "收藏"} SSH：${profile.name}`,
         hint: "SSH 配置",
         icon: "star",
-        keywords: `${profile.host} favorite 收藏`,
+        keywords: `${connectionSearchKeywords(profile)} favorite 收藏`,
         run: () => void handleToggleFavorite(profile.id),
       });
     }
@@ -2175,7 +2184,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         label: `打开 S3：${profile.name}`,
         hint: `${profile.host}:${profile.port}`,
         icon: "bucket",
-        keywords: `${profile.host} ${profile.tags.join(" ")} object storage`,
+        keywords: `${connectionSearchKeywords(profile)} object storage`,
         run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); openS3Profile(profile); },
       });
       items.push({
@@ -2183,7 +2192,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         label: `编辑 S3 配置：${profile.name}`,
         hint: "S3 配置",
         icon: "edit",
-        keywords: `${profile.host} ${profile.tags.join(" ")} edit`,
+        keywords: `${connectionSearchKeywords(profile)} edit`,
         run: () => setS3EditorState({ mode: "edit", profile }),
       });
       items.push({
@@ -2191,7 +2200,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         label: `${profile.favorite ? "取消收藏" : "收藏"} S3：${profile.name}`,
         hint: "S3 配置",
         icon: "star",
-        keywords: `${profile.host} favorite 收藏`,
+        keywords: `${connectionSearchKeywords(profile)} favorite 收藏`,
         run: () => void s3Profiles.toggleFavorite(profile.id),
       });
     }
@@ -2347,16 +2356,17 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         <ProfileEditor
           allTags={allTags}
           initialTags={editorState.initialTags}
+          initialFolder={editorState.initialFolder}
           mode={editorState.mode}
           onClose={closeEditor}
           onSubmit={handleSubmitProfile}
           profile={editorState.profile}
-          onCreateJumpServer={() => { setJumpServerEditor({ profile: null }); closeEditor(); }}
-          onCreateRdp={() => { setRdpEditor({ profile: null, initialTags: editorState.initialTags }); closeEditor(); }}
+          onCreateJumpServer={(folder) => { setJumpServerEditor({ profile: null, initialFolder: folder }); closeEditor(); }}
+          onCreateRdp={(folder) => { setRdpEditor({ profile: null, initialTags: editorState.initialTags, initialFolder: folder }); closeEditor(); }}
         />
       ) : null}
       {jumpServerEditor ? <JumpServerProfileEditor profile={jumpServerEditor.profile}
-        clone={jumpServerEditor.clone}
+        clone={jumpServerEditor.clone} initialFolder={jumpServerEditor.initialFolder}
         onClose={() => setJumpServerEditor(null)} onSaved={async (profile) => {
           await jumpservers.reload(); setJumpServerEditor(null); setJumpServerOpen(profile.id); setActiveActivity("connections");
         }} /> : null}
@@ -2367,7 +2377,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           setJumpServerDelete(null);
         }} /> : null}
       {rdpEditor ? <RdpProfileEditor profile={rdpEditor.profile} initialTags={rdpEditor.initialTags}
-        clone={rdpEditor.clone}
+        clone={rdpEditor.clone} initialFolder={rdpEditor.initialFolder}
         allTags={[...new Set([...allTags, ...rdp.profiles.flatMap((p) => p.tags)])]} engine={rdp.engine}
         onClose={() => setRdpEditor(null)} onSaved={rdp.reload} /> : null}
       {rdpConnectTarget ? <RdpConnectDialog profile={rdpConnectTarget} onClose={() => setRdpConnectTarget(null)} onConnect={(password) => connectRdp(rdpConnectTarget, password)} /> : null}

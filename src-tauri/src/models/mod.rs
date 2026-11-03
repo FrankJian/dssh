@@ -13,3 +13,5 @@ pub mod browser;
 pub mod rdp;
 
 pub mod jumpserver;
+
+pub mod connection_folder;

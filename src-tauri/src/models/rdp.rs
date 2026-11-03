@@ -17,6 +17,8 @@ pub enum ClipboardMode {
 pub struct RdpProfile {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -56,6 +58,7 @@ pub struct SaveRdpProfileRequest {
 
 impl RdpProfile {
     pub fn normalize_and_validate(&mut self) -> AppResult<()> {
+        self.folder = super::connection_folder::normalize_folder(&self.folder)?;
         self.name = self.name.trim().to_owned();
         self.host = self.host.trim().to_owned();
         self.username = self.username.trim().to_owned();
@@ -149,6 +152,7 @@ mod tests {
     use super::*;
     fn profile() -> RdpProfile {
         RdpProfile {
+            folder: String::new(),
             id: String::new(),
             name: "PC".into(),
             host: "pc.example".into(),

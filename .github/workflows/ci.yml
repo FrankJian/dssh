@@ -61,6 +61,9 @@ jobs:
       - name: Type-check frontend
         run: pnpm exec tsc --noEmit
 
+      - name: Test connection library
+        run: pnpm test:connection-library
+
       - name: Test command history
         timeout-minutes: 2
         run: node --experimental-strip-types --test src/terminal/commandCompletion.test.mjs src/terminal/completionPosition.test.mjs src/settings/terminalInsets.test.mjs

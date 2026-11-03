@@ -19,3 +19,5 @@ impl Default for StorageConfig {
 }
 
 pub mod jumpserver_repository;
+
+mod connection_folders;

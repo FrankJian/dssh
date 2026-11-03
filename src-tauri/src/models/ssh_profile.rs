@@ -56,6 +56,8 @@ pub struct SshProxy {
 pub struct SshProfile {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -75,6 +77,8 @@ pub struct SshProfile {
 #[serde(rename_all = "camelCase")]
 pub struct CreateSshProfileRequest {
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -93,6 +97,8 @@ pub struct CreateSshProfileRequest {
 pub struct UpdateSshProfileRequest {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub host: String,
     pub port: u16,
     pub username: String,

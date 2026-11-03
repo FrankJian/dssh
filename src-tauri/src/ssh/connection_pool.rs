@@ -966,6 +966,7 @@ mod tests {
         SshProfile {
             id: "profile-1".to_string(),
             name: "example".to_string(),
+            folder: String::new(),
             host: "example.test".to_string(),
             port: 22,
             username: "root".to_string(),

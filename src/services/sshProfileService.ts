@@ -1,8 +1,10 @@
+import { emit } from "@tauri-apps/api/event";
 import type { AuthMethod, SshProfile, SshProfileIcon, SshProxy } from "../models";
 import { invokeCommand } from "./tauri";
 
 export interface CreateSshProfileRequest {
   name: string;
+  folder?: string;
   host: string;
   port: number;
   username: string;
@@ -48,4 +50,9 @@ export function setSshProfileFavorite(id: string, favorite: boolean) {
 
 export function readKeyFile(path: string) {
   return invokeCommand<string>("read_key_file", { path });
+}
+
+export async function renameConnectionFolder(oldPath: string, newName: string) {
+  await invokeCommand<void>("rename_connection_folder", { oldPath, newName });
+  await emit("jumpserver://profiles-changed").catch(() => undefined);
 }

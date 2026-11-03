@@ -4,6 +4,7 @@ export type ProfileEditorMode = "create" | "edit";
 
 export interface ProfileDraft {
   name: string;
+  folder: string;
   host: string;
   port: string;
   username: string;
@@ -29,6 +30,7 @@ export interface ProfileDraft {
 export function createEmptyProfileDraft(): ProfileDraft {
   return {
     name: "",
+    folder: "",
     host: "",
     port: "22",
     username: "root",
@@ -53,6 +55,7 @@ export function createEmptyProfileDraft(): ProfileDraft {
 export function profileToDraft(profile: SshProfile): ProfileDraft {
   return {
     name: profile.name,
+    folder: profile.folder ?? "",
     host: profile.host,
     port: String(profile.port),
     username: profile.username,

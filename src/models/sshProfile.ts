@@ -34,6 +34,7 @@ export interface SshProxy {
 export interface SshProfile {
   id: string;
   name: string;
+  folder?: string;
   host: string;
   port: number;
   username: string;

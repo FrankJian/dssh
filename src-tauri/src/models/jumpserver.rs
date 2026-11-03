@@ -14,6 +14,8 @@ pub enum JumpServerAuthKind {
 pub struct JumpServerProfile {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub core_url: String,
     #[serde(default)]
     pub key_id: String,
@@ -33,6 +35,8 @@ pub struct SaveJumpServerProfile {
     pub id: Option<String>,
     pub clone_source_id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub folder: String,
     pub core_url: String,
     #[serde(default)]
     pub key_id: String,

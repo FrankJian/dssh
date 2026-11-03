@@ -1,3 +1,4 @@
+import { ConnectionFolderField } from "./ConnectionFolderField";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState, type FormEvent } from "react";
 import type { SshProfile } from "../models";
@@ -26,10 +27,11 @@ interface ProfileEditorProps {
   profile: SshProfile | null;
   allTags: string[];
   initialTags?: string[];
+  initialFolder?: string;
   onClose: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
-  onCreateRdp?: () => void;
-  onCreateJumpServer?: () => void;
+  onCreateRdp?: (folder: string) => void;
+  onCreateJumpServer?: (folder: string) => void;
 }
 
 type ConnectionRoute = "direct" | "socks5" | "http";
@@ -42,18 +44,18 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
-    profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] },
+    profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])], folder: initialFolder ?? "" },
   );
   const [connectionType, setConnectionType] = useState<ConnectionType>("ssh");
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])] });
+    setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])], folder: initialFolder ?? "" });
     setConnectionType("ssh");
     setErrors([]);
-  }, [initialTags, mode, profile]);
+  }, [initialTags, initialFolder, mode, profile]);
 
   function updateDraft<Field extends keyof ProfileDraft>(field: Field, value: ProfileDraft[Field]) {
     setDraft((currentDraft) => ({
@@ -144,7 +146,7 @@ export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, p
                 <span>连接类型</span>
                 <SelectMenu
                   ariaLabel="连接类型"
-                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(); else if (value === "jumpserver") onCreateJumpServer?.(); else setConnectionType(value as ConnectionType); }}
+                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(draft.folder); else if (value === "jumpserver") onCreateJumpServer?.(draft.folder); else setConnectionType(value as ConnectionType); }}
                   options={CONNECTION_TYPE_OPTIONS.map((option) => ({
                     disabled: !option.available,
                     label: option.available ? option.label : `${option.label}（即将支持）`,
@@ -213,6 +215,7 @@ export function ProfileEditor({ allTags, initialTags, mode, onClose, onSubmit, p
           </aside>
 
           <div className="profile-form__main">
+            <ConnectionFolderField value={draft.folder} onChange={(value) => updateDraft("folder", value)} />
             {mode === "create" && profile ? <p className="profile-form__hint">正在克隆“{profile.name}”。留空沿用原配置的密码、密钥口令和代理密码；填写新值可替换。保存后创建独立连接。</p> : null}
             <div className="profile-form__connection-grid">
               <label className="field">

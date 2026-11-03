@@ -578,7 +578,9 @@ mod clone_tests {
 
     #[test]
     fn clone_creates_a_new_record_and_rejects_overwriting_the_source() {
-        let directory = std::env::temp_dir().join(format!("dssh-rdp-clone-{}", id()));
+        // Connection IDs contain ':', which is not valid in Windows directory names.
+        let directory =
+            std::env::temp_dir().join(format!("dssh-rdp-clone-{:032x}", rand::random::<u128>()));
         let repository = ProfileRepository::initialize(&directory, "test.db").unwrap();
         let manager = RdpManager::default();
         let source = manager.save(&repository, serde_json::from_value(serde_json::json!({

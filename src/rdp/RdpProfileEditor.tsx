@@ -1,3 +1,5 @@
+import { ConnectionFolderField } from "../ssh/ConnectionFolderField";
+import { normalizeConnectionFolder } from "../ssh/connectionFolders";
 import { useState, type FormEvent } from "react";
 import { emptyRdpProfile, type PasswordUpdate, type RdpEngineStatus, type RdpProfile } from "../models/rdp";
 import { saveRdpProfile } from "../services/rdpService";
@@ -15,10 +17,10 @@ const RESOLUTION_PRESETS = [
   { value: "4k", label: "4K / UHD · 3840 × 2160", width: 3840, height: 2160 },
 ];
 
-interface Props { profile: RdpProfile | null; clone?: boolean; initialTags?: string[]; allTags: string[]; engine: RdpEngineStatus | null; onClose: () => void; onSaved: () => Promise<void> }
-export function RdpProfileEditor({ profile, clone = false, initialTags, allTags, engine, onClose, onSaved }: Props) {
+interface Props { profile: RdpProfile | null; clone?: boolean; initialTags?: string[]; initialFolder?: string; allTags: string[]; engine: RdpEngineStatus | null; onClose: () => void; onSaved: () => Promise<void> }
+export function RdpProfileEditor({ profile, clone = false, initialTags, initialFolder, allTags, engine, onClose, onSaved }: Props) {
   const dialogRef = useDialogFocus();
-  const [draft, setDraft] = useState<RdpProfile>(() => profile ? { ...profile, id: clone ? "" : profile.id, name: clone ? `${profile.name} 克隆` : profile.name, tags: [...profile.tags] } : { ...emptyRdpProfile(), tags: initialTags ?? [] });
+  const [draft, setDraft] = useState<RdpProfile>(() => profile ? { ...profile, id: clone ? "" : profile.id, name: clone ? `${profile.name} 克隆` : profile.name, tags: [...profile.tags] } : { ...emptyRdpProfile(), tags: initialTags ?? [], folder: initialFolder ?? "" });
   const [resolution, setResolution] = useState(() =>
     RESOLUTION_PRESETS.find((preset) => preset.width === draft.width && preset.height === draft.height)?.value ?? "custom");
   const [password, setPassword] = useState("");
@@ -30,7 +32,7 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, allTags,
     event.preventDefault(); if (busy) return;
     setBusy(true); setError("");
     try {
-      await saveRdpProfile(draft, passwordAction === "replace" ? { action: "replace", value: password } : { action: passwordAction }, clone ? profile?.id : undefined);
+      await saveRdpProfile({ ...draft, folder: normalizeConnectionFolder(draft.folder ?? "") }, passwordAction === "replace" ? { action: "replace", value: password } : { action: passwordAction }, clone ? profile?.id : undefined);
       setPassword(""); await onSaved(); onClose();
     } catch (e) { setError(e instanceof Error ? e.message : "保存失败。"); }
     finally { setBusy(false); }
@@ -44,6 +46,7 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, allTags,
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
         <p className="profile-form__hint">独立原生桌面窗口 · Windows Pro / Enterprise / Server · NLA。仅直连，磁盘与设备重定向关闭；暂不参与 YAML 导入导出。</p>
         {engine && !engine.available ? <p className="profile-form__hint" role="status">{engine.message}</p> : null}
+        <ConnectionFolderField value={draft.folder ?? ""} disabled={busy} onChange={(value) => field("folder", value)} />
         <label className="field"><span>名称</span><input autoFocus required maxLength={160} value={draft.name} onChange={(e) => field("name", e.target.value)} /></label>
         <div className="rdp-editor__row">
           <label className="field"><span>Windows 主机</span><input required spellCheck={false} placeholder="192.168.1.10" value={draft.host} onChange={(e) => field("host", e.target.value)} /></label>

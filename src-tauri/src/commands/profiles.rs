@@ -67,3 +67,19 @@ pub fn read_key_file(path: String) -> AppResult<String> {
     std::fs::read_to_string(&path)
         .map_err(|error| AppError::new("key_read_error", error.to_string()))
 }
+
+#[tauri::command]
+pub fn rename_connection_folder(
+    state: State<'_, AppState>,
+    webview: tauri::Webview,
+    old_path: String,
+    new_name: String,
+) -> AppResult<()> {
+    crate::browser::trusted(&webview)?;
+    if state.app_lock.status()?.locked {
+        return Err(AppError::new("app_locked", "请先解锁 Duo SSH。"));
+    }
+    state
+        .profiles
+        .rename_connection_folder(&old_path, &new_name)
+}

@@ -6,9 +6,10 @@ test('clone draft copies connection settings, appends the suffix and keeps tags 
   const source = { name: 'Production', host: 'example.test', port: 2222, username: 'deploy',
     authMethod: { type: 'privateKey', keyName: 'deployment.key' },
     proxy: { proxyType: 'socks5', host: 'proxy.example.test', port: 1081, username: 'proxy-user' },
-    description: 'API host', favorite: true, icon: 'ubuntu', tags: ['production', 'api'] };
+    description: 'API host', folder: 'production/api', favorite: true, icon: 'ubuntu', tags: ['production', 'api'] };
   const draft = profileToCloneDraft(source);
   assert.equal(draft.name, 'Production 克隆');
+  assert.equal(draft.folder, 'production/api');
   assert.equal(draft.host, source.host);
   assert.equal(draft.port, '2222');
   assert.equal(draft.username, source.username);

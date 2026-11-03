@@ -1,3 +1,4 @@
+import { filterPaletteItems } from "./paletteSearch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../ui/Icon";
 import type { IconName } from "../ui/Icon";
@@ -10,29 +11,14 @@ export interface PaletteItem {
   icon?: IconName;
   /** Extra searchable text not shown in the label. */
   keywords?: string;
+  /** Lower values keep secondary navigation behind matching actions. */
+  searchPriority?: number;
   run: () => void;
 }
 
 interface CommandPaletteProps {
   items: PaletteItem[];
   onClose: () => void;
-}
-
-/** Case-insensitive subsequence match with a light score (earlier + tighter = better). */
-function fuzzyScore(query: string, text: string): number | null {
-  if (!query) return 0;
-  const haystack = text.toLowerCase();
-  let qi = 0;
-  let score = 0;
-  let lastIndex = -1;
-  for (let i = 0; i < haystack.length && qi < query.length; i += 1) {
-    if (haystack[i] === query[qi]) {
-      score += lastIndex === i - 1 ? 2 : 1; // reward adjacency
-      lastIndex = i;
-      qi += 1;
-    }
-  }
-  return qi === query.length ? score : null;
 }
 
 export function CommandPalette({ items, onClose }: CommandPaletteProps) {
@@ -45,20 +31,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
     inputRef.current?.focus();
   }, []);
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) {
-      return items;
-    }
-    return items
-      .map((item) => ({
-        item,
-        score: fuzzyScore(q, `${item.label} ${item.hint ?? ""} ${item.keywords ?? ""}`),
-      }))
-      .filter((entry): entry is { item: PaletteItem; score: number } => entry.score !== null)
-      .sort((a, b) => b.score - a.score)
-      .map((entry) => entry.item);
-  }, [items, query]);
+  const results = useMemo(() => filterPaletteItems(items, query), [items, query]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -81,7 +54,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
       onClose();
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, results.length - 1));
+      setActiveIndex((index) => Math.max(0, Math.min(index + 1, results.length - 1)));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((index) => Math.max(index - 1, 0));
@@ -104,7 +77,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
           <input
             ref={inputRef}
             className="palette__input"
-            placeholder="搜索连接、标签页或动作…"
+            placeholder="搜索连接、目录、标签、标签页或动作…"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);

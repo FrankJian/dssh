@@ -77,6 +77,7 @@ mod tests {
         let profile = JumpServerProfile {
             id: "jumpserver:test".into(),
             name: "Example".into(),
+            folder: "gateways/production".into(),
             core_url: "https://example.invalid/".into(),
             key_id: "test-key".into(),
             auth_kind: crate::models::jumpserver::JumpServerAuthKind::AccessKey,
@@ -91,6 +92,7 @@ mod tests {
         assert!(repo.list_profiles().unwrap().is_empty());
         let listed = repo.list_jumpserver_profiles().unwrap();
         assert!(listed[0].has_credential);
+        assert_eq!(listed[0].folder, "gateways/production");
         let public = serde_json::to_string(&listed).unwrap();
         assert!(!public.contains("opaque-keychain-reference"));
         assert_eq!(

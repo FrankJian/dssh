@@ -7,6 +7,7 @@ interface ConnectionCardProps {
   profile: ConnectionProfile;
   variant: "grid" | "list";
   onConnect: () => void;
+  onOpenSftp?: () => void;
   onEdit: () => void;
   onClone: () => void;
   onDelete: () => void;
@@ -21,6 +22,7 @@ export function ConnectionCard({
   profile,
   variant,
   onConnect,
+  onOpenSftp,
   onEdit,
   onClone,
   onDelete,
@@ -41,6 +43,7 @@ export function ConnectionCard({
           <span className="conn-card__host" title={address}>
             {address}
           </span>
+          {profile.folder ? <span className="conn-card__folder" title={profile.folder}><Icon name="folder" width="12" height="12" /><span>{profile.folder}</span></span> : null}
         </div>
         {!jumpserver && <IconButton
           active={profile.favorite}
@@ -72,6 +75,9 @@ export function ConnectionCard({
           <Icon name="play" height="14" width="14" />
           <span>{jumpserver ? "打开资产" : "连接"}</span>
         </button>
+        {onOpenSftp ? <IconButton label="打开 SFTP" onClick={onOpenSftp}>
+          <Icon name="folder" height="16" width="16" />
+        </IconButton> : null}
         <IconButton label="编辑" onClick={onEdit}>
           <Icon name="edit" height="16" width="16" />
         </IconButton>

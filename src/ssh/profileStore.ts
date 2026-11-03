@@ -1,3 +1,4 @@
+import { normalizeConnectionFolder } from "./connectionFolders";
 import type { AuthMethod, SshProfile } from "../models";
 import type {
   CreateSshProfileRequest,
@@ -68,6 +69,7 @@ function normalizeTags(tags: string[]): string[] {
 export function createProfileRequestFromDraft(draft: ProfileDraft): CreateSshProfileRequest {
   return {
     name: draft.name.trim(),
+    folder: normalizeConnectionFolder(draft.folder),
     host: draft.host.trim(),
     port: Number(draft.port),
     username: draft.username.trim(),
@@ -87,6 +89,7 @@ export function updateProfileRequestFromDraft(
   return {
     id: profile.id,
     name: draft.name.trim(),
+    folder: normalizeConnectionFolder(draft.folder),
     host: draft.host.trim(),
     port: Number(draft.port),
     username: draft.username.trim(),
@@ -101,6 +104,7 @@ export function updateProfileRequestFromDraft(
 
 export function validateProfileDraft(draft: ProfileDraft) {
   const errors: string[] = [];
+  try { normalizeConnectionFolder(draft.folder); } catch (error) { errors.push((error as Error).message); }
   const port = Number(draft.port);
 
   if (!draft.name.trim()) {

@@ -1,0 +1,2 @@
+-- SSH folder is added idempotently by ensure_columns for existing databases.
+-- RDP and JumpServer persist folder in profile_json; missing fields default to root.

@@ -63,6 +63,8 @@ struct ProfileEntry {
     icon: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    folder: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -171,6 +173,7 @@ fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
         favorite: profile.favorite,
         icon: profile.icon.clone(),
         tags: profile.tags.clone(),
+        folder: profile.folder.clone(),
     }
 }
 
@@ -251,6 +254,7 @@ fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
         favorite: entry.favorite,
         icon: entry.icon,
         tags: entry.tags,
+        folder: entry.folder,
     }
 }
 
@@ -452,6 +456,25 @@ pub fn read_image_data_url(path: String) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ssh_folder_import_export_and_legacy_defaults() {
+        let entry: ProfileEntry = serde_yaml::from_str("name: Test\nhost: example.test\nusername: deploy\nauth:\n  type: password\nfolder: a/b/c\n").unwrap();
+        let request = request_from_entry(entry);
+        assert_eq!(request.folder, "a/b/c");
+        let mut legacy = serde_json::json!({"name":"Test", "host":"example.test", "username":"deploy", "auth":{"type":"password"}});
+        assert_eq!(
+            serde_json::from_value::<ProfileEntry>(legacy.clone())
+                .unwrap()
+                .folder,
+            ""
+        );
+        legacy["folder"] = serde_json::json!("a/b/c");
+        let encoded =
+            serde_yaml::to_string(&serde_json::from_value::<ProfileEntry>(legacy).unwrap())
+                .unwrap();
+        assert!(encoded.contains("folder: a/b/c"));
+    }
+
     use super::*;
 
     #[test]

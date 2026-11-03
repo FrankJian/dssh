@@ -83,6 +83,7 @@ impl JumpServerManager {
         repo: &ProfileRepository,
         mut request: SaveJumpServerProfile,
     ) -> AppResult<JumpServerProfile> {
+        let folder = crate::models::connection_folder::normalize_folder(&request.folder)?;
         let core_url = api::core_url(&request.core_url)?.to_string();
         if let Some(source_id) = &request.clone_source_id {
             if request.id.is_some() {
@@ -196,6 +197,7 @@ impl JumpServerManager {
         let profile = JumpServerProfile {
             id: id.clone(),
             name: request.name.trim().into(),
+            folder,
             core_url,
             key_id: if request.auth_kind == JumpServerAuthKind::AccessKey {
                 request.key_id
@@ -625,6 +627,7 @@ impl JumpServerManager {
 }
 fn source_profile(id: &str, target: &JumpServerTarget, platform: &str) -> SshProfile {
     SshProfile {
+        folder: String::new(),
         id: id.into(),
         name: format!(
             "{platform} / {} · {}",
@@ -695,6 +698,7 @@ mod tests {
         let profile = JumpServerProfile {
             id: "platform".into(),
             name: "test".into(),
+            folder: String::new(),
             core_url: "https://example.invalid/".into(),
             key_id: "test".into(),
             auth_kind: JumpServerAuthKind::AccessKey,

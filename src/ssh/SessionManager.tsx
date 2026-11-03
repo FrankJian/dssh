@@ -1,3 +1,8 @@
+import type { ConnectionGroupRequest } from "../app/connectionPalette";
+import { RenameFolderDialog } from "./RenameFolderDialog";
+import { ConnectionFolderTree } from "./ConnectionFolderTree";
+import type { SshProfile } from "../models";
+import { buildConnectionFolders, isInConnectionFolder, renamedConnectionFolderPath } from "./connectionFolders";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../ui/Icon";
@@ -8,12 +13,14 @@ import {
   CONNECTION_TYPE_OPTIONS,
   connectionTypeForProfile,
   connectionTypeLabel,
+  isRdpProfile,
+  isJumpServerProfile,
   type ConnectionType,
   type ConnectionProfile,
 } from "./connectionTypes";
 
 import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
-type Scope = "all" | "favorites" | "recent" | "untagged" | `tag:${string}` | `type:${ConnectionType}`;
+type Scope = "all" | "favorites" | "recent" | "untagged" | "unfiled" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
 type SortKey = "recent" | "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
@@ -49,6 +56,8 @@ function loadTypeFilter(): ConnectionTypeFilter {
 }
 
 interface SessionManagerProps {
+  groupRequest?: ConnectionGroupRequest | null;
+  onGroupRequestHandled?: (requestId: number) => void;
   profiles: ConnectionProfile[];
   recentIds: string[];
   recentLimit: number;
@@ -56,17 +65,21 @@ interface SessionManagerProps {
   isLoading: boolean;
   errorMessage: string | null;
   onConnect: (profile: ConnectionProfile) => void;
-  onCreate: (initialTags?: string[]) => void;
-  onCreateRdp: (initialTags?: string[]) => void;
-  onCreateJumpServer: () => void;
+  onOpenSftp: (profile: SshProfile) => void;
+  onCreate: (initialTags?: string[], initialFolder?: string) => void;
+  onCreateRdp: (initialTags?: string[], initialFolder?: string) => void;
+  onCreateJumpServer: (initialFolder?: string) => void;
   onEdit: (profile: ConnectionProfile) => void;
   onClone: (profile: ConnectionProfile) => void;
   onDelete: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
+  onRenameFolder: (oldPath: string, newName: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
 }
 
 export function SessionManager({
+  groupRequest,
+  onGroupRequestHandled,
   profiles,
   recentIds,
   recentLimit,
@@ -74,6 +87,7 @@ export function SessionManager({
   isLoading,
   errorMessage,
   onConnect,
+  onOpenSftp,
   onCreate,
   onCreateRdp,
   onCreateJumpServer,
@@ -82,8 +96,10 @@ export function SessionManager({
   onDelete,
   onToggleFavorite,
   onRenameTag,
+  onRenameFolder,
 }: SessionManagerProps) {
-  const [tagMenu, setTagMenu] = useState<{ tag: string; x: number; y: number } | null>(null);
+  const [tagMenu, setTagMenu] = useState<{ tag: string; kind?: "folder"; x: number; y: number } | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [renamingTag, setRenamingTag] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const tagTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -124,6 +140,15 @@ export function SessionManager({
   const [sort, setSort] = useState<SortKey>(() => loadSort());
   const [typeFilter, setTypeFilter] = useState<ConnectionTypeFilter>(() => loadTypeFilter());
 
+  useEffect(() => {
+    if (!groupRequest) return;
+    setScope(groupRequest.scope);
+    setQuery("");
+    setTypeFilter("all");
+    localStorage.setItem(TYPE_FILTER_KEY, "all");
+    onGroupRequestHandled?.(groupRequest.requestId);
+  }, [groupRequest, onGroupRequestHandled]);
+
   function changeView(next: ViewMode) {
     setView(next);
     localStorage.setItem(VIEW_KEY, next);
@@ -145,6 +170,8 @@ export function SessionManager({
 
   const tags = useMemo(() => Array.from(new Set(profiles.flatMap((profile) => profile.tags)))
     .sort((a, b) => a.localeCompare(b)), [profiles]);
+  const folders = useMemo(() => buildConnectionFolders(profiles), [profiles]);
+  const unfiledCount = profiles.filter((profile) => !profile.folder).length;
   const recentSet = useMemo(() => new Set(recentIds.filter((id) => profiles.some((profile) => profile.id === id)).slice(0, recentLimit)), [profiles, recentIds, recentLimit]);
   const favoriteCount = profiles.filter((profile) => profile.favorite).length;
   const untaggedCount = profiles.filter((profile) => profile.tags.length === 0).length;
@@ -152,7 +179,9 @@ export function SessionManager({
     count: profiles.filter((profile) => connectionTypeForProfile(profile) === option.id).length,
   })).filter((option) => option.count > 0);
   // Return to all connections when a category becomes empty and disappears.
-  const scopeIsEmpty = (scope.startsWith("tag:") && !tags.includes(scope.slice(4)))
+  const scopeIsEmpty = (scope.startsWith("folder:") && !profiles.some((profile) => isInConnectionFolder(profile, scope.slice(7))))
+    || (scope === "unfiled" && unfiledCount === 0)
+    || (scope.startsWith("tag:") && !tags.includes(scope.slice(4)))
     || (scope.startsWith("type:") && !typeCategories.some((option) => `type:${option.id}` === scope))
     || (scope === "favorites" && favoriteCount === 0)
     || (scope === "recent" && recentSet.size === 0)
@@ -160,12 +189,14 @@ export function SessionManager({
   const activeScope = scopeIsEmpty ? "all" : scope;
   const activeTypeFilter: ConnectionTypeFilter = activeScope.startsWith("type:")
     ? activeScope.slice(5) as ConnectionType : typeFilter;
-  const scopeLabel = activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
+  const scopeLabel = activeScope.startsWith("folder:") ? activeScope.slice(7) : activeScope === "unfiled" ? "未分类" : activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
     : activeScope === "untagged" ? "未分组" : activeScope.startsWith("tag:") ? activeScope.slice(4)
     : activeScope.startsWith("type:") ? connectionTypeLabel(activeTypeFilter as ConnectionType) : "全部连接";
 
   const filtered = useMemo(() => {
     return profiles.filter((profile) => {
+      if (activeScope === "unfiled" && profile.folder) return false;
+      if (activeScope.startsWith("folder:") && !isInConnectionFolder(profile, activeScope.slice(7))) return false;
       if (activeScope === "favorites" && !profile.favorite) return false;
       if (activeScope === "recent" && !recentSet.has(profile.id)) return false;
       if (activeScope === "untagged" && profile.tags.length > 0) return false;
@@ -177,7 +208,7 @@ export function SessionManager({
         return true;
       }
       const haystack =
-        `${profile.name} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.description ?? ""}`.toLowerCase();
+        `${profile.name} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.folder ?? ""} ${profile.description ?? ""}`.toLowerCase();
       return haystack.includes(normalizedQuery);
     });
   }, [profiles, normalizedQuery, isSearching, activeTypeFilter, activeScope, recentSet]);
@@ -243,8 +274,9 @@ export function SessionManager({
   }
 
   function createConnection() {
-    if (activeTypeFilter === "jumpserver") { onCreateJumpServer(); return; }
-    (activeTypeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : []);
+    const folder = activeScope.startsWith("folder:") ? activeScope.slice(7) : "";
+    if (activeTypeFilter === "jumpserver") { onCreateJumpServer(folder); return; }
+    (activeTypeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : [], folder);
   }
 
   function renderCards(list: ConnectionProfile[]) {
@@ -256,6 +288,7 @@ export function SessionManager({
             profile={profile}
             variant={cardVariant}
             onConnect={() => onConnect(profile)}
+            onOpenSftp={!isRdpProfile(profile) && !isJumpServerProfile(profile) ? () => onOpenSftp(profile) : undefined}
             onEdit={() => onEdit(profile)}
             onClone={() => onClone(profile)}
             onDelete={() => onDelete(profile)}
@@ -288,6 +321,17 @@ export function SessionManager({
           {renderScope("favorites", "收藏", "star", favoriteCount)}
           {renderScope("recent", "最近使用", "clock", recentSet.size)}
           {typeCategories.map((option) => renderScope(`type:${option.id}`, option.label, option.icon, option.count))}
+          <div className="session-manager__folder-nav">
+            <div className="session-manager__nav-title">目录分组</div>
+            <ConnectionFolderTree nodes={folders} selectedPath={activeScope.startsWith("folder:") ? activeScope.slice(7) : null}
+              onContextMenu={(path, x, y, trigger) => {
+                tagTriggerRef.current = trigger;
+                setTagMenu({ tag: path, kind: "folder", x: Math.max(8, Math.min(x, window.innerWidth - 228)),
+                  y: Math.max(8, Math.min(y, window.innerHeight - 56)) });
+              }}
+              onSelect={(path) => { if (scope.startsWith("type:")) changeTypeFilter("all"); setScope(`folder:${path}`); }} />
+            {renderScope("unfiled", "未分类", "folder", unfiledCount)}
+          </div>
           <div className="session-manager__nav-title" title="按连接标签自动分组；一个连接可以属于多个分组">标签分组</div>
           {tags.map((tag) => renderScope(`tag:${tag}`, tag, "folder", profiles.filter((profile) => profile.tags.includes(tag)).length))}
           {renderScope("untagged", "未分组", "folder", untaggedCount)}
@@ -296,7 +340,7 @@ export function SessionManager({
           <div className="session-manager__toolbar">
             <div className="session-manager__search">
               <Icon name="search" height="15" width="15" />
-              <input aria-label="搜索连接" placeholder="搜索名称、主机、用户或标签" value={query}
+              <input aria-label="搜索连接" placeholder="搜索名称、主机、用户、目录或标签" value={query}
                 onChange={(event) => setQuery(event.target.value)} spellCheck={false} />
               {query ? <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><Icon name="close" height="14" width="14" /></button> : null}
             </div>
@@ -334,8 +378,8 @@ export function SessionManager({
             ) : (
               <>
                 <div className="session-manager__results-head">
-                  <h2>{scopeLabel}</h2><span aria-live="polite">{sorted.length} 个连接{isSearching ? " · 搜索结果" : ""}</span>
-                  {view === "tree" ? <span className="session-manager__group-hint">按标签分组</span> : null}
+                  <h2>{scopeLabel}</h2><span aria-live="polite">{sorted.length} 个连接{activeScope.startsWith("folder:") ? " · 含子目录" : ""}{isSearching ? " · 搜索结果" : ""}</span>
+                  {view === "tree" && !activeScope.startsWith("folder:") && activeScope !== "unfiled" ? <span className="session-manager__group-hint">按标签分组</span> : null}
                 </div>
                 {sorted.length === 0 ? (
                   <div className="session-manager__empty">
@@ -344,7 +388,7 @@ export function SessionManager({
                     <p className="session-manager__empty-hint">试试其他关键词、类型或分组。</p>
                     <button type="button" className="session-manager__reset" onClick={resetFilters}>显示全部连接</button>
                   </div>
-                ) : view === "tree" ? tagGroups.map((group) => (
+                ) : view === "tree" && !activeScope.startsWith("folder:") && activeScope !== "unfiled" ? tagGroups.map((group) => (
                   <section className="session-manager__section" key={group.key}>
                     <button className="session-manager__section-head" type="button"
                       aria-expanded={!collapsedGroups.has(group.key)}
@@ -371,16 +415,29 @@ export function SessionManager({
         <span>{activeSessionCount} 个活动会话</span>
       </div>
       {tagMenu ? createPortal(
-        <div className="context-menu is-glass-overlay" role="menu" aria-label="标签分组操作" ref={menuRef}
+        <div className="context-menu is-glass-overlay" role="menu" aria-label={tagMenu.kind === "folder" ? "目录操作" : "标签分组操作"} ref={menuRef}
           style={{ left: tagMenu.x, top: tagMenu.y }} onContextMenu={(event) => event.preventDefault()}>
           <button className="context-menu__item" role="menuitem" type="button" autoFocus
             onKeyDown={(event) => {
               if (event.key === "Tab") { event.preventDefault(); setTagMenu(null); restoreTagFocus(); }
             }}
-            onClick={() => { setRenamingTag(tagMenu.tag); setTagMenu(null); }}>
-            <Icon name="edit" height="16" width="16" /><span>重命名标签</span>
+            onClick={() => { if (tagMenu.kind === "folder") setRenamingFolder(tagMenu.tag); else setRenamingTag(tagMenu.tag); setTagMenu(null); }}>
+            <Icon name="edit" height="16" width="16" /><span>{tagMenu.kind === "folder" ? "重命名目录" : "重命名标签"}</span>
           </button>
         </div>, document.body,
+      ) : null}
+      {renamingFolder !== null ? createPortal(
+        <RenameFolderDialog path={renamingFolder}
+          count={profiles.filter((profile) => isInConnectionFolder(profile, renamingFolder)).length}
+          onClose={() => { setRenamingFolder(null); restoreTagFocus(); }}
+          onRename={async (name) => {
+            const next = renamedConnectionFolderPath(renamingFolder, name);
+            await onRenameFolder(renamingFolder, name);
+            if (scope.startsWith("folder:") && isInConnectionFolder({ folder: scope.slice(7) }, renamingFolder)) {
+              setScope(`folder:${next}${scope.slice(7 + renamingFolder.length)}`);
+            }
+          }} />,
+        document.body,
       ) : null}
       {renamingTag !== null ? createPortal(
         <RenameTagDialog tag={renamingTag} allTags={tags}

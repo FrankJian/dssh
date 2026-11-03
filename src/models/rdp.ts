@@ -1,6 +1,7 @@
 export interface RdpProfile {
   id: string;
   name: string;
+  folder?: string;
   host: string;
   port: number;
   username: string;

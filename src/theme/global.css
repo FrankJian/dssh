@@ -10395,3 +10395,82 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 .snapshot-auto-refresh { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; color: var(--text-muted); font-size: var(--snapshot-text-size); }
 .snapshot-auto-refresh select { min-width: 6em; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-base); font: inherit; cursor: pointer; }
 .snapshot-auto-refresh select:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* Connection-library folders are virtual navigation, separate from tags. */
+.connection-folder-tree,
+.connection-folder-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.connection-folder-tree ul {
+  padding-left: 12px;
+}
+.connection-folder-tree__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 128px;
+}
+.connection-folder-tree__row .session-manager__nav-item {
+  flex: 1;
+  min-width: 0;
+}
+.connection-folder-tree__row .session-manager__nav-count {
+  min-width: 24px;
+  text-align: right;
+}
+.connection-folder-tree__row[data-expandable="true"] .session-manager__nav-label {
+  padding-right: 20px;
+}
+.connection-folder-tree__toggle {
+  position: absolute;
+  right: 36px;
+  display: inline-flex;
+  width: 18px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.connection-folder-tree__toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.conn-card__folder {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.conn-card__folder > svg {
+  flex: 0 0 auto;
+}
+.conn-card__folder > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container (max-width: 560px) {
+  .session-manager__nav {
+    display: block;
+    max-height: 200px;
+  }
+  .session-manager__nav-title {
+    display: block;
+  }
+  .session-manager__nav-item {
+    width: 100%;
+  }
+  .session-manager__nav-label {
+    max-width: none;
+  }
+}

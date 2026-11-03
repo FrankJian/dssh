@@ -104,6 +104,8 @@ mod tests {
         );
         assert!(!stored.profile.skip_certificate_verification);
         let mut profile = stored.profile;
+        assert_eq!(profile.folder, "");
+        profile.folder = "windows/production".into();
         assert_eq!(
             profile.clipboard_mode,
             crate::models::rdp::ClipboardMode::Off
@@ -117,6 +119,10 @@ mod tests {
             repo.save_rdp_profile(&profile, stored.secret_ref.as_deref())
                 .unwrap();
             let reopened = ProfileRepository::initialize(&dir, "test.db").unwrap();
+            assert_eq!(
+                reopened.list_rdp_profiles().unwrap()[0].folder,
+                "windows/production"
+            );
             assert_eq!(
                 reopened.list_rdp_profiles().unwrap()[0].clipboard_mode,
                 mode
