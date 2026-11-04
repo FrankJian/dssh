@@ -20,7 +20,7 @@ import {
 } from "./connectionTypes";
 
 import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
-type Scope = "all" | "favorites" | "recent" | "untagged" | "unfiled" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
+type Scope = "all" | "favorites" | "recent" | "untagged" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
 type SortKey = "recent" | "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
@@ -170,8 +170,9 @@ export function SessionManager({
 
   const tags = useMemo(() => Array.from(new Set(profiles.flatMap((profile) => profile.tags)))
     .sort((a, b) => a.localeCompare(b)), [profiles]);
-  const folders = useMemo(() => buildConnectionFolders(profiles), [profiles]);
-  const unfiledCount = profiles.filter((profile) => !profile.folder).length;
+  const folders = useMemo(() => profiles.length > 0 ? [{
+    name: "根目录", path: "", count: profiles.length, children: buildConnectionFolders(profiles),
+  }] : [], [profiles]);
   const recentSet = useMemo(() => new Set(recentIds.filter((id) => profiles.some((profile) => profile.id === id)).slice(0, recentLimit)), [profiles, recentIds, recentLimit]);
   const favoriteCount = profiles.filter((profile) => profile.favorite).length;
   const untaggedCount = profiles.filter((profile) => profile.tags.length === 0).length;
@@ -180,7 +181,6 @@ export function SessionManager({
   })).filter((option) => option.count > 0);
   // Return to all connections when a category becomes empty and disappears.
   const scopeIsEmpty = (scope.startsWith("folder:") && !profiles.some((profile) => isInConnectionFolder(profile, scope.slice(7))))
-    || (scope === "unfiled" && unfiledCount === 0)
     || (scope.startsWith("tag:") && !tags.includes(scope.slice(4)))
     || (scope.startsWith("type:") && !typeCategories.some((option) => `type:${option.id}` === scope))
     || (scope === "favorites" && favoriteCount === 0)
@@ -189,13 +189,12 @@ export function SessionManager({
   const activeScope = scopeIsEmpty ? "all" : scope;
   const activeTypeFilter: ConnectionTypeFilter = activeScope.startsWith("type:")
     ? activeScope.slice(5) as ConnectionType : typeFilter;
-  const scopeLabel = activeScope.startsWith("folder:") ? activeScope.slice(7) : activeScope === "unfiled" ? "未分类" : activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
+  const scopeLabel = activeScope.startsWith("folder:") ? (activeScope.slice(7) || "根目录") : activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
     : activeScope === "untagged" ? "未分组" : activeScope.startsWith("tag:") ? activeScope.slice(4)
     : activeScope.startsWith("type:") ? connectionTypeLabel(activeTypeFilter as ConnectionType) : "全部连接";
 
   const filtered = useMemo(() => {
     return profiles.filter((profile) => {
-      if (activeScope === "unfiled" && profile.folder) return false;
       if (activeScope.startsWith("folder:") && !isInConnectionFolder(profile, activeScope.slice(7))) return false;
       if (activeScope === "favorites" && !profile.favorite) return false;
       if (activeScope === "recent" && !recentSet.has(profile.id)) return false;
@@ -330,7 +329,6 @@ export function SessionManager({
                   y: Math.max(8, Math.min(y, window.innerHeight - 56)) });
               }}
               onSelect={(path) => { if (scope.startsWith("type:")) changeTypeFilter("all"); setScope(`folder:${path}`); }} />
-            {renderScope("unfiled", "未分类", "folder", unfiledCount)}
           </div>
           <div className="session-manager__nav-title" title="按连接标签自动分组；一个连接可以属于多个分组">标签分组</div>
           {tags.map((tag) => renderScope(`tag:${tag}`, tag, "folder", profiles.filter((profile) => profile.tags.includes(tag)).length))}
@@ -379,7 +377,7 @@ export function SessionManager({
               <>
                 <div className="session-manager__results-head">
                   <h2>{scopeLabel}</h2><span aria-live="polite">{sorted.length} 个连接{activeScope.startsWith("folder:") ? " · 含子目录" : ""}{isSearching ? " · 搜索结果" : ""}</span>
-                  {view === "tree" && !activeScope.startsWith("folder:") && activeScope !== "unfiled" ? <span className="session-manager__group-hint">按标签分组</span> : null}
+                  {view === "tree" && !activeScope.startsWith("folder:") ? <span className="session-manager__group-hint">按标签分组</span> : null}
                 </div>
                 {sorted.length === 0 ? (
                   <div className="session-manager__empty">
@@ -388,7 +386,7 @@ export function SessionManager({
                     <p className="session-manager__empty-hint">试试其他关键词、类型或分组。</p>
                     <button type="button" className="session-manager__reset" onClick={resetFilters}>显示全部连接</button>
                   </div>
-                ) : view === "tree" && !activeScope.startsWith("folder:") && activeScope !== "unfiled" ? tagGroups.map((group) => (
+                ) : view === "tree" && !activeScope.startsWith("folder:") ? tagGroups.map((group) => (
                   <section className="session-manager__section" key={group.key}>
                     <button className="session-manager__section-head" type="button"
                       aria-expanded={!collapsedGroups.has(group.key)}

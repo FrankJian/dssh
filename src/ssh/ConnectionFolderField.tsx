@@ -5,6 +5,6 @@ export function ConnectionFolderField({ value, onChange, disabled }: Props) {
     <span>目录（可选）</span>
     <input aria-label="连接目录" placeholder="例如 production/asia/web" value={value} disabled={disabled}
       onChange={(event) => onChange(event.target.value)} spellCheck={false} />
-    <small className="profile-form__hint">用 / 创建多级目录，例如 a/b/c；留空放在未分类。</small>
+    <small className="profile-form__hint">用 / 在根目录下创建多级目录，例如 a/b/c；留空放在根目录。</small>
   </label>;
 }

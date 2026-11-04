@@ -18,7 +18,7 @@ export function normalizeConnectionFolder(value: string): string {
 
 export function isInConnectionFolder(profile: FolderProfile, folder: string): boolean {
   const path = profile.folder ?? "";
-  return path === folder || (folder !== "" && path.startsWith(`${folder}/`));
+  return folder === "" || path === folder || path.startsWith(`${folder}/`);
 }
 
 export function buildConnectionFolders(profiles: FolderProfile[]): ConnectionFolderNode[] {

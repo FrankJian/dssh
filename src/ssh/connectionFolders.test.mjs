@@ -43,3 +43,10 @@ test('directory renaming only changes the selected leaf and preserves the parent
     assert.throws(() => renamedConnectionFolderPath('a/b', value));
   }
 });
+
+// Root is the common ancestor, including legacy profiles without a folder.
+test('root includes direct connections and every nested directory', () => {
+  for (const profile of [{}, { folder: '' }, { folder: 'a' }, { folder: 'a/b/c' }]) {
+    assert.equal(isInConnectionFolder(profile, ''), true);
+  }
+});

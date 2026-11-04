@@ -6,12 +6,17 @@ interface Props { nodes: ConnectionFolderNode[]; selectedPath: string | null; on
 export function ConnectionFolderTree({ nodes, selectedPath, onSelect, onContextMenu }: Props) {
   const selectedRef = useRef<HTMLButtonElement>(null);
   const pendingSelectionScroll = useRef(false);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([""]));
   useEffect(() => {
     if (!selectedPath) return;
     pendingSelectionScroll.current = true;
-    setCollapsed((current) => {
-      const next = new Set([...current].filter((path) => !selectedPath.startsWith(`${path}/`)));
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      next.add("");
+      const parts = selectedPath.split("/");
+      for (let depth = 1; depth < parts.length; depth += 1) {
+        next.add(parts.slice(0, depth).join("/"));
+      }
       return next.size === current.size ? current : next;
     });
   }, [selectedPath]);
@@ -20,9 +25,9 @@ export function ConnectionFolderTree({ nodes, selectedPath, onSelect, onContextM
       selectedRef.current.scrollIntoView({ block: "nearest" });
       pendingSelectionScroll.current = false;
     }
-  }, [selectedPath, collapsed]);
+  }, [selectedPath, expandedPaths]);
   function toggleFolder(path: string) {
-    setCollapsed((current) => {
+    setExpandedPaths((current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path); else next.add(path);
       return next;
@@ -30,20 +35,21 @@ export function ConnectionFolderTree({ nodes, selectedPath, onSelect, onContextM
   }
   function renderNodes(items: ConnectionFolderNode[]) {
     return items.map((node) => {
-      const expanded = !collapsed.has(node.path);
+      const expanded = expandedPaths.has(node.path);
       return <li key={node.path}>
         <div className="connection-folder-tree__row" data-expandable={node.children.length > 0}>
           <button className={`session-manager__nav-item${selectedPath === node.path ? " is-active" : ""}`}
             ref={selectedPath === node.path ? selectedRef : undefined}
-            type="button" title={node.path} aria-current={selectedPath === node.path ? "page" : undefined}
+            type="button" title={node.path || "根目录"} aria-current={selectedPath === node.path ? "page" : undefined}
             aria-expanded={node.children.length > 0 ? expanded : undefined}
-            aria-haspopup="menu"
+            aria-haspopup={node.path ? "menu" : undefined}
             onContextMenu={(event) => {
+              if (!node.path) return;
               event.preventDefault();
               onContextMenu(node.path, event.clientX, event.clientY, event.currentTarget);
             }}
             onKeyDown={(event) => {
-              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+              if (node.path && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
                 event.preventDefault();
                 const rect = event.currentTarget.getBoundingClientRect();
                 onContextMenu(node.path, rect.left, rect.bottom, event.currentTarget);
@@ -56,7 +62,7 @@ export function ConnectionFolderTree({ nodes, selectedPath, onSelect, onContextM
             <span className="session-manager__nav-count">{node.count}</span>
           </button>
           {node.children.length > 0 ? <button className="connection-folder-tree__toggle" type="button"
-            aria-label={`${expanded ? "折叠" : "展开"}目录 ${node.path}`} aria-expanded={expanded}
+            aria-label={`${expanded ? "折叠" : "展开"}目录 ${node.path || "根目录"}`} aria-expanded={expanded}
             onClick={() => toggleFolder(node.path)}>
             <Icon name={expanded ? "chevron-down" : "chevron-right"} width="12" height="12" />
           </button> : null}
