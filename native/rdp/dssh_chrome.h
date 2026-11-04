@@ -24,6 +24,36 @@ static inline bool dssh_chrome_reveal(DsshChromeReveal* state, bool active,
     return state->visible;
 }
 
+// Store proportions of the available travel area, so resizing / DPI changes
+// keep the whole bar reachable. Coordinates are relative to the desktop top-left.
+typedef struct DsshChromePosition {
+    float x, y;
+} DsshChromePosition;
+
+static inline float dssh_chrome_clamp(float value, float maximum)
+{
+    return value < 0 ? 0 : (value > maximum ? maximum : value);
+}
+
+static inline SDL_FRect dssh_chrome_frame(DsshChromePosition position, float width,
+                                         float height, float barWidth, float barHeight)
+{
+    SDL_FRect frame = {0};
+    frame.w = dssh_chrome_clamp(barWidth, width);
+    frame.h = dssh_chrome_clamp(barHeight, height);
+    frame.x = dssh_chrome_clamp(position.x, 1) * (width - frame.w);
+    frame.y = dssh_chrome_clamp(position.y, 1) * (height - frame.h);
+    return frame;
+}
+
+static inline void dssh_chrome_move(DsshChromePosition* position, float x, float y,
+                                     float travelWidth, float travelHeight)
+{
+    // A temporarily narrow window must not erase the remembered position.
+    if (travelWidth > 0) position->x = dssh_chrome_clamp(x / travelWidth, 1);
+    if (travelHeight > 0) position->y = dssh_chrome_clamp(y / travelHeight, 1);
+}
+
 static inline void dssh_chrome_action(SDL_Window* window, int action)
 {
     SDL_Event event = {0};
@@ -44,6 +74,7 @@ bool dssh_chrome_set_locked(bool locked);
 #ifdef DSSH_CHROME_TESTING
 bool dssh_chrome_test_click(SDL_Window* window, int action);
 bool dssh_chrome_test_visible(SDL_Window* window);
+bool dssh_chrome_test_drag(SDL_Window* window);
 #endif
 #ifdef __cplusplus
 }

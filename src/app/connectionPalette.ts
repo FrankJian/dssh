@@ -24,7 +24,7 @@ export function connectionGroupPaletteItems(profiles: GroupProfile[], onSelect: 
   for (const tag of tags) {
     const count = profiles.filter((profile) => profile.tags.includes(tag)).length;
     items.push({ id: `conn-group:tag:${tag}`, label: `标签：${tag}`, hint: `${count} 个连接 · 标签分组`,
-      searchPriority: -1, icon: "folder", keywords: `tag 标签 分组 ${tag}`, run: () => onSelect(`tag:${tag}`) });
+      searchPriority: -1, icon: "tag", keywords: `tag 标签 分组 ${tag}`, run: () => onSelect(`tag:${tag}`) });
   }
   return items;
 }

@@ -9,7 +9,7 @@
     "test:rdp-worker": "python3 scripts/test-rdp-worker.py",
     "test:connection-library": "node --experimental-strip-types --test src/ssh/connectionFolders.test.mjs src/ssh/profileClone.test.mjs src/ssh/connectionTypes.test.mjs src/app/sftpTerminal.test.mjs src/app/connectionPalette.test.mjs",
     "test:rdp": "node --experimental-strip-types --test src/rdp/sessionState.test.mjs",
-    "test:rdp-build": "node --test scripts/rdp-archive.test.mjs scripts/rdp-windows.test.mjs",
+    "test:rdp-build": "node --test scripts/rdp-archive.test.mjs scripts/rdp-windows.test.mjs scripts/rdp-chrome-theme.test.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "test:ai-config": "node --experimental-strip-types --test src/ai/aiConfig.test.mjs src/ai/aiSettingsValidation.test.mjs",

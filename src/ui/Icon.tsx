@@ -36,6 +36,7 @@ export type IconName =
   | "fileText"
   | "fileVideo"
   | "folder"
+  | "tag"
   | "folderPlus"
   | "forward"
   | "gauge"
@@ -251,6 +252,12 @@ export function Icon({ name, ...props }: IconProps) {
         </>
       ) : null}
       {name === "close" ? <path d="M6 6l12 12M18 6 6 18" /> : null}
+      {name === "tag" ? (
+        <>
+          <path d="M3 3h7l11 11-7 7L3 10V3Z" />
+          <circle cx="7.5" cy="7.5" r="1" />
+        </>
+      ) : null}
       {name === "folder" ? (
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
       ) : null}

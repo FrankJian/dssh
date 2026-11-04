@@ -320,6 +320,7 @@ export function SessionManager({
           {renderScope("favorites", "收藏", "star", favoriteCount)}
           {renderScope("recent", "最近使用", "clock", recentSet.size)}
           {typeCategories.map((option) => renderScope(`type:${option.id}`, option.label, option.icon, option.count))}
+          <div className="session-manager__nav-separator" role="separator" />
           <div className="session-manager__folder-nav">
             <div className="session-manager__nav-title">目录分组</div>
             <ConnectionFolderTree nodes={folders} selectedPath={activeScope.startsWith("folder:") ? activeScope.slice(7) : null}
@@ -330,9 +331,10 @@ export function SessionManager({
               }}
               onSelect={(path) => { if (scope.startsWith("type:")) changeTypeFilter("all"); setScope(`folder:${path}`); }} />
           </div>
+          <div className="session-manager__nav-separator" role="separator" />
           <div className="session-manager__nav-title" title="按连接标签自动分组；一个连接可以属于多个分组">标签分组</div>
-          {tags.map((tag) => renderScope(`tag:${tag}`, tag, "folder", profiles.filter((profile) => profile.tags.includes(tag)).length))}
-          {renderScope("untagged", "未分组", "folder", untaggedCount)}
+          {tags.map((tag) => renderScope(`tag:${tag}`, tag, "tag", profiles.filter((profile) => profile.tags.includes(tag)).length))}
+          {renderScope("untagged", "未分组", "tag", untaggedCount)}
         </nav> : null}
         <div className="session-manager__main">
           <div className="session-manager__toolbar">
@@ -396,7 +398,7 @@ export function SessionManager({
                         return next;
                       })}>
                       <Icon name={collapsedGroups.has(group.key) ? "chevron-right" : "chevron-down"} height="14" width="14" />
-                      <Icon name="folder" height="15" width="15" />
+                      <Icon name="tag" height="15" width="15" />
                       <span>{group.label}</span><span className="session-manager__section-count">{group.profiles.length}</span>
                     </button>
                     {!collapsedGroups.has(group.key) ? renderCards(group.profiles) : null}

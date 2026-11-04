@@ -6,6 +6,7 @@ import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractArchive } from "./rdp-archive.mjs";
 import { WINDOWS_TRIPLET, windowsCmakeArguments, validateWindowsRuntime } from "./rdp-windows.mjs";
+import { chromeThemeHeader } from "./rdp-chrome-theme.mjs";
 import { adaptClipboard } from "./rdp-clipboard.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,9 +33,10 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
-for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_visual.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
   copyFileSync(join(root, "native/rdp", file), join(sdl, file));
 }
+writeFileSync(join(sdl, "dssh_chrome_palette.h"), chromeThemeHeader(readFileSync(join(root, "src/theme/global.css"), "utf8")));
 for (const file of ["dssh_icon.hpp", "dssh_icon.cpp", "dssh_icon.m", "dssh_icon.rc"]) {
   copyFileSync(join(root, "native", "rdp", file), join(sdl, file));
 }
@@ -72,6 +74,7 @@ if(APPLE)
   target_link_libraries(\${MODULE_NAME} PRIVATE "-framework AppKit")
 elseif(WIN32)
   target_sources(\${MODULE_NAME} PRIVATE dssh_icon.rc dssh_chrome_win.cpp dssh_clipboard_win.c)
+  target_link_libraries(\${MODULE_NAME} PRIVATE comctl32)
   target_include_directories(\${MODULE_NAME} PRIVATE \${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(\${MODULE_NAME} PRIVATE user32 gdi32 ole32 shell32 imm32 dwmapi uuid)
 endif()
@@ -105,7 +108,7 @@ if(APPLE)
   target_link_libraries(dssh-rdp-window-test PRIVATE "-framework AppKit")
 elseif(WIN32)
   target_sources(dssh-rdp-window-test PRIVATE dssh_chrome_win.cpp)
-  target_link_libraries(dssh-rdp-window-test PRIVATE user32 gdi32 ole32 imm32 dwmapi uuid)
+  target_link_libraries(dssh-rdp-window-test PRIVATE user32 gdi32 ole32 imm32 dwmapi uuid comctl32)
 endif()
 `);
 adapt(main, "int main(int argc, char* argv[])\n{", `int main(int argc, char* argv[])\n{\n    if (argc == 2 && std::strcmp(argv[1], "--dssh-crypto-self-test") == 0) return dssh_crypto_self_test();\n    std::vector<std::string> privateArgs;\n    std::vector<char*> privatePointers;\n    if (!dssh_arguments(argc, argv, privateArgs, privatePointers)) return 120;\n    std::ignore = WLog_SetLogLevel(WLog_GetRoot(), WLOG_OFF);\n    if (const int code = dssh_crypto_self_test(false)) return code;\n    dssh_status("stage context");`);

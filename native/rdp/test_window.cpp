@@ -20,6 +20,19 @@ int main(int argc, char** argv)
     if (dssh_chrome_reveal(&reveal, true, false, false, 670)) return 20;
     if (!dssh_chrome_reveal(&reveal, true, true, false, 680)) return 21;
     if (dssh_chrome_reveal(&reveal, false, false, true, 690)) return 22;
+    DsshChromePosition position = {0.5f, 0};
+    auto barFrame = dssh_chrome_frame(position, 1000, 700, 460, 38);
+    if (barFrame.x != 270 || barFrame.y != 0) return 60;
+    dssh_chrome_move(&position, 900, -50, 540, 662);
+    barFrame = dssh_chrome_frame(position, 1000, 700, 460, 38);
+    if (barFrame.x != 540 || barFrame.y != 0) return 61;
+    dssh_chrome_move(&position, -500, 900, 540, 662);
+    barFrame = dssh_chrome_frame(position, 300, 200, 460, 38);
+    if (barFrame.x != 0 || barFrame.y != 162 || barFrame.w != 300) return 62;
+    barFrame = dssh_chrome_frame(position, 300, 20, 460, 38);
+    if (barFrame.x != 0 || barFrame.y != 0 || barFrame.h != 20) return 63;
+    dssh_chrome_move(&position, 1, 1, 0, 0);
+    if (position.x != 0 || position.y != 1) return 64;
     SDL_Event closeEvent = {};
     closeEvent.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     if (!dssh_is_system_close(closeEvent, true)) return 25;
@@ -127,6 +140,10 @@ int main(int argc, char** argv)
                          action, SDL_GetWindowID(window), count, SDL_GetError());
             return 24;
         }
+    }
+    if (!dssh_chrome_test_drag(window)) {
+        std::fprintf(stderr, "Native toolbar drag failed\n");
+        return 65;
     }
     const auto originalId = SDL_GetWindowID(window);
     auto alreadyHidden = SDL_CreateWindow("Hidden fixture", 100, 100, SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE);

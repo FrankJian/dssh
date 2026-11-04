@@ -1640,6 +1640,13 @@ button {
 .session-manager__nav-title:first-child {
   padding-top: 8px;
 }
+.session-manager__nav-separator {
+  margin: 8px 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.session-manager__nav-separator + .session-manager__nav-title {
+  padding-top: 8px;
+}
 .session-manager__nav-item {
   display: flex;
   width: 100%;
