@@ -39,6 +39,8 @@ extern "C" {
 void dssh_chrome_attach(SDL_Window* window);
 void dssh_chrome_detach(SDL_Window* window);
 void dssh_chrome_tick(void);
+void dssh_chrome_hide_all(void);
+bool dssh_chrome_set_locked(bool locked);
 #ifdef DSSH_CHROME_TESTING
 bool dssh_chrome_test_click(SDL_Window* window, int action);
 bool dssh_chrome_test_visible(SDL_Window* window);

@@ -3,19 +3,20 @@
 #include <freerdp/settings.h>
 #include <freerdp/channels/cliprdr.h>
 #include <freerdp/client/cliprdr.h>
+#include "dssh_visibility_state.h"
 
 /* Shared allowlist: the UI modes never imply image / HTML / arbitrary format
  * sharing. Check both advertisements and requests, not just command flags. */
 static inline BOOL dssh_clipboard_files(const rdpSettings* settings)
 {
-    return freerdp_settings_get_bool(settings, FreeRDP_RedirectClipboard) &&
+    return !dssh_desktop_locked() && freerdp_settings_get_bool(settings, FreeRDP_RedirectClipboard) &&
         (freerdp_settings_get_uint32(settings, FreeRDP_ClipboardFeatureMask) &
          (CLIPRDR_FLAG_LOCAL_TO_REMOTE_FILES | CLIPRDR_FLAG_REMOTE_TO_LOCAL_FILES));
 }
 
 static inline BOOL dssh_clipboard_format(const rdpSettings* settings, UINT32 id, const char* name)
 {
-    if (!freerdp_settings_get_bool(settings, FreeRDP_RedirectClipboard)) return FALSE;
+    if (dssh_desktop_locked() || !freerdp_settings_get_bool(settings, FreeRDP_RedirectClipboard)) return FALSE;
     if (!name || !*name) return id == 1 || id == 7 || id == 13; /* CF_TEXT/OEM/UNICODETEXT */
     if ((id == 1 && strcmp(name, "CF_TEXT") == 0) ||
         (id == 7 && strcmp(name, "CF_OEMTEXT") == 0) ||

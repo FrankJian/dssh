@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <new>
 #include <system_error>
+#include "dssh_visibility.h"
 #include <winpr/crypto.h>
 #include <winpr/ssl.h>
 #if defined(_WIN32)
@@ -102,6 +103,7 @@ inline bool dssh_arguments(int& argc, char**& argv, std::vector<std::string>& st
         std::string value(length, '\0');
         if (std::fread(value.data(), 1, length, stdin) != length ||
             value.find('\0') != std::string::npos) return false;
+        if (value == "/dssh-initially-hidden") { dssh_request_desktop_lock(true); continue; }
         storage.push_back(std::move(value));
     }
     for (auto& value : storage) pointers.push_back(value.data());
@@ -116,6 +118,11 @@ inline bool dssh_arguments(int& argc, char**& argv, std::vector<std::string>& st
             SDL_Event event = {};
             if (command == 'q') event.type = SDL_EVENT_QUIT;
             else if (command == 'f') event.type = SDL_EVENT_USER;
+            else if (command == 'h' || command == 'u') {
+                dssh_request_desktop_lock(command == 'h');
+                event.type = SDL_EVENT_USER;
+                event.user.code = DSSH_DESKTOP_VISIBILITY;
+            }
             else std::_Exit(121);
             SDL_PushEvent(&event);
         }
@@ -125,6 +132,7 @@ inline bool dssh_arguments(int& argc, char**& argv, std::vector<std::string>& st
 
 inline void dssh_focus_windows()
 {
+    if (dssh_desktop_locked()) return;
     int count = 0;
     auto windows = SDL_GetWindows(&count);
     if (!windows) return;

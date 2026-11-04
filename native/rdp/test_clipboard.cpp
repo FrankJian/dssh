@@ -3,6 +3,8 @@
 #include <initializer_list>
 
 static bool deniedRequest = false;
+static bool locked = false;
+extern "C" bool dssh_desktop_locked(void) { return locked; }
 static UINT receiveDenied(CliprdrClientContext*, const CLIPRDR_FILE_CONTENTS_RESPONSE* response)
 {
     deniedRequest = response->common.msgFlags == CB_RESPONSE_FAIL &&
@@ -40,6 +42,9 @@ int main()
     request.streamId = 42;
     request.cbRequested = 1024 * 1024;
     if (dssh_clipboard_deny_file_request(&channel, &request) || !deniedRequest) return 7;
+    locked = true;
+    if (dssh_clipboard_files(settings) || dssh_clipboard_format(settings, 13, nullptr) ||
+        dssh_clipboard_format(settings, 0xc103, "FileGroupDescriptorW")) return 8;
     freerdp_settings_free(settings);
     std::puts("Clipboard off/text/files policy and denied file response passed");
     return 0;

@@ -154,6 +154,26 @@ extern "C" void dssh_chrome_tick(void)
     for (auto chrome : bars) tick(chrome);
 }
 
+extern "C" void dssh_chrome_hide_all(void)
+{
+    for (auto chrome : bars) {
+        chrome->reveal.visible = false;
+        ShowWindow(chrome->bar, SW_HIDE);
+        if (chrome->taskbar && chrome->markedFullscreen) {
+            chrome->taskbar->MarkFullscreenWindow(chrome->owner, FALSE);
+            chrome->markedFullscreen = false;
+        }
+    }
+}
+
+extern "C" bool dssh_chrome_set_locked(bool locked)
+{
+    if (locked) dssh_chrome_hide_all();
+    for (auto chrome : bars)
+        if (locked && IsWindowVisible(chrome->bar)) return false;
+    return true;
+}
+
 #ifdef DSSH_CHROME_TESTING
 extern "C" bool dssh_chrome_test_visible(SDL_Window* window)
 {

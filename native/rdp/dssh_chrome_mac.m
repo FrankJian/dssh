@@ -126,6 +126,39 @@ void dssh_chrome_tick(void)
     }
 }
 
+void dssh_chrome_hide_all(void)
+{
+    for (DsshConnectionBar* bar in bars.allValues) {
+        DsshChromeReveal reveal = bar.reveal;
+        reveal.visible = false;
+        bar.reveal = reveal;
+        [bar.panel orderOut:nil];
+    }
+}
+
+bool dssh_chrome_set_locked(bool locked)
+{
+    static BOOL suspended = NO;
+    static NSApplicationActivationPolicy original;
+    if (locked) {
+        if (!suspended) {
+            original = NSApp.activationPolicy;
+            suspended = YES;
+        }
+        if (!NSApp.hidden) [NSApp hide:nil];
+        if (NSApp.activationPolicy != NSApplicationActivationPolicyProhibited)
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        dssh_chrome_hide_all();
+        if (!NSApp.hidden || NSApp.activationPolicy != NSApplicationActivationPolicyProhibited) return false;
+        for (DsshConnectionBar* bar in bars.allValues) if (bar.panel.visible) return false;
+    } else if (suspended) {
+        if (![NSApp setActivationPolicy:original]) return false;
+        [NSApp unhideWithoutActivation];
+        suspended = NO;
+    }
+    return true;
+}
+
 #ifdef DSSH_CHROME_TESTING
 bool dssh_chrome_test_visible(SDL_Window* window)
 {

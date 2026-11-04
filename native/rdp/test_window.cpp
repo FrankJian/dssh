@@ -1,5 +1,6 @@
 #include "dssh_window.hpp"
 #include "dssh_chrome.h"
+#include "dssh_visibility.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -127,6 +128,56 @@ int main(int argc, char** argv)
             return 24;
         }
     }
+    const auto originalId = SDL_GetWindowID(window);
+    auto alreadyHidden = SDL_CreateWindow("Hidden fixture", 100, 100, SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE);
+    if (!alreadyHidden) return 35;
+    dssh_request_desktop_lock(true);
+    dssh_visibility_tick();
+    dssh_visibility_tick(); // repeated idle checks must not overwrite restore state
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) ||
+        !(SDL_GetWindowFlags(window) & SDL_WINDOW_NOT_FOCUSABLE) ||
+        dssh_chrome_test_visible(window)) return 36;
+    SDL_Event blocked = {};
+    blocked.type = SDL_EVENT_KEY_DOWN;
+    if (!dssh_visibility_blocks(&blocked)) return 37;
+    blocked.type = SDL_EVENT_QUIT;
+    if (dssh_visibility_blocks(&blocked)) return 38;
+    SDL_ShowWindow(window); // a queued focus / show must not bypass the lock
+    dssh_visibility_tick();
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN)) return 39;
+    auto createdHidden = SDL_CreateWindow("Created while locked", 100, 100, SDL_WINDOW_HIDDEN);
+    if (!createdHidden) return 40;
+    dssh_visibility_created(createdHidden);
+    dssh_visibility_tick();
+    if (!(SDL_GetWindowFlags(createdHidden) & SDL_WINDOW_HIDDEN)) return 41;
+    dssh_request_desktop_lock(false);
+    dssh_visibility_tick();
+    SDL_SyncWindow(window);
+    if (SDL_GetWindowID(window) != originalId || (SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE))) return 42;
+    if (SDL_GetWindowFlags(createdHidden) & SDL_WINDOW_HIDDEN) return 43;
+    if (!(SDL_GetWindowFlags(alreadyHidden) & SDL_WINDOW_HIDDEN) ||
+        !(SDL_GetWindowFlags(alreadyHidden) & SDL_WINDOW_NOT_FOCUSABLE)) return 44;
+    SDL_DestroyWindow(createdHidden);
+    SDL_DestroyWindow(alreadyHidden);
+    SDL_SetWindowFullscreen(window, true);
+    SDL_SyncWindow(window);
+    dssh_request_desktop_lock(true);
+    dssh_visibility_tick();
+    dssh_request_desktop_lock(false);
+    dssh_visibility_tick();
+    SDL_SyncWindow(window);
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) return 45;
+    dssh_prepare_desktop_window(window, display);
+    SDL_MinimizeWindow(window);
+    SDL_SyncWindow(window);
+    dssh_request_desktop_lock(true);
+    dssh_visibility_tick();
+    dssh_request_desktop_lock(false);
+    dssh_visibility_tick();
+    SDL_SyncWindow(window);
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED)) return 46;
+    SDL_RestoreWindow(window);
+    SDL_SyncWindow(window);
     const auto flags = SDL_GetWindowFlags(window);
     int width = 0, height = 0;
     SDL_GetWindowSize(window, &width, &height);

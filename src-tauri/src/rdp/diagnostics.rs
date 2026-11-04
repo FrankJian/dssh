@@ -3,6 +3,7 @@ pub enum WorkerStatus {
     Ready,
     Connected,
     UserClose,
+    Visibility { hidden: bool },
     Stage(&'static str),
     Error(u32),
     Fault { site: u32, line: u32 },
@@ -14,6 +15,8 @@ pub fn parse_status(line: &str) -> Option<WorkerStatus> {
         "DSSH_RDP_V1 ready" => Some(WorkerStatus::Ready),
         "DSSH_RDP_V1 connected" => Some(WorkerStatus::Connected),
         "DSSH_RDP_V1 user-close" => Some(WorkerStatus::UserClose),
+        "DSSH_RDP_V1 hidden" => Some(WorkerStatus::Visibility { hidden: true }),
+        "DSSH_RDP_V1 visible" => Some(WorkerStatus::Visibility { hidden: false }),
         "DSSH_RDP_V1 stage context" => Some(WorkerStatus::Stage("引擎初始化")),
         "DSSH_RDP_V1 stage platform" => Some(WorkerStatus::Stage("系统运行库初始化")),
         "DSSH_RDP_V1 stage sdl-context" => Some(WorkerStatus::Stage("桌面上下文初始化")),
@@ -65,7 +68,7 @@ impl WorkerDiagnostics {
             WorkerStatus::Stage(stage) => self.stage = stage,
             WorkerStatus::Error(code) => self.error = Some(code),
             WorkerStatus::Fault { site, line } => self.fault = Some((site, line)),
-            WorkerStatus::Ready => {}
+            WorkerStatus::Ready | WorkerStatus::Visibility { .. } => {}
         }
     }
 
@@ -162,6 +165,26 @@ impl WorkerDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn visibility_acknowledgements_do_not_end_a_connection() {
+        let mut diagnostics = WorkerDiagnostics::default();
+        for hidden in [true, false, true] {
+            let line = if hidden {
+                "DSSH_RDP_V1 hidden"
+            } else {
+                "DSSH_RDP_V1 visible"
+            };
+            let status = parse_status(line).unwrap();
+            assert_eq!(status, WorkerStatus::Visibility { hidden });
+            diagnostics.observe(status);
+            assert!(!diagnostics.connected);
+            assert!(!diagnostics.is_normal_exit(Some(0)));
+        }
+        diagnostics.observe(WorkerStatus::Connected);
+        diagnostics.observe(WorkerStatus::Visibility { hidden: true });
+        assert!(diagnostics.connected);
+        assert!(!diagnostics.is_normal_exit(Some(0xc0000005u32 as i32)));
+    }
     #[test]
     fn sdl_abort_exit_131_requires_explicit_close_intent() {
         // Cover title-bar / toolbar status arriving both before process exit

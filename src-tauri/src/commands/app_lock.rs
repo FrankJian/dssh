@@ -16,23 +16,21 @@ pub fn update_app_lock_settings(
     state: State<'_, AppState>,
     request: UpdateAppLockSettingsRequest,
 ) -> AppResult<AppLockStatus> {
-    let status = state.app_lock.update_settings(request)?;
-    if status.locked {
-        state.rdp.terminate_for_lock();
-    }
-    Ok(status)
+    state
+        .rdp
+        .update_app_lock(|| state.app_lock.update_settings(request))
 }
 
 #[tauri::command]
 pub fn lock_app(state: State<'_, AppState>) -> AppResult<AppLockStatus> {
-    let status = state.app_lock.lock()?;
-    state.rdp.terminate_for_lock();
-    Ok(status)
+    state.rdp.update_app_lock(|| state.app_lock.lock())
 }
 
 #[tauri::command]
 pub fn unlock_app(state: State<'_, AppState>, password: String) -> AppResult<AppLockStatus> {
-    state.app_lock.unlock(&password)
+    state
+        .rdp
+        .update_app_lock(|| state.app_lock.unlock(&password))
 }
 
 #[tauri::command]
@@ -42,9 +40,5 @@ pub fn record_app_activity(state: State<'_, AppState>) -> AppResult<()> {
 
 #[tauri::command]
 pub fn lock_app_if_idle(state: State<'_, AppState>) -> AppResult<AppLockStatus> {
-    let status = state.app_lock.lock_if_idle()?;
-    if status.locked {
-        state.rdp.terminate_for_lock();
-    }
-    Ok(status)
+    state.rdp.update_app_lock(|| state.app_lock.lock_if_idle())
 }

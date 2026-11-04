@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,56 @@ class WorkerTests(unittest.TestCase):
         process.stdin.flush()
         process.stdin.close()
         self.assertEqual(process.wait(timeout=5), 0)
+
+    def test_lock_unlock_preserves_worker_and_pending_connection(self):
+        for initially_hidden in [False, True]:
+            with self.subTest(initially_hidden=initially_hidden), socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(8)
+                process = self.spawn()
+                arguments = [f"/v:127.0.0.1:{listener.getsockname()[1]}", "/u:test-only", "/p:test-only",
+                             "/sec:nla", "/cert:deny", "/log-level:OFF", "/timeout:15000"]
+                if initially_hidden:
+                    arguments.append("/dssh-initially-hidden")
+                process.stdin.write(packet(arguments))
+                process.stdin.flush()
+                lines = queue.Queue()
+
+                def read_lines():
+                    try:
+                        for line in iter(process.stdout.readline, b""):
+                            lines.put(line.strip())
+                    except (ValueError, OSError):
+                        pass
+
+                reader = threading.Thread(target=read_lines, daemon=True)
+                reader.start()
+
+                def wait_status(expected):
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        line = lines.get(timeout=max(0.01, deadline - time.monotonic()))
+                        if line == expected:
+                            return
+                    self.fail(f"Missing worker acknowledgement {expected!r}")
+
+                # Hold the same TCP connection open without completing RDP login.
+                # Locking must not abort a connect or destroy its worker process.
+                with listener.accept()[0]:
+                    pid = process.pid
+                    if initially_hidden:
+                        wait_status(b"DSSH_RDP_V1 hidden")
+                    for command, expected in [(b"hf", b"hidden"), (b"u", b"visible"),
+                                              (b"h", b"hidden"), (b"u", b"visible")]:
+                        process.stdin.write(command)
+                        process.stdin.flush()
+                        wait_status(b"DSSH_RDP_V1 " + expected)
+                        self.assertIsNone(process.poll())
+                        self.assertEqual(process.pid, pid)
+                    process.stdin.close()
+                    self.assertEqual(process.wait(timeout=5), 0)
+                reader.join(timeout=2)
 
     @unittest.skipUnless(shutil.which("openssl"), "Requires openssl CLI")
     def test_certificate_policies_and_explicit_skip(self):

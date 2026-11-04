@@ -4,6 +4,10 @@ import { join } from "node:path";
 // Keep upstream implementations and their license notices. All replacements
 // are checked against the pinned archive by build-rdp's strict adapt helper.
 export function adaptClipboard(source, sdl, adapt) {
+  const fileBridge = join(source, "client/common/client_cliprdr_file.c");
+  adapt(fileBridge, '#include <freerdp/client/client_cliprdr_file.h>', '#include <freerdp/client/client_cliprdr_file.h>\n#include "../SDL/SDL3/dssh_visibility_state.h"');
+  adapt(fileBridge, '\tCliprdrClientContext* cliprdr = file->context;', '\tif (dssh_desktop_locked()) return FALSE;\n\tCliprdrClientContext* cliprdr = file->context;');
+  adapt(fileBridge, '\t/*\n\t * MS-RDPECLIP 2.2.5.3 File Contents Request PDU', '\tif (dssh_desktop_locked()) return cliprdr_file_context_send_file_contents_failure(file, fileContentsRequest);\n\t/*\n\t * MS-RDPECLIP 2.2.5.3 File Contents Request PDU');
   const clip = join(sdl, "sdl_clip.cpp");
   adapt(clip, '#include "sdl_clip.hpp"', '#include "sdl_clip.hpp"\n#include "dssh_clipboard.h"');
   adapt(clip, '\treturn cliprdr_file_context_init(_file, _ctx);', `    const bool initialized = cliprdr_file_context_init(_file, _ctx);
@@ -18,7 +22,8 @@ export function adaptClipboard(source, sdl, adapt) {
               (mime_is_file(local_mime) || local_mime == s_type_file_url))) continue;`);
   // The SDL path is used by macOS. Do not publish or read a global clipboard
   // update for a background desktop; focus gain refreshes the local formats.
-  adapt(clip, '\tstd::unique_ptr<char*, decltype(&SDL_free)> current(nullptr, SDL_free);', '\tif (!SDL_GetKeyboardFocus()) return true;\n\tstd::unique_ptr<char*, decltype(&SDL_free)> current(nullptr, SDL_free);');
+  adapt(clip, '\tstd::unique_ptr<char*, decltype(&SDL_free)> current(nullptr, SDL_free);', '\tif (dssh_desktop_locked() || !SDL_GetKeyboardFocus()) return true;\n\tstd::unique_ptr<char*, decltype(&SDL_free)> current(nullptr, SDL_free);');
+  adapt(clip, '\tconst CLIPRDR_FORMAT_DATA_REQUEST request = { { CB_TYPE_NONE, 0, 0 }, formatID };', '\tif (dssh_desktop_locked()) return ERROR_ACCESS_DENIED;\n\tconst CLIPRDR_FORMAT_DATA_REQUEST request = { { CB_TYPE_NONE, 0, 0 }, formatID };');
   adapt(clip, '\t\tconst CLIPRDR_FORMAT* format = &formatList->formats[i];', `\t\tconst CLIPRDR_FORMAT* format = &formatList->formats[i];
         if (!dssh_clipboard_format(context->rdpcontext->settings, format->formatId, format->formatName)) continue;`);
   adapt(clip, '\t\tconst UINT32 fileId =\n\t\t    ClipboardRegisterFormat(clipboard->_system, s_type_FileGroupDescriptorW);', `        const char* requestedName = ClipboardGetFormatName(clipboard->_system, formatDataRequest->requestedFormatId);
@@ -51,6 +56,7 @@ export function adaptClipboard(source, sdl, adapt) {
   adapt(win, '\twfContext* wfc;', '\trdpContext* rdp;\n\tBOOL wasForeground;\n\tDWORD localFileSequence;');
   adapt(win, '#define WM_CLIPRDR_MESSAGE (WM_USER + 156)', `static BOOL dssh_clipboard_foreground(void)
 {
+    if (dssh_desktop_locked()) return FALSE;
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     return pid == GetCurrentProcessId();
@@ -116,8 +122,10 @@ export function adaptClipboard(source, sdl, adapt) {
         denied.common.msgFlags = CB_RESPONSE_FAIL;
         return context->ClientFormatDataResponse(context, &denied);
     }`);
+  adapt(win, '\tremoteFormatId = get_remote_format_id(clipboard, formatId);', '\tif (dssh_desktop_locked()) return ERROR_ACCESS_DENIED;\n\tremoteFormatId = get_remote_format_id(clipboard, formatId);');
+  adapt(win, '\tfileContentsRequest.streamId = (UINT32)(ULONG_PTR)streamid;', '\tif (dssh_desktop_locked()) return ERROR_ACCESS_DENIED;\n\tfileContentsRequest.streamId = (UINT32)(ULONG_PTR)streamid;');
   adapt(win, '\t\tres = wf_cliprdr_get_filedescriptor(clipboard, &requestedFormatData);', '\t\tres = wf_cliprdr_get_filedescriptor(clipboard, &requestedFormatData);\n\t\tclipboard->localFileSequence = GetClipboardSequenceNumber();');
-  adapt(win, '\tcbRequested = fileContentsRequest->cbRequested;', `    if (fileContentsRequest->cbRequested > 4 * 1024 * 1024 ||
+  adapt(win, '\tcbRequested = fileContentsRequest->cbRequested;', `    if (dssh_desktop_locked() || fileContentsRequest->cbRequested > 4 * 1024 * 1024 ||
         clipboard->localFileSequence != GetClipboardSequenceNumber())
         return dssh_clipboard_deny_file_request(context, fileContentsRequest);
 \tcbRequested = fileContentsRequest->cbRequested;`);

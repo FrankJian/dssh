@@ -6,6 +6,7 @@ use diagnostics::{WorkerDiagnostics, WorkerStatus, parse_status};
 use crate::{
     app::AppState,
     error::{AppError, AppResult},
+    models::app_lock::AppLockStatus,
     models::rdp::{PasswordUpdate, RdpEngineStatus, RdpProfile, RdpSession, SaveRdpProfileRequest},
     storage::ProfileRepository,
 };
@@ -14,7 +15,11 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -25,6 +30,8 @@ pub const STATUS_EVENT: &str = "rdp://session-status";
 pub struct RdpManager {
     inner: Arc<Mutex<HashMap<String, Runtime>>>,
     operations: Arc<Mutex<()>>,
+    visibility_operations: Arc<Mutex<()>>,
+    locked: Arc<AtomicBool>,
 }
 struct Runtime {
     descriptor: RdpSession,
@@ -33,8 +40,11 @@ struct Runtime {
 }
 enum Control {
     Close,
-    Terminate,
     Focus,
+    Visibility {
+        locked: bool,
+        done: mpsc::Sender<()>,
+    },
     Status(WorkerStatus),
     ReaderClosed,
     ProtocolFailed,
@@ -199,6 +209,9 @@ impl RdpManager {
     }
 
     pub fn control(&self, owner: &str, session_id: &str, close: bool) -> AppResult<()> {
+        if !close && self.locked.load(Ordering::Acquire) {
+            return Err(error("rdp_locked", "请先解锁 Duo SSH。"));
+        }
         let items = self
             .inner
             .lock()
@@ -231,12 +244,85 @@ impl RdpManager {
         }
     }
 
-    pub fn terminate_for_lock(&self) {
-        if let Ok(items) = self.inner.lock() {
-            for runtime in items.values() {
-                let _ = runtime.commands.send(Control::Terminate);
+    pub fn update_app_lock(
+        &self,
+        change: impl FnOnce() -> AppResult<AppLockStatus>,
+    ) -> AppResult<AppLockStatus> {
+        let _operation = self
+            .visibility_operations
+            .lock()
+            .map_err(|_| error("rdp_busy", "RDP 管理器暂不可用。"))?;
+        // Serialize authentication/state mutation with visibility transitions.
+        // Otherwise an old unlock racing a newer lock could reveal its workers.
+        let status = change()?;
+        self.set_locked_inner(status.locked)?;
+        Ok(status)
+    }
+
+    #[cfg(test)]
+    fn set_locked(&self, locked: bool) -> AppResult<()> {
+        let _operation = self.visibility_operations.lock().unwrap();
+        self.set_locked_inner(locked)
+    }
+
+    fn set_locked_inner(&self, locked: bool) -> AppResult<()> {
+        if self.locked.swap(locked, Ordering::AcqRel) == locked {
+            return Ok(());
+        }
+        let pending = {
+            let items = self
+                .inner
+                .lock()
+                .map_err(|_| error("rdp_busy", "RDP 管理器暂不可用。"))?;
+            items
+                .values()
+                .filter(|runtime| {
+                    !matches!(runtime.descriptor.status.as_str(), "closed" | "failed")
+                })
+                .filter_map(|runtime| {
+                    let (done, wait) = mpsc::channel();
+                    runtime
+                        .commands
+                        .send(Control::Visibility { locked, done })
+                        .ok()
+                        .map(|()| (runtime.descriptor.id.clone(), wait))
+                })
+                .collect::<Vec<_>>()
+        };
+        let deadline = Instant::now() + Duration::from_secs(8);
+        for (id, wait) in pending {
+            match wait.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(()) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // The ack sender can drop before ChildGuard finishes its
+                    // kill/wait. Wait for the supervisor's terminal state too.
+                    loop {
+                        let ended = self
+                            .inner
+                            .lock()
+                            .map_err(|_| error("rdp_busy", "RDP 管理器暂不可用。"))?
+                            .get(&id)
+                            .is_none_or(|runtime| {
+                                matches!(runtime.descriptor.status.as_str(), "closed" | "failed")
+                            });
+                        if ended {
+                            break;
+                        }
+                        if Instant::now() >= deadline {
+                            return Err(error("rdp_visibility", "无法确认远程桌面已隐藏或结束。"));
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(error(
+                        "rdp_visibility",
+                        "远程桌面窗口隐藏或恢复超时，请检查原生引擎。",
+                    ));
+                }
             }
         }
+        Ok(())
     }
 
     fn update(&self, app: &AppHandle, session_id: &str, status: &str, message: Option<&str>) {
@@ -460,11 +546,13 @@ impl RdpManager {
             }
             let _ = sender.send(Control::ReaderClosed);
         });
+        let mut visibility_waiters = Vec::new();
         let handshake_deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(Control::Status(WorkerStatus::Ready)) => break,
-                Ok(Control::Close | Control::Terminate) => {
+                Ok(Control::Visibility { locked, done }) => visibility_waiters.push((locked, done)),
+                Ok(Control::Close) => {
                     self.update(app, session_id, "closed", None);
                     return Ok(());
                 }
@@ -478,6 +566,15 @@ impl RdpManager {
                 return Err(error("rdp_protocol", "RDP 引擎启动握手超时。"));
             }
         }
+        let mut payload = payload;
+        if self.locked.load(Ordering::Acquire) {
+            let count =
+                u32::from_be_bytes(payload[..4].try_into().expect("encoded argument count"));
+            payload[..4].copy_from_slice(&(count + 1).to_be_bytes());
+            let flag = b"/dssh-initially-hidden";
+            payload.extend_from_slice(&(flag.len() as u32).to_be_bytes());
+            payload.extend_from_slice(flag);
+        }
         stdin
             .write_all(&payload)
             .and_then(|_| stdin.flush())
@@ -488,6 +585,18 @@ impl RdpManager {
         let mut diagnostics = WorkerDiagnostics::default();
         let mut reader_closed = false;
         let mut closing = None;
+        let mut visibility_deadline = None;
+        if !visibility_waiters.is_empty() || self.locked.load(Ordering::Acquire) {
+            stdin
+                .write_all(if self.locked.load(Ordering::Acquire) {
+                    b"h"
+                } else {
+                    b"u"
+                })
+                .and_then(|_| stdin.flush())
+                .map_err(|_| error("rdp_ipc", "RDP 控制通道已关闭。"))?;
+            visibility_deadline = Some(Instant::now() + Duration::from_secs(2));
+        }
         loop {
             if let Some(status) = child
                 .0
@@ -501,7 +610,7 @@ impl RdpManager {
                     match receiver.recv_timeout(Duration::from_millis(10)) {
                         Ok(Control::Status(status)) => diagnostics.observe(status),
                         Ok(Control::ReaderClosed) => reader_closed = true,
-                        Ok(Control::Close | Control::Terminate) => closing = Some(Instant::now()),
+                        Ok(Control::Close) => closing = Some(Instant::now()),
                         _ => {}
                     }
                 }
@@ -525,6 +634,17 @@ impl RdpManager {
                 self.update(app, session_id, "closed", None);
                 return Ok(());
             }
+            if visibility_deadline.is_some_and(|deadline| Instant::now() > deadline) {
+                // Fail closed only when an unresponsive / incompatible engine
+                // cannot confirm hiding. Normal locks never end the connection.
+                let _ = child.0.kill();
+                let _ = child.0.wait();
+                visibility_waiters.clear();
+                return Err(error(
+                    "rdp_visibility",
+                    "RDP 引擎未确认窗口隐藏或恢复，请更新完整安装包。",
+                ));
+            }
             if !diagnostics.connected
                 && closing.is_none()
                 && started.elapsed() > Duration::from_secs(30)
@@ -535,12 +655,6 @@ impl RdpManager {
                 ));
             }
             match receiver.recv_timeout(Duration::from_millis(50)) {
-                Ok(Control::Terminate) => {
-                    let _ = child.0.kill();
-                    let _ = child.0.wait();
-                    self.update(app, session_id, "closed", None);
-                    return Ok(());
-                }
                 Ok(Control::Close) if closing.is_none() => {
                     closing = Some(Instant::now());
                     self.update(app, session_id, "disconnecting", None);
@@ -548,10 +662,33 @@ impl RdpManager {
                     let _ = stdin.flush();
                 }
                 Ok(Control::Focus) => {
-                    let _ = stdin.write_all(b"f");
-                    let _ = stdin.flush();
+                    if !self.locked.load(Ordering::Acquire) {
+                        let _ = stdin.write_all(b"f");
+                        let _ = stdin.flush();
+                    }
+                }
+                Ok(Control::Visibility { locked, done }) => {
+                    visibility_waiters.push((locked, done));
+                    stdin
+                        .write_all(if locked { b"h" } else { b"u" })
+                        .and_then(|_| stdin.flush())
+                        .map_err(|_| error("rdp_ipc", "RDP 控制通道已关闭。"))?;
+                    visibility_deadline = Some(Instant::now() + Duration::from_secs(2));
                 }
                 Ok(Control::Status(status)) => {
+                    if let WorkerStatus::Visibility { hidden } = status {
+                        visibility_waiters.retain(|(locked, done)| {
+                            if *locked == hidden {
+                                let _ = done.send(());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        if visibility_waiters.is_empty() {
+                            visibility_deadline = None;
+                        }
+                    }
                     diagnostics.observe(status);
                     if status == WorkerStatus::UserClose && closing.is_none() {
                         closing = Some(Instant::now());
@@ -568,6 +705,157 @@ impl RdpManager {
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 _ => {}
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    fn fixture() -> (RdpManager, mpsc::Receiver<Control>) {
+        let manager = RdpManager::default();
+        let (commands, controls) = mpsc::channel();
+        manager.inner.lock().unwrap().insert(
+            "rdp:test".into(),
+            Runtime {
+                descriptor: RdpSession {
+                    id: "rdp:test".into(),
+                    profile_id: "profile".into(),
+                    title: "Desktop".into(),
+                    status: "connected".into(),
+                    message: None,
+                    revision: 4,
+                    certificate_verification_skipped: false,
+                },
+                owner: "main".into(),
+                commands,
+            },
+        );
+        (manager, controls)
+    }
+
+    fn status(locked: bool) -> AppLockStatus {
+        AppLockStatus {
+            locked,
+            settings: crate::models::app_lock::AppLockSettings {
+                enabled: true,
+                auto_lock_enabled: false,
+                timeout_minutes: 5,
+                has_password: true,
+            },
+        }
+    }
+
+    #[test]
+    fn lock_mutation_and_visibility_are_serialized_with_unlock() {
+        let (manager, controls) = fixture();
+        let copy = manager.clone();
+        let first = std::thread::spawn(move || copy.update_app_lock(|| Ok(status(true))));
+        let Control::Visibility { locked: true, done } =
+            controls.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected hide control");
+        };
+        let (entered, entry) = mpsc::channel();
+        let copy = manager.clone();
+        let second = std::thread::spawn(move || {
+            copy.update_app_lock(|| {
+                entered.send(()).unwrap();
+                Ok(status(false))
+            })
+        });
+        assert!(matches!(
+            entry.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        done.send(()).unwrap();
+        assert!(first.join().unwrap().unwrap().locked);
+        entry.recv_timeout(Duration::from_secs(2)).unwrap();
+        let Control::Visibility {
+            locked: false,
+            done,
+        } = controls.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected restore control after hide completed");
+        };
+        done.send(()).unwrap();
+        assert!(!second.join().unwrap().unwrap().locked);
+        assert!(
+            manager
+                .update_app_lock(|| Err(error("invalid_password", "test-only")))
+                .is_err()
+        );
+        assert!(matches!(
+            controls.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn missing_ack_waits_for_worker_cleanup() {
+        let (manager, controls) = fixture();
+        let copy = manager.clone();
+        let (finished, result) = mpsc::channel();
+        let operation = std::thread::spawn(move || finished.send(copy.set_locked(true)).unwrap());
+        let Control::Visibility { done, .. } =
+            controls.recv_timeout(Duration::from_secs(2)).unwrap()
+        else {
+            panic!("expected visibility control");
+        };
+        drop(done);
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        manager
+            .inner
+            .lock()
+            .unwrap()
+            .get_mut("rdp:test")
+            .unwrap()
+            .descriptor
+            .status = "failed".into();
+        result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        operation.join().unwrap();
+    }
+
+    #[test]
+    fn locking_waits_for_hide_and_preserves_the_same_session() {
+        let (manager, controls) = fixture();
+        for locked in [true, false, true, false] {
+            let copy = manager.clone();
+            let operation = std::thread::spawn(move || copy.set_locked(locked));
+            let Control::Visibility {
+                locked: requested,
+                done,
+            } = controls.recv_timeout(Duration::from_secs(2)).unwrap()
+            else {
+                panic!("lock must send visibility control, never close");
+            };
+            assert_eq!(requested, locked);
+            assert!(
+                !operation.is_finished(),
+                "lock must wait for native acknowledgement"
+            );
+            if locked {
+                assert!(manager.control("main", "rdp:test", false).is_err());
+            }
+            done.send(()).unwrap();
+            operation.join().unwrap().unwrap();
+            let sessions = manager.list("main");
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].id, "rdp:test");
+            assert_eq!(sessions[0].status, "connected");
+            assert_eq!(sessions[0].revision, 4);
+            manager.set_locked(locked).unwrap();
+            assert!(matches!(
+                controls.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
         }
     }
 }
