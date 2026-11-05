@@ -100,3 +100,45 @@ test("Ctrl+C clears an active command immediately", () => {
   tracker.observeInput("top\r");
   assert.equal(tracker.observeInput("\x03"), "idle");
 });
+
+test("empty submissions and erased input at a prompt stay idle", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  tracker.observeOutput("user@host:~$ ");
+  for (const input of ["\r", "\n", "\r\n", "   \r", "x\x7f\r"]) {
+    assert.equal(tracker.observeInput(input), null);
+    tracker.observeOutput("\r\nuser@host:~$ ");
+  }
+  assert.equal(tracker.observeInput("sleep 30\r"), "running");
+});
+
+test("Enter in a running program does not claim the command finished", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  assert.equal(tracker.observeInput("read answer\r"), "running");
+  assert.equal(tracker.observeInput("\r"), null);
+  assert.equal(tracker.observeOutput("\r\nuser@host:~$ "), "idle");
+});
+
+test("shell integration takes priority over prompt-like command output", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  tracker.observeOutput("\x1b]133;A\x07user@host:~$ \x1b]133;B\x07");
+  assert.equal(tracker.observeInput("deploy\r"), "running");
+  assert.equal(tracker.observeOutput("\x1b]133;C\x07\r\nprogress 50%"), null);
+  assert.equal(tracker.observeOutput("\r\nuser@host:~$ "), null);
+  assert.equal(tracker.observeOutput("\x1b]133;D;0\x07"), "idle");
+});
+
+test("restoring an integrated shell honours command markers rather than output suffixes", () => {
+  const running = new TerminalCommandActivityTracker();
+  assert.equal(running.restoreFromOutput("\x1b]133;A\x07host$ \x1b]133;B\x07\x1b]133;C\x07\r\nprogress 50%"), "running");
+  const idle = new TerminalCommandActivityTracker();
+  assert.equal(idle.restoreFromOutput("\x1b]133;D;0\x07\x1b]133;A\x07custom » \x1b]133;B\x07"), "idle");
+});
+
+test("a nested shell without integration can fall back after an integrated parent", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  tracker.observeOutput("\x1b]133;A\x07user@host:~$ \x1b]133;B\x07");
+  assert.equal(tracker.observeInput("bash\r"), null);
+  assert.equal(tracker.observeOutput("\x1b]133;C\x07\r\nchild@host:~$ "), null);
+  assert.equal(tracker.observeInput("sleep 30\r"), "running");
+  assert.equal(tracker.observeOutput("\r\nchild@host:~$ "), "idle");
+});

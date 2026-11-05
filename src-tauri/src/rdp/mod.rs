@@ -57,6 +57,25 @@ impl Drop for ChildGuard {
     }
 }
 
+// Windows restricts background processes from activating a window. The
+// workbench handling the user's click grants only its own worker permission,
+// immediately before forwarding that click over the private control pipe.
+fn allow_worker_foreground(_process_id: u32) {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            #[link_name = "AllowSetForegroundWindow"]
+            fn allow_set_foreground_window(process_id: u32) -> i32;
+        }
+        // SAFETY: the identifier belongs to the live child owned by this actor;
+        // this API takes no pointers and does not transfer process ownership.
+        unsafe {
+            allow_set_foreground_window(_process_id);
+        }
+    }
+}
+
 fn error(code: &str, message: &str) -> AppError {
     AppError::new(code, message)
 }
@@ -663,6 +682,7 @@ impl RdpManager {
                 }
                 Ok(Control::Focus) => {
                     if !self.locked.load(Ordering::Acquire) {
+                        allow_worker_foreground(child.0.id());
                         let _ = stdin.write_all(b"f");
                         let _ = stdin.flush();
                     }

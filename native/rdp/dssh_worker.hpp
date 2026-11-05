@@ -12,6 +12,7 @@
 #include <new>
 #include <system_error>
 #include "dssh_visibility.h"
+#include "dssh_window.hpp"
 #include <winpr/crypto.h>
 #include <winpr/ssl.h>
 #if defined(_WIN32)
@@ -138,8 +139,7 @@ inline void dssh_focus_windows()
     if (!windows) return;
     for (int i = 0; i < count; i++)
     {
-        SDL_RestoreWindow(windows[i]);
-        SDL_RaiseWindow(windows[i]);
+        dssh_focus_desktop_window(windows[i]);
     }
     SDL_free(windows);
 }

@@ -152,12 +152,38 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "Native toolbar drag failed\n");
         return 65;
     }
+    SDL_MinimizeWindow(window);
+    SDL_SyncWindow(window);
+    dssh_focus_desktop_window(window);
+    SDL_SyncWindow(window);
+#ifdef _WIN32
+    auto focusHwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (!focusHwnd || IsIconic(focusHwnd) || !IsWindowVisible(focusHwnd)) return 67;
+#else
+    // macOS deminiaturization completes through the event loop; SyncWindow is
+    // not supported by every SDL backend. Wait for the actual restored state.
+    const Uint64 restoreDeadline = SDL_GetTicks() + 3000;
+    while ((SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) && SDL_GetTicks() < restoreDeadline) {
+        SDL_Event pending = {};
+        SDL_WaitEventTimeout(&pending, 20);
+    }
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) return 67;
+#endif
+    SDL_MaximizeWindow(window);
+    SDL_SyncWindow(window);
+    const bool maximized = SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED;
+    dssh_focus_desktop_window(window);
+    SDL_SyncWindow(window);
+    if (maximized && !(SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED)) return 68;
+    SDL_RestoreWindow(window);
+    SDL_SyncWindow(window);
     const auto originalId = SDL_GetWindowID(window);
     auto alreadyHidden = SDL_CreateWindow("Hidden fixture", 100, 100, SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE);
     if (!alreadyHidden) return 35;
     dssh_request_desktop_lock(true);
     dssh_visibility_tick();
     dssh_visibility_tick(); // repeated idle checks must not overwrite restore state
+    dssh_focus_desktop_window(window); // activation must never bypass the app lock
     if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) ||
         !(SDL_GetWindowFlags(window) & SDL_WINDOW_NOT_FOCUSABLE) ||
         dssh_chrome_test_visible(window)) return 36;

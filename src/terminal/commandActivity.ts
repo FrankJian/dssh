@@ -31,12 +31,15 @@ export class TerminalCommandActivityTracker {
   private promptBeforeCommand: string | null = null;
   private sawLineBreakSinceCommand = false;
   private ignoreNextOscCommandStart = false;
+  private hasShellIntegration = false;
   private osc = "";
 
   /** A newly attached PTY may already be running a command whose input was hidden. */
   restoreFromOutput(data: string): CommandActivity {
     this.observeOutput(data);
-    this.activity = looksLikeShellPrompt(this.currentLine) ? "idle" : "running";
+    if (!this.hasShellIntegration) {
+      this.activity = looksLikeShellPrompt(this.currentLine) ? "idle" : "running";
+    }
     this.sawLineBreakSinceCommand = true;
     return this.activity;
   }
@@ -53,10 +56,15 @@ export class TerminalCommandActivityTracker {
       // This also handles custom prompts that do not end in $, #, or %.
       this.promptBeforeCommand = this.currentLine || null;
     }
-    const submittedInteractiveShell = this.recordInput(data);
+    const { submittedInteractiveShell, submittedCommand } = this.recordInput(data);
     if (data.includes("\r") || data.includes("\n")) {
+      if (!submittedCommand && this.activity === "idle") {
+        return this.setActivity("idle");
+      }
       this.sawLineBreakSinceCommand = false;
       if (submittedInteractiveShell) {
+        // The nested shell may not inherit the parent's integration hooks.
+        this.hasShellIntegration = false;
         // A child shell owns the terminal interactively. It is not a
         // background or long-running task for the tab indicator, and its
         // parent shell's OSC 133;C marker must not turn the indicator back on.
@@ -125,7 +133,7 @@ export class TerminalCommandActivityTracker {
       }
     }
 
-    if (sawVisibleOutput && this.activity === "running" && this.sawLineBreakSinceCommand
+    if (!this.hasShellIntegration && sawVisibleOutput && this.activity === "running" && this.sawLineBreakSinceCommand
       && (looksLikeShellPrompt(this.currentLine)
         || (this.promptBeforeCommand !== null && this.currentLine === this.promptBeforeCommand))) {
       changed = this.setActivity("idle") ?? changed;
@@ -137,7 +145,12 @@ export class TerminalCommandActivityTracker {
     this.parserState = "text";
     const marker = /^133;([ABCD])(?:;|$)/.exec(this.osc)?.[1];
     this.osc = "";
-    if (!marker || marker === "B") return null;
+    if (!marker) return null;
+    // Once a shell supplies prompt/completion markers, trust its lifecycle.
+    // Output such as "progress 50%" is not a prompt, even across PTY chunks.
+    // A lone C marker can come from a parent shell, so keep fallback in that case.
+    if (marker !== "C") this.hasShellIntegration = true;
+    if (marker === "B") return null;
     if (marker === "C" && this.ignoreNextOscCommandStart) {
       this.ignoreNextOscCommandStart = false;
       return null;
@@ -146,11 +159,13 @@ export class TerminalCommandActivityTracker {
     return this.setActivity(marker === "C" ? "running" : "idle");
   }
 
-  private recordInput(data: string): boolean {
+  private recordInput(data: string): { submittedInteractiveShell: boolean; submittedCommand: boolean } {
     let submittedInteractiveShell = false;
+    let submittedCommand = false;
     for (const char of data) {
       if (char === "\r" || char === "\n") {
         submittedInteractiveShell ||= isInteractiveShellInvocation(this.inputLine);
+        submittedCommand ||= this.inputLine.trim().length > 0;
         this.inputLine = "";
       } else if (char === "\x7f" || char === "\b") {
         this.inputLine = this.inputLine.slice(0, -1);
@@ -161,7 +176,7 @@ export class TerminalCommandActivityTracker {
         }
       }
     }
-    return submittedInteractiveShell;
+    return { submittedInteractiveShell, submittedCommand };
   }
 
   private setActivity(next: CommandActivity): CommandActivity | null {

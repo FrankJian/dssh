@@ -41,6 +41,7 @@ inline SDL_Rect dssh_window_geometry(int width, int height, const SDL_Rect& usab
             usable.y + (usable.h - h - top - bottom) / 2 + top, w, h};
 }
 
+void dssh_focus_desktop_window(SDL_Window* window);
 void dssh_prepare_desktop_window(SDL_Window* window, SDL_DisplayID display);
 void dssh_prepare_desktop_input(SDL_Window* window);
 void dssh_restore_desktop_input(SDL_Window* window);

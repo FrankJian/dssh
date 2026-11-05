@@ -281,6 +281,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   terminal.loadAddon(serializeAddon);
   const activateLink = (event: MouseEvent, uri: string) => {
     event.preventDefault();
+    if (!event.ctrlKey) {
+      return;
+    }
     void openTerminalLink(uri).catch((error: Error) => toast(error.message, "error"));
   };
   terminal.options.linkHandler = { activate: activateLink };

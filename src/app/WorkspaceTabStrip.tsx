@@ -30,6 +30,24 @@ interface WorkspaceTabStripProps {
   onReorder?: (draggedId: string, targetId: string) => void;
 }
 
+function TabKindIcon({ icon, running = false }: Pick<WorkspaceTabItem, "icon" | "running">) {
+  const [sustained, setSustained] = useState(false);
+  useEffect(() => {
+    if (!running) {
+      setSustained(false);
+      return;
+    }
+    // Filter quick commands in the presentation only. Close confirmations and
+    // accessible status still use the immediate command activity signal.
+    const timer = window.setTimeout(() => setSustained(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [running]);
+  return <span
+    className="tab__kind-icon"
+    title={running ? "命令正在运行" : undefined}
+  ><Icon name={icon} className={running && sustained ? "is-running" : undefined} /></span>;
+}
+
 function TabTitle({ value }: { value: string }) {
   const containerRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
@@ -311,12 +329,7 @@ export function WorkspaceTabStrip({
           role="tab"
           tabIndex={0}
         >
-          <span
-            className={`tab__kind-icon${tab.running ? " is-running" : ""}`}
-            title={tab.running ? "命令正在运行" : undefined}
-          >
-            <Icon name={tab.icon} />
-          </span>
+          <TabKindIcon icon={tab.icon} running={tab.running} />
           {editingTabId === tab.id ? (
             <input
               aria-label="标签名称"

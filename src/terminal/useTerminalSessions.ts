@@ -313,6 +313,9 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
         ),
       );
       if (event.status !== "connected") {
+        // Keep the parser and public activity set in sync across transport
+        // recovery; otherwise a stale "running" tracker suppresses the next start.
+        activityTrackersRef.current.delete(event.sessionId);
         updateCommandActivity(event.sessionId, "idle");
         setTerminalConflicts((current) => current.filter((item) => item.sessionId !== event.sessionId));
       }
