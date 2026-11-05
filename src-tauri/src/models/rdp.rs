@@ -30,6 +30,9 @@ pub struct RdpProfile {
     pub skip_certificate_verification: bool,
     #[serde(default)]
     pub clipboard_mode: ClipboardMode,
+    /// Resize the remote desktop through the RDP display-control channel.
+    #[serde(default)]
+    pub dynamic_resolution: bool,
     pub width: u16,
     pub height: u16,
     pub favorite: bool,
@@ -162,6 +165,7 @@ mod tests {
             certificate_fingerprint: String::new(),
             skip_certificate_verification: false,
             clipboard_mode: ClipboardMode::Off,
+            dynamic_resolution: false,
             width: 1920,
             height: 1080,
             favorite: false,

@@ -20,7 +20,8 @@ inline bool dssh_apply_window_policy(rdpSettings* settings)
            freerdp_settings_set_bool(settings, FreeRDP_ForceMultimon, FALSE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SpanMonitors, FALSE) &&
            freerdp_settings_set_bool(settings, FreeRDP_Decorations, TRUE) &&
-           freerdp_settings_set_bool(settings, FreeRDP_SmartSizing, TRUE);
+           freerdp_settings_set_bool(settings, FreeRDP_SmartSizing,
+               !freerdp_settings_get_bool(settings, FreeRDP_DynamicResolutionUpdate));
 }
 
 // SDL window sizes, border sizes and usable display bounds use logical units.

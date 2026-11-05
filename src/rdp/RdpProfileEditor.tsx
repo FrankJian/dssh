@@ -22,7 +22,7 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
   const dialogRef = useDialogFocus();
   const [draft, setDraft] = useState<RdpProfile>(() => profile ? { ...profile, id: clone ? "" : profile.id, name: clone ? `${profile.name} 克隆` : profile.name, tags: [...profile.tags] } : { ...emptyRdpProfile(), tags: initialTags ?? [], folder: initialFolder ?? "" });
   const [resolution, setResolution] = useState(() =>
-    RESOLUTION_PRESETS.find((preset) => preset.width === draft.width && preset.height === draft.height)?.value ?? "custom");
+    draft.dynamicResolution ? "auto" : RESOLUTION_PRESETS.find((preset) => preset.width === draft.width && preset.height === draft.height)?.value ?? "custom");
   const [password, setPassword] = useState("");
   const [passwordAction, setPasswordAction] = useState<PasswordUpdate["action"]>("keep");
   const [busy, setBusy] = useState(false);
@@ -78,13 +78,14 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
         </div>
         <div className="field"><span>桌面分辨率</span>
           <SelectMenu ariaLabel="桌面分辨率" value={resolution}
-            options={[...RESOLUTION_PRESETS, { value: "custom", label: "自定义" }]}
+            disabled={busy} options={[{ value: "auto", label: "自适应 · 跟随窗口大小" }, ...RESOLUTION_PRESETS, { value: "custom", label: "自定义" }]}
             onChange={(value) => {
               setResolution(value);
               const preset = RESOLUTION_PRESETS.find((item) => item.value === value);
-              if (preset) setDraft((current) => ({ ...current, width: preset.width, height: preset.height }));
+              setDraft((current) => ({ ...current, dynamicResolution: value === "auto",
+                ...(preset ? { width: preset.width, height: preset.height } : {}) }));
             }} />
-          <small className="profile-form__hint">保存后，下次连接生效。</small>
+          <small className="profile-form__hint">{resolution === "auto" ? "调整窗口大小、最大化或切换全屏时，远端桌面分辨率随之调整，需要远端支持动态分辨率。" : "远端使用所选分辨率，窗口变化时缩放画面。"} 保存后，下次连接生效。</small>
         </div>
         {resolution === "custom" ? <div className="rdp-editor__row">
           <label className="field"><span>桌面宽度</span><input required type="number" min={640} max={7680} value={draft.width} onChange={(e) => field("width", Number(e.target.value))} /></label>

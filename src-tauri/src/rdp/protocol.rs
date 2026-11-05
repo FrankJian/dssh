@@ -39,11 +39,17 @@ pub fn encode_arguments(profile: &RdpProfile, password: &str) -> AppResult<Zeroi
         "-auto-reconnect".into(),
         "-drives".into(),
         "-multimon".into(),
-        "-dynamic-resolution".into(),
-        "/smart-sizing".into(),
         "/log-level:OFF".into(),
         "/timeout:15000".into(),
     ]);
+    // FreeRDP rejects smart sizing and dynamic resolution together.
+    if profile.dynamic_resolution {
+        args.push("-smart-sizing".into());
+        args.push("+dynamic-resolution".into());
+    } else {
+        args.push("-dynamic-resolution".into());
+        args.push("/smart-sizing".into());
+    }
     match profile.clipboard_mode {
         ClipboardMode::Off => args.push("-clipboard".into()),
         mode => {
@@ -115,6 +121,27 @@ mod tests {
         let mut unknown = json;
         unknown["clipboardMode"] = serde_json::json!("allowEverything");
         assert!(serde_json::from_value::<RdpProfile>(unknown).is_err());
+    }
+
+    #[test]
+    fn adaptive_resolution_is_opt_in_and_excludes_smart_sizing() {
+        let mut profile: RdpProfile = serde_json::from_value(serde_json::json!({
+            "id":"rdp:test","name":"PC","host":"pc","port":3389,"username":"user",
+            "domain":"","certificateFingerprint":"","width":2560,"height":1440,"favorite":false,
+            "tags":[],"description":"","hasPassword":false,"createdAt":"1","updatedAt":"1"
+        }))
+        .unwrap();
+        assert!(!profile.dynamic_resolution);
+        for adaptive in [false, true, false] {
+            profile.dynamic_resolution = adaptive;
+            let args = decode_arguments(&encode_arguments(&profile, "test-only").unwrap());
+            assert_eq!(args.iter().any(|a| a == "+dynamic-resolution"), adaptive);
+            assert_eq!(args.iter().any(|a| a == "-dynamic-resolution"), !adaptive);
+            assert_eq!(args.iter().any(|a| a == "/smart-sizing"), !adaptive);
+            assert_eq!(args.iter().any(|a| a == "-smart-sizing"), adaptive);
+            assert!(args.iter().any(|a| a == "/size:2560x1440"));
+            assert!(args.iter().any(|a| a == "-multimon"));
+        }
     }
 
     fn decode_arguments(bytes: &[u8]) -> Vec<String> {

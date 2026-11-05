@@ -128,6 +128,20 @@ mod tests {
                 mode
             );
         }
+        assert!(!profile.dynamic_resolution);
+        for adaptive in [true, false] {
+            profile.dynamic_resolution = adaptive;
+            repo.save_rdp_profile(&profile, stored.secret_ref.as_deref())
+                .unwrap();
+            let reopened = ProfileRepository::initialize(&dir, "test.db").unwrap();
+            let saved = reopened
+                .get_rdp_profile("rdp:test")
+                .unwrap()
+                .unwrap()
+                .profile;
+            assert_eq!(saved.dynamic_resolution, adaptive);
+            assert_eq!((saved.width, saved.height), (1920, 1080));
+        }
         profile.skip_certificate_verification = true;
         repo.save_rdp_profile(&profile, stored.secret_ref.as_deref())
             .unwrap();

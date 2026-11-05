@@ -56,6 +56,13 @@ int main(int argc, char** argv)
         !freerdp_settings_get_bool(settings, FreeRDP_SpanMonitors) &&
         freerdp_settings_get_bool(settings, FreeRDP_Decorations) &&
         freerdp_settings_get_bool(settings, FreeRDP_SmartSizing);
+    for (const bool adaptive : {true, false, true}) {
+        freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, adaptive);
+        freerdp_settings_set_bool(settings, FreeRDP_SmartSizing, adaptive);
+        if (!dssh_apply_window_policy(settings) ||
+            bool(freerdp_settings_get_bool(settings, FreeRDP_DynamicResolutionUpdate)) != adaptive ||
+            bool(freerdp_settings_get_bool(settings, FreeRDP_SmartSizing)) == adaptive) return 66;
+    }
     freerdp_settings_free(settings);
     if (!policy) return 14;
     // Oversized desktop on a secondary monitor, with a taskbar / title bar.

@@ -98,14 +98,17 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=5), 0)
 
     def test_lock_unlock_preserves_worker_and_pending_connection(self):
-        for initially_hidden in [False, True]:
-            with self.subTest(initially_hidden=initially_hidden), socket.socket() as listener:
+        for initially_hidden, adaptive in [(h, a) for h in [False, True] for a in [False, True]]:
+            with self.subTest(initially_hidden=initially_hidden, adaptive=adaptive), socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 listener.listen(1)
                 listener.settimeout(8)
                 process = self.spawn()
                 arguments = [f"/v:127.0.0.1:{listener.getsockname()[1]}", "/u:test-only", "/p:test-only",
                              "/sec:nla", "/cert:deny", "/log-level:OFF", "/timeout:15000"]
+                arguments.extend(["-f", "+decorations", "-drives", "-multimon", "/size:1920x1080"])
+                arguments.extend(["-smart-sizing", "+dynamic-resolution"] if adaptive else
+                                 ["-dynamic-resolution", "/smart-sizing"])
                 if initially_hidden:
                     arguments.append("/dssh-initially-hidden")
                 process.stdin.write(packet(arguments))
