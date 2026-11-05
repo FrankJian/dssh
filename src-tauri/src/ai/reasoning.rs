@@ -81,7 +81,41 @@ pub fn apply(
     let Some(row) = selected_level(model, requested)? else {
         return Ok(());
     };
-    let body = payload(protocol, preset_id, row);
+    let body = if protocol == AiProtocol::Anthropic && legacy_anthropic_thinking(&model.id) {
+        if row.level == "off" {
+            if !row.api_value.is_empty() {
+                return Err(AppError::new(
+                    "ai_config_error",
+                    "旧版 Claude 的 off 档位不接受 effort 参数值，请清空此档位的 API 参数值。",
+                ));
+            }
+            json!({"thinking":{"type":"disabled"}})
+        } else {
+            let available = options
+                .max_tokens
+                .unwrap_or(model.max_output_tokens)
+                .saturating_sub(1);
+            if available < 1024 {
+                return Err(AppError::new(
+                    "ai_config_error",
+                    "此 Claude 模型的思考预算至少为 1024 tokens，最大输出必须大于 1024。请增大最大输出或关闭推理等级。",
+                ));
+            }
+            let configured = match row.api_value.as_str() {
+                "" | "low" | "medium" | "high" if row.api_value.is_empty() || row.api_value == row.level => match row.level.as_str() { "low" => 1024, "high" => 8192, _ => 4096 },
+                value => value.parse::<u32>().map_err(|_| AppError::new("ai_config_error", "此旧版 Claude 模型使用思考 token 预算，API 参数值须为至少 1024 的整数，或使用档位默认值。"))?,
+            };
+            if configured < 1024 {
+                return Err(AppError::new(
+                    "ai_config_error",
+                    "Claude 思考 token 预算不能小于 1024。",
+                ));
+            }
+            json!({"thinking":{"type":"enabled","budget_tokens":configured.min(available)}})
+        }
+    } else {
+        payload(protocol, preset_id, row)
+    };
     let extra = options.extra_body.get_or_insert_with(|| json!({}));
     for (key, value) in body.as_object().expect("reasoning payload").iter() {
         extra[key] = value.clone();
@@ -93,10 +127,68 @@ pub fn apply(
     Ok(())
 }
 
+/// Only known legacy Claude IDs select the legacy capability; arbitrary gateway
+/// aliases retain the configured protocol's adaptive mapping. No adapter inference.
+pub fn legacy_anthropic_thinking(id: &str) -> bool {
+    let id = id.rsplit('/').next().unwrap_or(id);
+    [
+        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
+        "claude-opus-4-5",
+        "claude-opus-4.5",
+        "claude-haiku-4-5",
+        "claude-haiku-4.5",
+        "claude-opus-4-1",
+        "claude-opus-4.1",
+        "claude-3-7-sonnet",
+        "claude-3.7-sonnet",
+    ]
+    .iter()
+    .any(|prefix| {
+        id.strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('-'))
+    }) || ["claude-sonnet-4", "claude-opus-4"].iter().any(|prefix| {
+        id.strip_prefix(prefix).is_some_and(|suffix| {
+            suffix.is_empty()
+                || suffix
+                    .strip_prefix('-')
+                    .is_some_and(|date| date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()))
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::ai::default_reasoning_levels;
+    #[test]
+    fn legacy_claude_uses_a_valid_budget_instead_of_adaptive_thinking() {
+        let mut model = AiModelConfig::from_id("claude-sonnet-4-5-20250929".into());
+        model.reasoning_levels = default_reasoning_levels();
+        model.reasoning_effort = Some("medium".into());
+        let mut options = ChatOptions::default().with_max_tokens(2048);
+        apply(
+            &mut options,
+            AiProtocol::Anthropic,
+            Some("custom"),
+            &model,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            options.extra_body.unwrap(),
+            json!({"thinking":{"type":"enabled","budget_tokens":2047}})
+        );
+        let mut too_small = ChatOptions::default().with_max_tokens(1024);
+        assert!(apply(&mut too_small, AiProtocol::Anthropic, None, &model, None).is_err());
+        model.id = "claude-sonnet-4-6".into();
+        let mut modern = ChatOptions::default().with_max_tokens(1024);
+        apply(&mut modern, AiProtocol::Anthropic, None, &model, None).unwrap();
+        assert_eq!(modern.extra_body.unwrap()["thinking"]["type"], "adaptive");
+        assert!(!legacy_anthropic_thinking("custom-gateway-model"));
+        assert!(!legacy_anthropic_thinking("claude-opus-4-7"));
+        assert!(legacy_anthropic_thinking("claude-opus-4-20250514"));
+    }
     #[test]
     fn configured_values_and_off_legacy_values_are_never_coerced() {
         let custom = AiReasoningLevel {

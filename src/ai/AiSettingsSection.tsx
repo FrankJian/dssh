@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { AiProvider, AiProviderKind } from "../models/ai";
+import type { AiConnectionTestResult, AiProvider, AiProviderKind } from "../models/ai";
 import { listAiModels, testAiConnection } from "../services/aiService";
 import { Button } from "../ui/Button";
 import { SelectMenu } from "../ui/SelectMenu";
@@ -10,6 +10,7 @@ import type { AiConfig } from "./useAiConfig";
 import { settingsActionError } from "./aiSettingsValidation";
 import type { AssistantDockControls } from "../app/useAssistantDock";
 import { AiDockSettings } from "./AiDockSettings";
+import { AiConnectionDetails } from "./AiConnectionDetails";
 
 export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiConfig; assistantDock?: AssistantDockControls }) {
   const { providers, activeProviderId, options, setOptions } = aiConfig;
@@ -23,6 +24,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<AiConnectionTestResult | null>(null);
   const [dirty, setDirty] = useState(false);
 
   function edit(provider: AiProvider) {
@@ -30,14 +32,14 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
     setDraft({ ...provider });
     setDiscoveredModels([]); setModelPending(false); setModelEditorRevision((value) => value + 1);
     setPresetId(inferPresetId(provider));
-    setDirty(false); setError(null); setNotice(null);
+    setDirty(false); setError(null); setNotice(null); setTestResult(null);
   }
   function patch(value: Partial<AiProvider>) {
     setDraft((previous) => previous ? { ...previous, ...value } : null);
-    setDirty(true); setNotice(null); setError(null);
+    setDirty(true); setNotice(null); setError(null); setTestResult(null);
   }
   function prepareAction(testingConnection = false) {
-    setError(null); setNotice(null);
+    setError(null); setNotice(null); setTestResult(null);
     if (!draft) return null;
     try {
       const provider = { ...draft, ...modelCatalog.current?.resolve() };
@@ -56,7 +58,9 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
     setBusy(true); setTesting(true); setError(null); setNotice(null);
     try {
       const result = await testAiConnection(provider);
-      setNotice(`连接成功 · ${result.model} · ${(result.elapsedMs / 1000).toFixed(2)} 秒`);
+      setTestResult(result);
+      if (result.success) setNotice(`连接成功 · ${result.model} · ${(result.elapsedMs / 1000).toFixed(2)} 秒`);
+      else setError(result.message);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "连接测试失败，请检查配置。");
     } finally { setBusy(false); setTesting(false); }
@@ -84,7 +88,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
     setBusy(true); setError(null);
     try {
       await aiConfig.removeProvider(draft.id);
-      setDraft(null); setDirty(false); setNotice(null);
+      setDraft(null); setDirty(false); setNotice(null); setTestResult(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "删除失败。"); }
     finally { setBusy(false); }
   }
@@ -172,6 +176,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                     {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
                     {testing ? <span className="settings-field__hint" role="status">正在测试默认模型连接，最长等待 30 秒…</span> : null}
                     {notice ? <span className="settings-field__hint" role="status">{notice}</span> : null}
+                    {testResult ? <AiConnectionDetails result={testResult} /> : null}
                   </div>
                 </div>
                 {dirty ? <span className="settings-field__hint">有未保存的修改</span> : null}

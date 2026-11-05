@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import type {
   AiEvent,
+  AiConnectionTestResult,
   AiProvider,
   AiSendMessageRequest,
 } from "../models/ai";
@@ -35,8 +36,12 @@ export function saveAiProvider(provider: AiProvider) {
   return invokeCommand<AiProvider>("ai_save_provider", { provider });
 }
 
-export function testAiConnection(provider: AiProvider) {
-  return invokeCommand<{ model: string; elapsedMs: number }>("ai_test_connection", { provider });
+export async function testAiConnection(provider: AiProvider) {
+  const result = await invokeCommand<AiConnectionTestResult>("ai_test_connection", { provider });
+  if (!result?.details || typeof result.success !== "boolean") {
+    throw new Error("连接诊断已更新，请重启应用加载新后端后再测试。");
+  }
+  return result;
 }
 
 export function deleteAiProvider(id: string) {

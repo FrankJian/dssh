@@ -14,6 +14,7 @@ pub mod background;
 pub mod client;
 pub mod connection;
 mod context;
+mod diagnostics;
 mod output_wait;
 pub mod providers;
 mod reasoning;

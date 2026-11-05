@@ -32,6 +32,28 @@ export interface AiProvider {
   kind: AiProviderKind;
 }
 
+export interface AiConnectionTestResult {
+  success: boolean;
+  message: string;
+  model: string;
+  elapsedMs: number;
+  details: {
+    protocol: AiProviderKind;
+    stage: string;
+    method: string;
+    apiUrl: string | null;
+    proxy: string;
+    authenticationConfigured: boolean;
+    requestHeaders: Record<string, string>;
+    requestBody: Record<string, unknown> | null;
+    httpStatus: number | null;
+    responseHeaders: Record<string, string>;
+    responseError: Record<string, unknown> | null;
+    errorType: string | null;
+    cause: string | null;
+  };
+}
+
 export interface AiServerContext {
   id: string;
   label: string;

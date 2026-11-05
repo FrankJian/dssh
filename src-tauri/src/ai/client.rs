@@ -94,6 +94,7 @@ pub fn adapter_kind(protocol: AiProtocol) -> AdapterKind {
 
 pub fn build_reqwest_client(proxy_url: &str) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(180));
     let trimmed = proxy_url.trim();

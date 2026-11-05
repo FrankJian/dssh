@@ -21,7 +21,7 @@ import {
 
 import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
 type Scope = "all" | "favorites" | "recent" | "untagged" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
-type SortKey = "recent" | "name" | "host";
+type SortKey = "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
 const SORT_KEY = "dssh.sessionManager.sort";
@@ -30,7 +30,6 @@ const TYPE_FILTER_KEY = "dssh.sessionManager.typeFilter";
 type ConnectionTypeFilter = "all" | ConnectionType;
 
 const SORT_OPTIONS: { id: SortKey; label: string }[] = [
-  { id: "recent", label: "最近使用" },
   { id: "name", label: "名称" },
   { id: "host", label: "主机" },
 ];
@@ -47,7 +46,7 @@ function loadView(): ViewMode {
 
 function loadSort(): SortKey {
   const raw = localStorage.getItem(SORT_KEY);
-  return raw === "recent" || raw === "name" || raw === "host" ? raw : "recent";
+  return raw === "host" ? "host" : "name";
 }
 
 function loadTypeFilter(): ConnectionTypeFilter {
@@ -214,20 +213,19 @@ export function SessionManager({
 
   const sorted = useMemo(() => {
     const list = [...filtered];
-    if (sort === "name") {
-      list.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sort === "host") {
-      list.sort((a, b) => a.host.localeCompare(b.host) || a.name.localeCompare(b.name));
-    } else {
+    const byName = (a: ConnectionProfile, b: ConnectionProfile) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true }) || a.id.localeCompare(b.id);
+    if (activeScope === "recent") {
       const rank = new Map(recentIds.map((id, index) => [id, index]));
-      list.sort((a, b) => {
-        const ra = rank.has(a.id) ? rank.get(a.id)! : Number.MAX_SAFE_INTEGER;
-        const rb = rank.has(b.id) ? rank.get(b.id)! : Number.MAX_SAFE_INTEGER;
-        return ra - rb || a.name.localeCompare(b.name);
-      });
+      list.sort((a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER)
+        - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER) || byName(a, b));
+    } else if (sort === "host") {
+      list.sort((a, b) => a.host.localeCompare(b.host, undefined, { numeric: true }) || byName(a, b));
+    } else {
+      list.sort(byName);
     }
     return list;
-  }, [filtered, sort, recentIds]);
+  }, [filtered, sort, recentIds, activeScope]);
 
   const tagGroups = useMemo(() => {
     const groups = tags.map((tag) => ({ key: `tag:${tag}`, label: tag,
@@ -349,8 +347,10 @@ export function SessionManager({
               <SelectMenu
                 ariaLabel="连接排序"
                 onChange={(value) => changeSort(value as SortKey)}
-                options={SORT_OPTIONS.map((option) => ({ label: option.label, value: option.id }))}
-                value={sort}
+                disabled={activeScope === "recent"}
+                options={activeScope === "recent" ? [{ label: "最近使用", value: "recent" }]
+                  : SORT_OPTIONS.map((option) => ({ label: option.label, value: option.id }))}
+                value={activeScope === "recent" ? "recent" : sort}
               />
             </div>
             <ConnectionViewToggle value={view} onChange={changeView} />
