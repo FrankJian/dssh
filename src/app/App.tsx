@@ -42,7 +42,6 @@ import {
   type SshAuthPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
-import { ServerSnapshotButton } from "../hosttools/snapshot/ServerSnapshotButton";
 import type { S3Profile, SshProfile, TerminalSession, TerminalSize } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
@@ -1350,8 +1349,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
   const activePaneLayout = panes.findLayout(activeSessionId);
-  const focusedSnapshotSession = sessions.find((session) => session.id === (activePaneLayout?.focusedPaneId ?? activeSessionId));
-  const snapshotSession = focusedSnapshotSession && !isJumpServerSource(focusedSnapshotSession.profileId) ? focusedSnapshotSession : null;
 
   const toggleTerminalFullscreen = useCallback(() => {
     const paneId = activePaneLayout?.focusedPaneId ?? activeSessionId;
@@ -2282,7 +2279,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                       onOpenHostTools={canForward ? () => toggleRightPanel("hosttools") : undefined}
                       onOpenPortForward={canForward ? handleOpenPortForward : undefined}
                     />
-                    <ServerSnapshotButton session={snapshotSession} />
                     <button
                       className="tab-action"
                       disabled={!activeCanSplit}

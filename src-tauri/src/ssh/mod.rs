@@ -4,7 +4,6 @@ pub mod auth_prompts;
 pub mod command;
 pub mod connection_pool;
 pub mod host_keys;
-pub(crate) mod interactive_snapshot;
 pub mod session_manager;
 pub(crate) mod zmodem;
 
