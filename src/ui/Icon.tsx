@@ -63,6 +63,7 @@ export type IconName =
   | "shield"
   | "settings"
   | "lock"
+  | "lockOpen"
   | "linux"
   | "splitH"
   | "splitV"
@@ -166,6 +167,12 @@ export function Icon({ name, ...props }: IconProps) {
           <rect height="10" rx="1.5" width="13" x="5.5" y="10" />
           <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
           <path d="M12 14.5v2" />
+        </>
+      ) : null}
+      {name === "lockOpen" ? (
+        <>
+          <rect height="10" rx="1.5" width="13" x="5.5" y="10" />
+          <path d="M8.5 10V7.5a3.5 3.5 0 0 1 6.8-1.2M12 14.5v2" />
         </>
       ) : null}
       {name === "ssh" ? (

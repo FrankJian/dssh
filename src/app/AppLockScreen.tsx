@@ -1,13 +1,62 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useDialogFocus } from "../rdp/useDialogFocus";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 
 interface AppLockScreenProps {
+  locked: boolean;
   onUnlock: (password: string) => Promise<void>;
 }
 
-export function AppLockScreen({ onUnlock }: AppLockScreenProps) {
+const UNLOCK_TRANSITION_MS = 1200;
+
+export function AppLockScreen({ locked, onUnlock }: AppLockScreenProps) {
+  const [present, setPresent] = useState(locked);
+  useEffect(() => {
+    if (locked) {
+      setPresent(true);
+      return;
+    }
+    if (!present) return;
+    const timer = window.setTimeout(() => setPresent(false), UNLOCK_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [locked, present]);
+
+  // Backend lock state remains immediate, including events from other windows.
+  // Unmount the password form first; only the dismissible welcome layer lingers.
+  if (locked) return <LockedScreen onUnlock={onUnlock} />;
+  if (!present) return null;
+  return <UnlockWelcome onContinue={() => setPresent(false)} />;
+}
+
+function UnlockWelcome({ onContinue }: { onContinue: () => void }) {
+  const dialogRef = useDialogFocus();
+  return <section ref={dialogRef} className="app-lock-screen app-lock-screen--unlocked" role="dialog" aria-modal="true" aria-labelledby="app-unlock-title" aria-describedby="app-unlock-description"
+    style={{ "--lock-unlock-duration": `${UNLOCK_TRANSITION_MS}ms` } as CSSProperties}>
+    <LockScreenBrand />
+    <div className="app-lock-screen__watermark" aria-hidden="true"><Icon name="lockOpen" strokeWidth="1.5" /></div>
+    <div className="app-lock-screen__content">
+      <div className="app-lock-screen__welcome">
+        <span className="app-lock-screen__welcome-badge"><Icon name="check" height="14" width="14" />工作区已解锁</span>
+        <h1 id="app-unlock-title">欢迎回来<span aria-hidden="true">。</span></h1>
+        <p id="app-unlock-description">一切就绪，继续你的工作。</p>
+        <div className="app-lock-screen__welcome-progress" aria-hidden="true"><span /></div>
+        <Button className="app-lock-screen__welcome-continue" variant="ghost" onClick={onContinue}>立即进入<Icon name="arrowRight" height="14" width="14" /></Button>
+      </div>
+    </div>
+  </section>;
+}
+
+function LockScreenBrand() {
+  return <header className="app-lock-screen__brand">
+    <span className="app-lock-screen__brand-mark"><Icon name="terminalTool" /></span>
+    <span>Duo SSH</span>
+    <span className="app-lock-screen__brand-divider" aria-hidden="true" />
+    <span className="app-lock-screen__brand-caption">安全工作区</span>
+  </header>;
+}
+
+function LockedScreen({ onUnlock }: Pick<AppLockScreenProps, "onUnlock">) {
   const [password, setPassword] = useState("");
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
@@ -39,12 +88,7 @@ export function AppLockScreen({ onUnlock }: AppLockScreenProps) {
 
   return (
     <section ref={dialogRef} className="app-lock-screen" role="dialog" aria-modal="true" aria-labelledby="app-lock-title" aria-describedby="app-lock-description">
-      <header className="app-lock-screen__brand">
-        <span className="app-lock-screen__brand-mark"><Icon name="terminalTool" /></span>
-        <span>Duo SSH</span>
-        <span className="app-lock-screen__brand-divider" aria-hidden="true" />
-        <span className="app-lock-screen__brand-caption">安全工作区</span>
-      </header>
+      <LockScreenBrand />
       <div className="app-lock-screen__watermark" aria-hidden="true"><Icon name="lock" strokeWidth="1.5" /></div>
       <div className="app-lock-screen__content">
         <form className="app-lock-screen__dialog" onSubmit={submit} aria-busy={busy}>

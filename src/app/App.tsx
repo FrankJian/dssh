@@ -2473,7 +2473,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       {startupUpdate ? (
         <UpdateNotification update={startupUpdate} onDismiss={dismissStartupUpdate} />
       ) : null}
-      {appLock.status?.locked ? <AppLockScreen onUnlock={appLock.unlock} /> : null}
+      <AppLockScreen locked={appLock.status?.locked ?? false} onUnlock={appLock.unlock} />
       {isPaletteOpen ? (
         <CommandPalette items={buildPaletteItems()} onClose={() => setIsPaletteOpen(false)} />
       ) : null}
