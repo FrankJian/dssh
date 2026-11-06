@@ -670,7 +670,25 @@ impl ProfileRepository {
             .ok_or_else(|| AppError::new("ai_config_error", "模型服务不存在，请重新选择。"))?;
         crate::ai::providers::resolve_preset(&mut provider)?;
         provider.api_key = self.get_secret(&format!("ai.provider.{id}"))?;
+        self.resolve_ai_request_headers(&mut provider)?;
         Ok(provider)
+    }
+
+    pub fn resolve_ai_request_headers(&self, provider: &mut AiProviderConfig) -> AppResult<()> {
+        crate::ai::headers::validate(&provider.extra_headers)?;
+        let saved: std::collections::HashMap<String, String> = self
+            .get_secret(&format!("ai.provider.{}.headers", provider.id))?
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|_| AppError::new("storage_error", "请求头配置无法读取。"))?
+            .unwrap_or_default();
+        for header in &mut provider.extra_headers {
+            if header.value.is_none() {
+                header.value = saved.get(&header.id).cloned();
+            }
+        }
+        crate::ai::headers::request_headers(&provider.extra_headers)?;
+        Ok(())
     }
 
     pub fn save_ai_provider(&self, mut provider: AiProviderConfig) -> AppResult<AiProviderConfig> {
@@ -763,6 +781,7 @@ impl ProfileRepository {
                 .models
                 .insert(0, AiModelConfig::from_id(provider.model.clone()));
         }
+        self.resolve_ai_request_headers(&mut provider)?;
         let mut seen = HashSet::new();
         provider.models.retain(|m| seen.insert(m.id.clone()));
         let mut connection = self.connection()?;
@@ -784,6 +803,21 @@ impl ProfileRepository {
             [&secret_ref],
             |row| row.get(0),
         )?;
+        let header_ref = format!("ai.provider.{}.headers", provider.id);
+        let mut values = std::collections::HashMap::new();
+        for header in &mut provider.extra_headers {
+            if let Some(value) = header.value.take() {
+                values.insert(header.id.clone(), value);
+            }
+            header.has_value = true;
+        }
+        if values.is_empty() {
+            transaction.execute("DELETE FROM app_secrets WHERE key = ?1", [&header_ref])?;
+        } else {
+            let values = serde_json::to_string(&values)
+                .map_err(|_| AppError::new("storage_error", "请求头配置无法保存。"))?;
+            set_secret_on(&transaction, &header_ref, &values)?;
+        }
         let config = serde_json::to_string(&provider)
             .map_err(|_| AppError::new("storage_error", "模型配置无法保存。"))?;
         transaction.execute(
@@ -802,6 +836,10 @@ impl ProfileRepository {
         transaction.execute(
             "DELETE FROM app_secrets WHERE key = ?1",
             [format!("ai.provider.{id}")],
+        )?;
+        transaction.execute(
+            "DELETE FROM app_secrets WHERE key = ?1",
+            [format!("ai.provider.{id}.headers")],
         )?;
         transaction.commit()?;
         Ok(())
@@ -1969,6 +2007,90 @@ mod tests {
 
         repository.clear_ai_chat_history().unwrap();
         assert!(repository.load_ai_chat_history().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+    #[test]
+    fn ai_header_secrets_are_write_only_preserved_by_id_and_removed() {
+        let directory = std::env::temp_dir().join(format!("dssh-header-secrets-{}", timestamp()));
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let provider: AiProviderConfig = serde_json::from_value(serde_json::json!({
+            "id":"headers", "label":"Gateway", "presetId":"custom", "baseUrl":"https://gateway.test/v1/", "model":"model", "apiKey":"api-secret",
+            "extraHeaders":[{"id":"gateway", "name":"X-Gateway-Token", "value":"gateway-secret"}]
+        })).unwrap();
+        let mut saved = repository.save_ai_provider(provider).unwrap();
+        assert!(saved.extra_headers[0].has_value);
+        assert!(saved.extra_headers[0].value.is_none());
+        assert!(
+            !serde_json::to_string(&saved)
+                .unwrap()
+                .contains("gateway-secret")
+        );
+        let listed = repository.list_ai_providers().unwrap();
+        assert!(listed[0].extra_headers[0].value.is_none());
+        let config: String = repository
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT config_json FROM ai_providers WHERE id = 'headers'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!config.contains("gateway-secret"));
+        saved.extra_headers[0].name = "X-Renamed-Token".into();
+        let mut draft = saved.clone();
+        repository.resolve_ai_request_headers(&mut draft).unwrap();
+        assert_eq!(
+            draft.extra_headers[0].value.as_deref(),
+            Some("gateway-secret")
+        );
+        repository.save_ai_provider(saved.clone()).unwrap();
+        let loaded = repository.get_ai_provider("headers").unwrap();
+        assert_eq!(loaded.extra_headers[0].name, "X-Renamed-Token");
+        assert_eq!(
+            loaded.extra_headers[0].value.as_deref(),
+            Some("gateway-secret")
+        );
+        saved.extra_headers[0].value = Some("replacement-secret".into());
+        repository.save_ai_provider(saved.clone()).unwrap();
+        assert_eq!(
+            repository.get_ai_provider("headers").unwrap().extra_headers[0]
+                .value
+                .as_deref(),
+            Some("replacement-secret")
+        );
+        saved.extra_headers[0].value = Some("bad\r\nvalue".into());
+        assert!(repository.save_ai_provider(saved.clone()).is_err());
+        assert_eq!(
+            repository.get_ai_provider("headers").unwrap().extra_headers[0]
+                .value
+                .as_deref(),
+            Some("replacement-secret")
+        );
+        saved.extra_headers.clear();
+        repository.save_ai_provider(saved.clone()).unwrap();
+        assert!(
+            repository
+                .get_secret("ai.provider.headers.headers")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            repository
+                .get_secret("ai.provider.headers")
+                .unwrap()
+                .as_deref(),
+            Some("api-secret")
+        );
+        saved.extra_headers = loaded.extra_headers;
+        repository.save_ai_provider(saved).unwrap();
+        repository.delete_ai_provider("headers").unwrap();
+        assert!(
+            repository
+                .get_secret("ai.provider.headers.headers")
+                .unwrap()
+                .is_none()
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 }

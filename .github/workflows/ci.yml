@@ -126,6 +126,10 @@ jobs:
         # responsible for signed, published releases.
         run: pnpm tauri build --target ${{ matrix.rust_target }} --no-sign --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.rdp.conf.json
 
+      - name: Verify macOS local network declaration
+        if: matrix.name == 'macOS'
+        run: python3 scripts/check-macos-network.py src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/dssh.app
+
       - name: Upload macOS test installer
         if: matrix.name == 'macOS'
         uses: actions/upload-artifact@v7.0.1

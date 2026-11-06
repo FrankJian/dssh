@@ -33,6 +33,25 @@ int main(int argc, char** argv)
     if (barFrame.x != 0 || barFrame.y != 0 || barFrame.h != 20) return 63;
     dssh_chrome_move(&position, 1, 1, 0, 0);
     if (position.x != 0 || position.y != 1) return 64;
+    DsshActivityThrottle activity = {};
+    if (!dssh_activity_due(&activity, 0) || dssh_activity_due(&activity, 999) ||
+        !dssh_activity_due(&activity, 1000)) return 69;
+    SDL_Event activityEvent = {};
+    for (const auto type : {SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP, SDL_EVENT_TEXT_INPUT,
+        SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP, SDL_EVENT_MOUSE_WHEEL,
+        SDL_EVENT_FINGER_DOWN, SDL_EVENT_FINGER_UP, SDL_EVENT_FINGER_MOTION}) {
+        activityEvent.type = type;
+        if (!dssh_activity_input(&activityEvent)) return 70;
+    }
+    for (const auto type : {SDL_EVENT_WINDOW_FOCUS_GAINED, SDL_EVENT_WINDOW_EXPOSED,
+        SDL_EVENT_USER, SDL_EVENT_CLIPBOARD_UPDATE, SDL_EVENT_QUIT}) {
+        activityEvent.type = type;
+        if (dssh_activity_input(&activityEvent)) return 71;
+    }
+    activityEvent.type = SDL_EVENT_MOUSE_MOTION;
+    if (dssh_activity_input(&activityEvent)) return 72;
+    activityEvent.motion.xrel = 1;
+    if (!dssh_activity_input(&activityEvent)) return 73;
     SDL_Event closeEvent = {};
     closeEvent.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     if (!dssh_is_system_close(closeEvent, true)) return 25;

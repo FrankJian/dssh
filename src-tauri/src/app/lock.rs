@@ -24,6 +24,22 @@ struct RuntimeState {
     last_activity: Instant,
 }
 
+impl RuntimeState {
+    fn record_activity_at(&mut self, now: Instant) {
+        if !self.locked && self.settings.enabled {
+            self.last_activity = now;
+        }
+    }
+
+    fn idle_at(&self, now: Instant) -> bool {
+        !self.locked
+            && self.settings.enabled
+            && self.settings.auto_lock_enabled
+            && now.saturating_duration_since(self.last_activity).as_secs()
+                >= u64::from(self.settings.timeout_minutes) * 60
+    }
+}
+
 #[derive(Clone)]
 pub struct AppLockManager {
     inner: Arc<AppLockInner>,
@@ -139,20 +155,13 @@ impl AppLockManager {
 
     pub fn record_activity(&self) -> AppResult<()> {
         let mut state = self.lock_state()?;
-        if !state.locked && state.settings.enabled {
-            state.last_activity = Instant::now();
-        }
+        state.record_activity_at(Instant::now());
         Ok(())
     }
 
     pub fn lock_if_idle(&self) -> AppResult<AppLockStatus> {
         let mut state = self.lock_state()?;
-        if !state.locked
-            && state.settings.enabled
-            && state.settings.auto_lock_enabled
-            && state.last_activity.elapsed().as_secs()
-                >= u64::from(state.settings.timeout_minutes) * 60
-        {
+        if state.idle_at(Instant::now()) {
             state.locked = true;
             let status = status_from_state(&state);
             drop(state);
@@ -220,6 +229,42 @@ fn verify_password(hash: &str, password: Option<&str>) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_from_any_workspace_resets_idle_but_never_unlocks() {
+        use std::time::Duration;
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        let mut state = RuntimeState {
+            settings: StoredAppLockSettings {
+                enabled: true,
+                auto_lock_enabled: true,
+                timeout_minutes: 1,
+                password_hash: None,
+            },
+            locked: false,
+            last_activity: start,
+        };
+        assert!(state.idle_at(at(60)));
+        // The renderer can remain idle while the native RDP worker records input.
+        state.record_activity_at(at(59));
+        assert!(!state.idle_at(at(60)));
+        assert!(!state.idle_at(at(118)));
+        assert!(state.idle_at(at(119)));
+        state.record_activity_at(at(118));
+        assert!(!state.idle_at(at(119)));
+        // An idle connection emits no activity: the timeout still expires.
+        assert!(state.idle_at(at(178)));
+        state.locked = true;
+        state.record_activity_at(at(180));
+        assert!(state.locked);
+        assert_eq!(state.last_activity, at(118));
+        state.locked = false;
+        state.settings.enabled = false;
+        state.record_activity_at(at(190));
+        assert_eq!(state.last_activity, at(118));
+        assert!(!state.idle_at(at(1000)));
+    }
 
     #[test]
     fn password_hashes_verify_without_storing_the_plaintext() {

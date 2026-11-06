@@ -10,6 +10,7 @@ import type { AiConfig } from "./useAiConfig";
 import { settingsActionError } from "./aiSettingsValidation";
 import type { AssistantDockControls } from "../app/useAssistantDock";
 import { AiDockSettings } from "./AiDockSettings";
+import { AiRequestHeaders } from "./AiRequestHeaders";
 import { AiConnectionDetails } from "./AiConnectionDetails";
 
 export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiConfig; assistantDock?: AssistantDockControls }) {
@@ -128,7 +129,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                       setPresetId(id);
                       const preset = ENDPOINT_PRESETS.find((p) => p.id === id);
                       if (preset) {
-                        patch({ presetId: preset.id, label: preset.label, baseUrl: preset.baseUrl, kind: preset.kind, apiKey: "", hasApiKey: false, model: "", models: [] });
+                        patch({ presetId: preset.id, label: preset.label, baseUrl: preset.baseUrl, kind: preset.kind, apiKey: "", hasApiKey: false, extraHeaders: [], model: "", models: [] });
                         setDiscoveredModels([]); setModelPending(false); setModelEditorRevision((value) => value + 1);
                       } else {
                         patch({ presetId: "custom", label: "", baseUrl: "" });
@@ -161,13 +162,14 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                   discovered={discoveredModels} onPendingChange={setModelPending}
                   onDiscover={() => void save(true)} canDiscover={Boolean(draft.label.trim() && draft.baseUrl.trim())}
                   onChange={(models, model) => patch({ models, model })} />
-                {presetId === "custom" ? <details>
-                  <summary>连接选项</summary>
-                  <label className="field">代理（可选）
+                <details>
+                  <summary>高级选项</summary>
+                  <AiRequestHeaders headers={draft.extraHeaders ?? []} onChange={(extraHeaders) => patch({ extraHeaders })} />
+                  {presetId === "custom" ? <label className="field">代理（可选）
                     <input autoComplete="off" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
                       value={draft.proxyUrl} onChange={(e) => patch({ proxyUrl: e.currentTarget.value })} />
-                  </label>
-                </details> : null}
+                  </label> : null}
+                </details>
                 <div className="ai-settings__actions">
                   <Button onClick={() => void save()}>{busy && !testing ? "处理中…" : "保存配置"}</Button>
                   <Button onClick={() => void testConnection()}>{testing ? "测试中…" : "测试连接"}</Button>

@@ -137,6 +137,12 @@ pnpm tauri build
 > $env:HTTP_PROXY='http://<proxy-host>:<port>'; $env:HTTPS_PROXY='http://<proxy-host>:<port>'; pnpm tauri build
 > ```
 
+### macOS 访问内网
+
+首次连接内网 SSH / SFTP / RDP 时，如系统询问本地网络访问权限，请选择允许。若 `tauri dev` 可连接，而安装包提示 `No route to host (os error 65)` 或 RDP 无法连接，请先检查 **系统设置 → 隐私与安全性 → 本地网络 → Duo SSH（或 dssh）**，允许后完全退出并重新打开应用，再重连。仍失败时检查当前网络、VPN、目标主机及端口。
+
+开发工具和正式 `.app` 的网络授权归属不同；终端能连通不代表安装包已经获得授权。正式包包含 `NSLocalNetworkUsageDescription` 用途声明；升级不会自动替用户打开已关闭的权限。参考 [Apple 本地网络隐私说明](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)。
+
 ## 持续集成
 
 `.github/workflows/ci.yml` 在 PR 与 `main` 推送时于 macOS 和 Windows 上运行：

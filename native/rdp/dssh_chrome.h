@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL3/SDL.h>
+#include "dssh_activity.h"
 
 enum DsshChromeAction {
     DSSH_CHROME_MINIMIZE = 0x445301,
@@ -56,6 +57,7 @@ static inline void dssh_chrome_move(DsshChromePosition* position, float x, float
 
 static inline void dssh_chrome_action(SDL_Window* window, int action)
 {
+    dssh_record_activity(window);
     SDL_Event event = {0};
     event.type = SDL_EVENT_USER;
     event.user.windowID = SDL_GetWindowID(window);

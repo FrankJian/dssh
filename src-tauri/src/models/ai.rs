@@ -142,6 +142,17 @@ impl AiModelConfig {
     }
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRequestHeader {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub has_value: bool,
+}
+
 /// Stored descriptor. Secrets are accepted on writes and never serialized.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +166,8 @@ pub struct AiProviderConfig {
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
+    #[serde(default)]
+    pub extra_headers: Vec<AiRequestHeader>,
     pub model: String,
     #[serde(default)]
     pub models: Vec<AiModelConfig>,

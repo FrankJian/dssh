@@ -15,6 +15,7 @@ pub struct AnthropicClient {
     pub http: reqwest::Client,
     pub base_url: String,
     pub api_key: String,
+    pub extra_headers: reqwest::header::HeaderMap,
 }
 
 fn protocol_error() -> AppError {
@@ -41,6 +42,7 @@ impl AnthropicClient {
         }
         let response = builder
             .json(&payload)
+            .headers(self.extra_headers.clone())
             .send()
             .await
             .map_err(|_| AppError::new("ai_request_error", "无法连接 Anthropic 模型服务。"))?;

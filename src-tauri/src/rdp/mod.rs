@@ -696,6 +696,12 @@ impl RdpManager {
                     visibility_deadline = Some(Instant::now() + Duration::from_secs(2));
                 }
                 Ok(Control::Status(status)) => {
+                    if status == WorkerStatus::Activity {
+                        if closing.is_none() && !self.locked.load(Ordering::Acquire) {
+                            let _ = app.state::<AppState>().app_lock.record_activity();
+                        }
+                        continue;
+                    }
                     if let WorkerStatus::Visibility { hidden } = status {
                         visibility_waiters.retain(|(locked, done)| {
                             if *locked == hidden {

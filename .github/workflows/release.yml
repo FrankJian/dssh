@@ -124,6 +124,10 @@ jobs:
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }} --config src-tauri/tauri.rdp.conf.json
 
+      - name: Verify macOS local network declaration before publishing
+        if: runner.os == 'macOS'
+        run: python3 scripts/check-macos-network.py src-tauri/target/${{ matrix.rust_targets }}/release/bundle/macos/dssh.app
+
   publish:
     name: Publish GitHub Release
     needs:

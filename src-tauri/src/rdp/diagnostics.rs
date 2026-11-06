@@ -2,6 +2,7 @@
 pub enum WorkerStatus {
     Ready,
     Connected,
+    Activity,
     UserClose,
     Visibility { hidden: bool },
     Stage(&'static str),
@@ -13,6 +14,7 @@ pub enum WorkerStatus {
 pub fn parse_status(line: &str) -> Option<WorkerStatus> {
     match line.trim_end() {
         "DSSH_RDP_V1 ready" => Some(WorkerStatus::Ready),
+        "DSSH_RDP_V1 activity" => Some(WorkerStatus::Activity),
         "DSSH_RDP_V1 connected" => Some(WorkerStatus::Connected),
         "DSSH_RDP_V1 user-close" => Some(WorkerStatus::UserClose),
         "DSSH_RDP_V1 hidden" => Some(WorkerStatus::Visibility { hidden: true }),
@@ -63,6 +65,7 @@ impl Default for WorkerDiagnostics {
 impl WorkerDiagnostics {
     pub fn observe(&mut self, status: WorkerStatus) {
         match status {
+            WorkerStatus::Activity => {}
             WorkerStatus::Connected => self.connected = true,
             WorkerStatus::UserClose => self.user_closed = true,
             WorkerStatus::Stage(stage) => self.stage = stage,
@@ -144,6 +147,13 @@ impl WorkerDiagnostics {
                 _ => "RDP 客户端已退出，请根据阶段和错误码检查安装包、连接配置与目标系统。",
             },
         };
+        let permission_hint = if matches!(self.error, Some(0x00020004..=0x00020006))
+            || (self.error.is_none() && matches!(exit, Some(139..=141)))
+        {
+            crate::error::local_network_permission_hint()
+        } else {
+            ""
+        };
         let exit = exit
             .map(|code| format!("0x{:08X}", code as u32))
             .unwrap_or_else(|| "未知".into());
@@ -156,7 +166,7 @@ impl WorkerDiagnostics {
             .map(|(site, line)| format!("；断言位置 {site:08X}:{line}"))
             .unwrap_or_default();
         format!(
-            "{message}（阶段：{}；退出代码 {exit}{native}{fault}）",
+            "{message}{permission_hint}（阶段：{}；退出代码 {exit}{native}{fault}）",
             self.stage
         )
     }
@@ -165,6 +175,31 @@ impl WorkerDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn network_failures_suggest_macos_permission_without_mislabeling_auth_errors() {
+        let mut diagnostics = WorkerDiagnostics::default();
+        diagnostics.observe(WorkerStatus::Stage("连接与认证"));
+        diagnostics.observe(WorkerStatus::Error(0x20006));
+        let message = diagnostics.failure_message(Some(0x8d));
+        assert!(message.contains("0x0000008D"));
+        assert!(message.contains("0x00020006"));
+        assert_eq!(message.contains("本地网络"), cfg!(target_os = "macos"));
+        diagnostics.observe(WorkerStatus::Error(0x20009));
+        assert!(!diagnostics.failure_message(Some(132)).contains("本地网络"));
+        assert!(!diagnostics.is_normal_exit(Some(0x8d)));
+    }
+
+    #[test]
+    fn activity_is_fixed_metadata_and_does_not_imply_a_connection_or_clean_exit() {
+        let mut diagnostics = WorkerDiagnostics::default();
+        let status = parse_status("DSSH_RDP_V1 activity").unwrap();
+        assert_eq!(status, WorkerStatus::Activity);
+        diagnostics.observe(status);
+        assert!(!diagnostics.connected);
+        assert!(!diagnostics.is_normal_exit(Some(131)));
+        assert!(parse_status("DSSH_RDP_V1 activity key=C").is_none());
+    }
+
     #[test]
     fn visibility_acknowledgements_do_not_end_a_connection() {
         let mut diagnostics = WorkerDiagnostics::default();

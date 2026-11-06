@@ -121,6 +121,7 @@ static void drawGlyph(int glyph, NSRect rect, NSColor* color)
     if (dssh_desktop_locked()) return;
     self.grab = NSMakePoint(mouse.x - NSMinX(self.panel.frame), NSMaxY(self.panel.frame) - mouse.y);
     self.dragging = YES;
+    dssh_record_activity(self.desktop);
 }
 - (void)dragTo:(NSPoint)mouse
 {
@@ -131,6 +132,7 @@ static void drawGlyph(int glyph, NSRect rect, NSColor* color)
         NSMaxY(content) - mouse.y - self.grab.y,
         content.size.width - self.panel.frame.size.width, content.size.height - self.panel.frame.size.height);
     self.position = position;
+    dssh_record_activity(self.desktop);
     [self tick:nil];
 }
 - (void)endDrag

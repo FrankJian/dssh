@@ -107,6 +107,7 @@ export function createEmptyProvider(preset?: EndpointPreset): AiProvider {
     proxyUrl: "",
     models: [],
     hasApiKey: false,
+    extraHeaders: [],
     kind: preset?.kind ?? "openai-completions",
   };
 }
@@ -125,6 +126,7 @@ export function loadLegacyProviders(): AiProvider[] {
       baseUrl: String(item.baseUrl ?? ""),
       apiKey: String(item.apiKey ?? ""),
       hasApiKey: false,
+      extraHeaders: [],
       model: String(item.model ?? ""),
       proxyUrl: String(item.proxyUrl ?? ""),
       models: normalizeModels(item.models, String(item.model ?? "")),

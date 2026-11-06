@@ -6,7 +6,16 @@ pub struct Redactor {
 }
 
 impl Redactor {
+    #[cfg(test)]
     pub fn new(api_key: Option<&str>, proxy: &str) -> Self {
+        Self::with_values(api_key, proxy, std::iter::empty())
+    }
+
+    pub fn with_values<'a>(
+        api_key: Option<&str>,
+        proxy: &str,
+        values: impl Iterator<Item = &'a str>,
+    ) -> Self {
         let mut secrets: Vec<String> = api_key
             .into_iter()
             .filter(|key| !key.is_empty())
@@ -18,6 +27,7 @@ impl Redactor {
             secrets.push(password.into());
             secrets.push(decode_percent(password));
         }
+        secrets.extend(values.filter(|value| !value.is_empty()).map(String::from));
         let encoded: Vec<String> = secrets
             .iter()
             .flat_map(|secret| {

@@ -8,5 +8,7 @@
   <string>Duo SSH</string>
   <key>CFBundleName</key>
   <string>Duo SSH</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Duo SSH 需要访问本地网络，以连接你配置的内网 SSH、SFTP、远程桌面（RDP）及相关服务。</string>
 </dict>
 </plist>

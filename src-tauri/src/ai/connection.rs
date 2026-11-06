@@ -44,7 +44,14 @@ pub struct AiConnectionDiagnostics {
 pub async fn test_connection(mut provider: AiProviderConfig) -> AppResult<AiConnectionTestResult> {
     let started = Instant::now();
     provider.api_key = provider.api_key.map(|key| key.trim().to_string());
-    let redactor = Redactor::new(provider.api_key.as_deref(), &provider.proxy_url);
+    let redactor = Redactor::with_values(
+        provider.api_key.as_deref(),
+        &provider.proxy_url,
+        provider
+            .extra_headers
+            .iter()
+            .filter_map(|header| header.value.as_deref()),
+    );
     let mut result = AiConnectionTestResult {
         success: false,
         message: String::new(),
@@ -188,12 +195,16 @@ async fn probe(
     {
         builder = builder.bearer_auth(key);
     }
-    let request = builder.json(&body).build().map_err(|error| {
-        AppError::new(
-            "ai_request_build",
-            format!("无法构造请求：{}", redactor.text(&error.to_string())),
-        )
-    })?;
+    let request = builder
+        .json(&body)
+        .headers(super::headers::request_headers(&provider.extra_headers)?)
+        .build()
+        .map_err(|error| {
+            AppError::new(
+                "ai_request_build",
+                format!("无法构造请求：{}", redactor.text(&error.to_string())),
+            )
+        })?;
     result.details.request_headers = redactor.value(
         &serde_json::to_value(
             request
@@ -406,6 +417,7 @@ mod tests {
                         "authorization: bearer synthetic-probe-key"
                     };
                     assert!(headers.contains(auth));
+                    assert!(headers.contains("x-gateway-token: gateway-secret"));
                     let status = if success {
                         "200 OK"
                     } else {
@@ -414,7 +426,7 @@ mod tests {
                     let response = if success {
                         response
                     } else {
-                        json!({"error":{"message":"synthetic-probe-key must never be returned"}})
+                        json!({"error":{"message":"synthetic-probe-key gateway-secret must never be returned"}})
                     }
                     .to_string();
                     socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.unwrap();
@@ -422,8 +434,15 @@ mod tests {
                 let provider: AiProviderConfig = serde_json::from_value(json!({
                     "id":"unsaved", "presetId":"custom", "label":"Draft", "baseUrl":format!("http://{address}/v1/"),
                     "apiKey":"synthetic-probe-key", "model":"probe-model", "kind":protocol,
+                    "extraHeaders":[{"id":"gateway", "name":"X-Gateway-Token", "value":"gateway-secret"}],
                 })).unwrap();
                 let result = test_connection(provider).await;
+                let serialized = serde_json::to_string(result.as_ref().unwrap()).unwrap();
+                assert!(!serialized.contains("gateway-secret"));
+                assert_eq!(
+                    result.as_ref().unwrap().details.request_headers["x-gateway-token"],
+                    "[已脱敏]"
+                );
                 if success {
                     let result = result.unwrap();
                     assert!(result.success);

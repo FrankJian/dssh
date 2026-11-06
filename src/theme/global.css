@@ -10634,3 +10634,7 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
     max-width: none;
   }
 }
+
+.ai-request-headers { display: grid; gap: var(--space-2); margin-block: var(--space-2); }
+.ai-request-headers > .button { justify-self: start; }
+.ai-request-headers__row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--space-2); align-items: end; }

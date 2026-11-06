@@ -17,6 +17,14 @@ export interface AiModelConfig {
   reasoningLevels: AiReasoningLevel[];
 }
 
+export interface AiRequestHeader {
+  id: string;
+  name: string;
+  /** Write-only; omitted to keep the saved value. */
+  value?: string;
+  hasValue: boolean;
+}
+
 export interface AiProvider {
   presetId?: string | null;
   id: string;
@@ -25,6 +33,7 @@ export interface AiProvider {
   /** Write-only. Never returned by Rust or persisted in localStorage. */
   apiKey?: string;
   hasApiKey: boolean;
+  extraHeaders: AiRequestHeader[];
   model: string;
   proxyUrl: string;
   /** User-managed model catalog, including manually entered IDs. */

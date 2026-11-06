@@ -5,5 +5,6 @@ fn main() {
     // Start Menu icon.
     println!("cargo:rerun-if-changed=icons/icon.icns");
     println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-changed=Info.plist");
     tauri_build::build()
 }

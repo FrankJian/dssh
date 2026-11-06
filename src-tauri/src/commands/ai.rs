@@ -40,6 +40,7 @@ pub async fn ai_test_connection(
             .profiles
             .get_secret(&format!("ai.provider.{}", provider.id))?;
     }
+    state.profiles.resolve_ai_request_headers(&mut provider)?;
     crate::ai::connection::test_connection(provider).await
 }
 
@@ -62,6 +63,9 @@ pub async fn ai_list_models(
         builder = builder.bearer_auth(key);
     }
 
+    let builder = builder.headers(crate::ai::headers::request_headers(
+        &provider.extra_headers,
+    )?);
     let response = builder.send().await.map_err(|_| {
         AppError::new(
             "ai_request_error",

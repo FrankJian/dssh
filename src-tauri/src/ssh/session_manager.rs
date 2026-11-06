@@ -4182,7 +4182,10 @@ fn create_session_id() -> String {
 }
 
 pub fn ssh_error(error: impl std::fmt::Display) -> AppError {
-    AppError::new("ssh_error", error.to_string())
+    AppError::new(
+        "ssh_error",
+        crate::error::network_error_message(error.to_string()),
+    )
 }
 
 fn proxy_error(error: impl std::fmt::Display) -> AppError {

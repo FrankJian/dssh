@@ -44,6 +44,7 @@ pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
             http: http_client.clone(),
             base_url: super::providers::endpoint(provider)?,
             api_key: provider.api_key.clone().unwrap_or_default(),
+            extra_headers: super::headers::request_headers(&provider.extra_headers)?,
         })
     } else {
         None
@@ -54,11 +55,13 @@ pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
             .with_reqwest(http_client)
             .build(),
         native,
+        extra_headers: super::headers::request_headers(&provider.extra_headers)?,
     })
 }
 
 pub struct AiClient {
     genai: Client,
+    extra_headers: reqwest::header::HeaderMap,
     native: Option<super::anthropic::AnthropicClient>,
 }
 
@@ -72,8 +75,30 @@ impl AiClient {
         if let Some(native) = &self.native {
             return native.exec_chat(model, request, options).await;
         }
+        let mut options = options.cloned().unwrap_or_default();
+        let headers: genai::Headers = self
+            .extra_headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    // genai merges a case-sensitive map; match its built-in auth spelling.
+                    (if name == reqwest::header::AUTHORIZATION {
+                        "Authorization"
+                    } else {
+                        name.as_str()
+                    })
+                    .to_string(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into();
+        options
+            .extra_headers
+            .get_or_insert_with(Default::default)
+            .merge(headers);
         self.genai
-            .exec_chat(model, request, options)
+            .exec_chat(model, request, Some(&options))
             .await
             .map_err(|_| {
                 AppError::new(
@@ -272,6 +297,8 @@ mod tests {
                         AiProtocol::Anthropic => &body["output_config"]["effort"],
                     };
                     assert_eq!(effort, "custom-effort");
+                    assert!(headers.contains("x-gateway-token: gateway-secret"));
+                    assert!(headers.contains("user-agent: duo-gateway-client"));
 
                     let path = match protocol {
                         AiProtocol::Completions => "chat/completions",
@@ -282,12 +309,10 @@ mod tests {
                     if protocol == AiProtocol::Anthropic {
                         assert!(headers.contains("anthropic-version:"));
                         assert!(headers.contains("x-api-key: synthetic-local-credential"));
-                        assert!(!headers.contains("authorization:"));
+                        assert!(headers.contains("authorization: bearer gateway-override"));
                         assert!(body["max_tokens"].is_number());
                     } else {
-                        assert!(
-                            headers.contains("authorization: bearer synthetic-local-credential")
-                        );
+                        assert!(headers.contains("authorization: bearer gateway-override"));
                     }
                     if turn == 0 {
                         let tool = &body["tools"][0];
@@ -355,6 +380,26 @@ mod tests {
                 base_url: format!("http://{address}/gateway/v1/"),
                 api_key: Some("synthetic-local-credential".into()),
                 has_api_key: false,
+                extra_headers: vec![
+                    crate::models::ai::AiRequestHeader {
+                        id: "gateway".into(),
+                        name: "X-Gateway-Token".into(),
+                        value: Some("gateway-secret".into()),
+                        has_value: false,
+                    },
+                    crate::models::ai::AiRequestHeader {
+                        id: "agent".into(),
+                        name: "User-Agent".into(),
+                        value: Some("duo-gateway-client".into()),
+                        has_value: false,
+                    },
+                    crate::models::ai::AiRequestHeader {
+                        id: "auth".into(),
+                        name: "authorization".into(),
+                        value: Some("Bearer gateway-override".into()),
+                        has_value: false,
+                    },
+                ],
                 model: "ambiguous-model".into(),
                 models: vec![],
                 proxy_url: String::new(),

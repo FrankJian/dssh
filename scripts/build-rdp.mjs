@@ -33,7 +33,7 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
-for (const file of ["dssh_window.hpp", "dssh_window.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_visual.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "dssh_activity.h", "dssh_activity.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_visual.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
   copyFileSync(join(root, "native/rdp", file), join(sdl, file));
 }
 writeFileSync(join(sdl, "dssh_chrome_palette.h"), chromeThemeHeader(readFileSync(join(root, "src/theme/global.css"), "utf8")));
@@ -67,7 +67,7 @@ adapt(window, '#include "dssh_chrome.h"', '#include "dssh_chrome.h"\n#include "d
 const clientCmake = join(sdl, "CMakeLists.txt");
 // Enable at the common root so sibling macOS targets share Objective-C rules.
 adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
-adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp dssh_visibility.cpp)
+adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp dssh_visibility.cpp dssh_activity.cpp)
 if(APPLE)
   target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m dssh_chrome_mac.m)
   set_source_files_properties(dssh_icon.m dssh_chrome_mac.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
@@ -100,7 +100,7 @@ add_executable(dssh-rdp-prefs-test dssh_test_preferences.cpp ../common/sdl_prefs
 target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
 target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
-add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp dssh_visibility.cpp)
+add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp dssh_visibility.cpp dssh_activity.cpp)
 target_compile_definitions(dssh-rdp-window-test PRIVATE DSSH_CHROME_TESTING)
 target_link_libraries(dssh-rdp-window-test PRIVATE freerdp SDL3::SDL3${windows ? "-static" : ""})
 if(APPLE)
@@ -149,6 +149,7 @@ adapt(main, "SDL_WaitEventTimeout(nullptr, 1000)", "SDL_WaitEventTimeout(nullptr
 adapt(main, "\t\t\t\t/* Only poll standard SDL events", "\t\t\t\tdssh_visibility_tick();\n\t\t\t\tdssh_chrome_tick();\n\t\t\t\t/* Only poll standard SDL events");
 adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", `                dssh_visibility_tick();
                 if (dssh_visibility_blocks(&windowEvent)) continue;
+                dssh_record_input_activity(&windowEvent);
 \t\t\t\t// Capture native close/quit before dialog and display handlers can consume
                 // the event or fail while the desktop is being torn down.
                 const bool desktopClose = windowEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&

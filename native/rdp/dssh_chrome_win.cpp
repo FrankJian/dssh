@@ -188,6 +188,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             chrome->grab.x -= frame.left;
             chrome->grab.y -= frame.top;
             chrome->dragging = true;
+            dssh_record_activity(chrome->desktop);
             SetCapture(hwnd);
             return 0;
         }
@@ -202,6 +203,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             dssh_chrome_move(&chrome->position, float(mouse.x - chrome->grab.x),
                 float(mouse.y - chrome->grab.y), float(client.right - (frame.right - frame.left)),
                 float(client.bottom - (frame.bottom - frame.top)));
+            dssh_record_activity(chrome->desktop);
             tick(chrome);
             return 0;
         }
