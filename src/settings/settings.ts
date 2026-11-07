@@ -2,7 +2,7 @@ export const terminalFontSizeKey = "dssh.terminal.fontSize";
 export const terminalFontFamilyKey = "dssh.terminal.fontFamily";
 
 export const recentConnectionsLimitKey = "dssh.recentConnections.displayLimit";
-export const RECENT_CONNECTIONS_DEFAULT_LIMIT = 5;
+export const RECENT_CONNECTIONS_DEFAULT_LIMIT = 4;
 export const RECENT_CONNECTIONS_MIN_LIMIT = 1;
 export const RECENT_CONNECTIONS_MAX_LIMIT = 12;
 

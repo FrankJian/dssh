@@ -1,3 +1,5 @@
+import { ConnectionAddress } from "./ConnectionAddress";
+import { profileIconName } from "./profileIcons";
 import { isJumpServerSource } from "../models/jumpserver";
 import { useMemo, useState, type ReactNode } from "react";
 import type { SshProfile, TerminalSession } from "../models";
@@ -19,6 +21,10 @@ export interface SessionNode {
 }
 
 const LOCAL_KEY = "local";
+const STATUS_LABELS: Record<SessionStatus, string> = {
+  connecting: "正在连接", connected: "已连接", reconnecting: "正在重连",
+  disconnecting: "正在断开", disconnected: "已断开", exited: "已退出", failed: "连接失败",
+};
 
 function aggregateStatus(sessions: TerminalSession[]): SessionStatus {
   if (sessions.some((s) => s.status === "connected")) return "connected";
@@ -172,7 +178,7 @@ export function SessionTree({
 
       {nodes.length > 0 ? (
         <div className="session-tree" role="tree" aria-label="活动会话">
-          <div className="session-tree__eyebrow">活动会话</div>
+          <div className="session-tree__section-head"><span className="session-tree__eyebrow">活动会话</span><span className="session-tree__section-count">{nodes.length}</span></div>
           {nodes.map((node) => {
             const collapsed = !expandedNodes.has(node.key);
             const terminalWindows = node.sessions.filter((session) => {
@@ -180,7 +186,8 @@ export function SessionTree({
               return !layout || layout.tabSessionId === session.id;
             });
             return (
-              <div className="session-node" key={node.key}>
+              <div className="session-node session-node--terminal" key={node.key}
+                data-active={!isSftpActive && node.sessions.some(session => session.id === activeSessionId)}>
                 <div className="session-node__row">
                   <button
                     className="session-node__disclosure"
@@ -188,64 +195,69 @@ export function SessionTree({
                     onClick={() => toggleNode(node.key)}
                     type="button"
                   >
-                    <span className="session-node__chevron" data-collapsed={collapsed}>
-                      <Icon name="chevron-right" height="14" width="14" />
+                    <span className="session-node__host-icon">
+                      <Icon name={node.kind === "local" ? "terminalTool" : node.profile ? profileIconName(node.profile.icon) : "ssh"} height="18" width="18" />
+                      <span className="session-node__status" data-status={node.status} role="img" aria-label={STATUS_LABELS[node.status]} title={STATUS_LABELS[node.status]} />
                     </span>
-                    <span className="session-node__status" data-status={node.status} />
                     <span className="session-node__label">
                       <span className="session-node__heading">
-                        <span className="session-node__title">{node.title}</span>
+                        <span className="session-node__title" title={node.title}>{node.title}</span>
                         <span className="session-node__count" title={`${terminalWindows.length} 个终端窗口`} aria-label={`${terminalWindows.length} 个终端窗口`}>{terminalWindows.length}</span>
                       </span>
                       {node.subtitle ? (
-                        <span className="session-node__sub">{node.subtitle}</span>
+                        <ConnectionAddress address={node.subtitle} focusable={false} />
                       ) : null}
+                    </span>
+                    <span className="session-node__chevron" data-collapsed={collapsed}>
+                      <Icon name="chevron-right" height="12" width="12" />
                     </span>
                   </button>
                 </div>
 
                 {collapsed ? null : (
                   <div className="session-node__children">
-                    <button
-                      className="session-child"
-                      onClick={() => onNewTerminal(node)}
-                      type="button"
-                    >
-                      <Icon name="plus" height="15" width="15" />
-                      <span>新建终端</span>
-                    </button>
-                    {node.kind === "ssh" && node.profile ? (
+                    <div className="session-node__tools" role="group" aria-label={`${node.title} 的快捷操作`}>
                       <button
                         className="session-child"
-                        onClick={() => onOpenSftp(node.profile!)}
+                        onClick={() => onNewTerminal(node)}
                         type="button"
                       >
-                        <Icon name="folder" height="15" width="15" />
-                        <span>SFTP</span>
+                        <Icon name="plus" height="15" width="15" />
+                        <span>新建终端</span>
                       </button>
-                    ) : null}
-                    {node.kind === "ssh" && node.profile ? (
+                      {node.kind === "ssh" && node.profile ? (
+                        <button
+                          className="session-child"
+                          onClick={() => onOpenSftp(node.profile!)}
+                          type="button"
+                        >
+                          <Icon name="folder" height="15" width="15" />
+                          <span>SFTP</span>
+                        </button>
+                      ) : null}
+                      {node.kind === "ssh" && node.profile ? (
+                        <button
+                          className="session-child"
+                          onClick={() => onOpenForward(node)}
+                          type="button"
+                        >
+                          <Icon name="forward" height="15" width="15" />
+                          <span>端口转发</span>
+                        </button>
+                      ) : null}
+                      {node.kind === "local" || (node.kind === "ssh" && node.profile) ? (
                       <button
                         className="session-child"
-                        onClick={() => onOpenForward(node)}
+                        onClick={() => onOpenFileList(node)}
                         type="button"
                       >
-                        <Icon name="forward" height="15" width="15" />
-                        <span>端口转发</span>
+                        <Icon name="tree" height="15" width="15" />
+                        <span>文件列表</span>
                       </button>
-                    ) : null}
-                    {node.kind === "local" || (node.kind === "ssh" && node.profile) ? (
-                    <button
-                      className="session-child"
-                      onClick={() => onOpenFileList(node)}
-                      type="button"
-                    >
-                      <Icon name="tree" height="15" width="15" />
-                      <span>文件列表</span>
-                    </button>
-                    ) : null}
+                      ) : null}
 
-                    <div className="session-child__sep" />
+                    </div>
+                    <div className="session-node__terminal-heading"><span>终端窗口</span><span>{terminalWindows.length}</span></div>
 
                     {terminalWindows.map((session, index) => {
                       const layout = paneLayoutBySession.get(session.id);
@@ -284,9 +296,10 @@ export function SessionTree({
                             ) : (
                               <button
                                 className="session-terminal__open"
+                                aria-current={active ? "page" : undefined}
                                 onClick={() => onFocusTerminal(layout?.focusedPaneId ?? session.id)}
                                 onDoubleClick={() => beginRename(session, index)}
-                                title="双击重命名"
+                                title={`${terminalName} · ${STATUS_LABELS[session.status]} · 双击重命名`}
                                 type="button"
                               >
                                 <Icon name="terminalTool" height="15" width="15" />
@@ -351,9 +364,10 @@ export function SessionTree({
                                     ) : (
                                       <button
                                         className="session-pane__open"
+                                        aria-current={paneActive ? "page" : undefined}
                                         onClick={() => onFocusTerminal(paneId)}
                                         onDoubleClick={() => beginPaneRename(paneId, paneIndex)}
-                                        title="双击重命名"
+                                        title={`${paneName} · ${STATUS_LABELS[pane.status]} · 双击重命名`}
                                         type="button"
                                       >
                                         <Icon name="terminalTool" height="14" width="14" />
@@ -404,16 +418,22 @@ export function SessionTree({
         </div>
       ) : remoteDesktops ? null : (
         <div className="session-tree session-tree--empty">
-          <Icon name="sessions" height="24" width="24" />
-          <p className="session-tree__empty-title">暂无活动会话</p>
-          <p className="session-tree__empty-hint">从下方收藏或「连接管理」里连接一台主机。</p>
+          <div className="session-tree__section-head"><span className="session-tree__eyebrow">活动会话</span><span className="session-tree__section-count">0</span></div>
+          <div className="session-tree__empty-content">
+            <span className="session-tree__empty-icon"><Icon name="terminalTool" height="20" width="20" /></span>
+            <p className="session-tree__empty-title">开始一个会话</p>
+            <p className="session-tree__empty-hint">{favorites.length > 0 ? "从连接库选择主机，或点击下方收藏快速连接。" : "打开连接管理，选择或新建一个连接。"}</p>
+            <button className="session-tree__empty-action" type="button" onClick={onOpenConnections}>
+              <Icon name="connections" height="14" width="14" /><span>打开连接管理</span><Icon name="arrowRight" height="13" width="13" />
+            </button>
+          </div>
         </div>
       )}
       </div>
 
-      <div className="session-fav">
+      {favorites.length > 0 || nodes.length > 0 || remoteDesktops ? <div className="session-fav">
         <div className="session-fav__head">
-          <span className="session-tree__eyebrow">收藏</span>
+          <span className="session-tree__section-head"><Icon name="star" height="13" width="13" /><span className="session-tree__eyebrow">收藏</span><span className="session-tree__section-count">{favorites.length}</span></span>
           <button className="session-fav__all" onClick={onOpenConnections} type="button">
             <span>全部连接</span>
             <Icon name="chevron-right" height="13" width="13" />
@@ -429,16 +449,17 @@ export function SessionTree({
                 title={`连接 ${profile.username}@${profile.host}:${profile.port}`}
                 type="button"
               >
-                <Icon name="ssh" height="15" width="15" />
-                <span className="session-fav__name">{profile.name}</span>
+                <Icon name={profileIconName(profile.icon)} height="16" width="16" />
+                <span className="session-fav__details"><span className="session-fav__name">{profile.name}</span>
+                  <span className="session-fav__host">{profile.host}:{profile.port}</span></span>
                 <Icon name="play" height="13" width="13" />
               </button>
             ))}
           </div>
         ) : (
-          <p className="session-fav__hint">在「连接管理」里给常用连接点 ★，这里可快速启动。</p>
+          <p className="session-fav__hint">收藏常用连接，即可在这里快速启动。</p>
         )}
-      </div>
+      </div> : null}
     </aside>
   );
 }

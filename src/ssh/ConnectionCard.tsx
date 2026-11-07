@@ -12,11 +12,10 @@ interface ConnectionCardProps {
   onEdit: () => void;
   onClone: () => void;
   onDelete: () => void;
-  onToggleFavorite: () => void;
 }
 
 export function ConnectionCard({
-  profile, variant, onConnect, onOpenSftp, onEdit, onClone, onDelete, onToggleFavorite,
+  profile, variant, onConnect, onOpenSftp, onEdit, onClone, onDelete,
 }: ConnectionCardProps) {
   const jumpserver = isJumpServerProfile(profile);
   const type = connectionTypeForProfile(profile);
@@ -47,10 +46,7 @@ export function ConnectionCard({
           </div>
           {variant === "list" ? details : null}
         </div>
-        {!jumpserver ? <IconButton active={profile.favorite} className="conn-card__fav"
-          label={profile.favorite ? "取消收藏" : "收藏"} onClick={onToggleFavorite}>
-          <Icon name="star" height="16" width="16" />
-        </IconButton> : null}
+
       </div>
 
       {variant === "grid" ? <div className="conn-card__details">

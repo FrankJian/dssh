@@ -1806,7 +1806,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           else setEditorState({ mode: "create", profile });
         }}
         onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
-        onToggleFavorite={(profile) => { if (isJumpServerProfile(profile)) return; if (isRdpProfile(profile)) rdpAction(saveRdpProfile({ ...profile, favorite: !profile.favorite }, { action: "keep" }).then(rdp.reload)); else handleToggleFavorite(profile.id); }}
         onRenameFolder={async (oldPath, newName) => {
           await renameConnectionFolder(oldPath, newName);
           await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload()]);

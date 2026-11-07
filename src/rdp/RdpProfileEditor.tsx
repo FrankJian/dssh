@@ -93,7 +93,6 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
         </div> : null}
         <div className="field"><span>标签</span><TagInput value={draft.tags} suggestions={allTags} onChange={(tags) => field("tags", tags)} /></div>
         <label className="field"><span>描述</span><input value={draft.description} onChange={(e) => field("description", e.target.value)} /></label>
-        <label className="checkbox-field"><input type="checkbox" checked={draft.favorite} onChange={(e) => field("favorite", e.target.checked)} />收藏此连接</label>
         <footer className="rdp-editor__actions"><Button disabled={busy} onClick={onClose}>取消</Button><Button variant="primary" type="submit" disabled={busy}>{busy ? "正在保存…" : "保存连接"}</Button></footer>
       </form>
     </section>

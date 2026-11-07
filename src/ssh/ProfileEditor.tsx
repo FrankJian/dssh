@@ -204,14 +204,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClo
               />
             </label>
 
-            <label className="checkbox-field">
-              <input
-                checked={draft.favorite}
-                onChange={(event) => updateDraft("favorite", event.currentTarget.checked)}
-                type="checkbox"
-              />
-              设为收藏
-            </label>
+
           </aside>
 
           <div className="profile-form__main">

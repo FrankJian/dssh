@@ -20,7 +20,7 @@ import {
 } from "./connectionTypes";
 
 import { ConnectionViewToggle, type ConnectionViewMode as ViewMode } from "../ui/ConnectionViewToggle";
-type Scope = "all" | "favorites" | "recent" | "untagged" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
+type Scope = "all" | "recent" | "untagged" | `folder:${string}` | `tag:${string}` | `type:${ConnectionType}`;
 type SortKey = "name" | "host";
 
 const VIEW_KEY = "dssh.sessionManager.view";
@@ -71,7 +71,6 @@ interface SessionManagerProps {
   onEdit: (profile: ConnectionProfile) => void;
   onClone: (profile: ConnectionProfile) => void;
   onDelete: (profile: ConnectionProfile) => void;
-  onToggleFavorite: (profile: ConnectionProfile) => void;
   onRenameFolder: (oldPath: string, newName: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
 }
@@ -93,7 +92,6 @@ export function SessionManager({
   onEdit,
   onClone,
   onDelete,
-  onToggleFavorite,
   onRenameTag,
   onRenameFolder,
 }: SessionManagerProps) {
@@ -173,7 +171,6 @@ export function SessionManager({
     name: "根目录", path: "", count: profiles.length, children: buildConnectionFolders(profiles),
   }] : [], [profiles]);
   const recentSet = useMemo(() => new Set(recentIds.filter((id) => profiles.some((profile) => profile.id === id)).slice(0, recentLimit)), [profiles, recentIds, recentLimit]);
-  const favoriteCount = profiles.filter((profile) => profile.favorite).length;
   const untaggedCount = profiles.filter((profile) => profile.tags.length === 0).length;
   const typeCategories = CONNECTION_TYPE_OPTIONS.map((option) => ({ ...option,
     count: profiles.filter((profile) => connectionTypeForProfile(profile) === option.id).length,
@@ -182,20 +179,18 @@ export function SessionManager({
   const scopeIsEmpty = (scope.startsWith("folder:") && !profiles.some((profile) => isInConnectionFolder(profile, scope.slice(7))))
     || (scope.startsWith("tag:") && !tags.includes(scope.slice(4)))
     || (scope.startsWith("type:") && !typeCategories.some((option) => `type:${option.id}` === scope))
-    || (scope === "favorites" && favoriteCount === 0)
     || (scope === "recent" && recentSet.size === 0)
     || (scope === "untagged" && untaggedCount === 0);
   const activeScope = scopeIsEmpty ? "all" : scope;
   const activeTypeFilter: ConnectionTypeFilter = activeScope.startsWith("type:")
     ? activeScope.slice(5) as ConnectionType : typeFilter;
-  const scopeLabel = activeScope.startsWith("folder:") ? (activeScope.slice(7) || "根目录") : activeScope === "favorites" ? "收藏" : activeScope === "recent" ? "最近使用"
+  const scopeLabel = activeScope.startsWith("folder:") ? (activeScope.slice(7) || "根目录") : activeScope === "recent" ? "最近使用"
     : activeScope === "untagged" ? "未分组" : activeScope.startsWith("tag:") ? activeScope.slice(4)
     : activeScope.startsWith("type:") ? connectionTypeLabel(activeTypeFilter as ConnectionType) : "全部连接";
 
   const filtered = useMemo(() => {
     return profiles.filter((profile) => {
       if (activeScope.startsWith("folder:") && !isInConnectionFolder(profile, activeScope.slice(7))) return false;
-      if (activeScope === "favorites" && !profile.favorite) return false;
       if (activeScope === "recent" && !recentSet.has(profile.id)) return false;
       if (activeScope === "untagged" && profile.tags.length > 0) return false;
       if (activeScope.startsWith("tag:") && !profile.tags.includes(activeScope.slice(4))) return false;
@@ -289,7 +284,6 @@ export function SessionManager({
             onEdit={() => onEdit(profile)}
             onClone={() => onClone(profile)}
             onDelete={() => onDelete(profile)}
-            onToggleFavorite={() => onToggleFavorite(profile)}
           />
         ))}
         {cardVariant === "grid" ? (
@@ -315,7 +309,6 @@ export function SessionManager({
         {profiles.length > 0 ? <nav className="session-manager__nav" aria-label="连接分类" ref={navRef}>
           <div className="session-manager__nav-title">连接库</div>
           {renderScope("all", "全部连接", "connections", profiles.length)}
-          {renderScope("favorites", "收藏", "star", favoriteCount)}
           {renderScope("recent", "最近使用", "clock", recentSet.size)}
           {typeCategories.map((option) => renderScope(`type:${option.id}`, option.label, option.icon, option.count))}
           <div className="session-manager__nav-separator" role="separator" />
