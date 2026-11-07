@@ -280,7 +280,13 @@ function ChatItemView({
   }
 
   if (item.type === "error") {
-    return <div className="ai-msg ai-msg--error">{item.text}</div>;
+    return <div className="ai-msg ai-msg--error">
+      <div>{item.text}</div>
+      {item.details ? <details className="ai-request-error">
+        <summary>查看错误详情（已脱敏）</summary>
+        <pre>{JSON.stringify(item.details, null, 2)}</pre>
+      </details> : null}
+    </div>;
   }
 
   return <ToolCardView item={item} onAnswerQuestion={onAnswerQuestion} onApprove={onApprove} />;

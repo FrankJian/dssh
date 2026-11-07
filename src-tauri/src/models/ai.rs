@@ -314,7 +314,12 @@ pub enum AiEvent {
         text: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
-    Error { run_id: String, message: String },
+    Error {
+        run_id: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
+    },
     /// Terminal event; the run is finished (success, error, or cancelled).
     #[serde(rename_all = "camelCase")]
     Done { run_id: String },

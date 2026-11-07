@@ -159,6 +159,7 @@ pub async fn run_agent(app: AppHandle, state: AppState, request: AiSendMessageRe
             AiEvent::Error {
                 run_id: run_id.clone(),
                 message,
+                details: None,
             },
         );
     }
@@ -263,6 +264,7 @@ async fn drive(
         model_config.max_output_tokens,
     );
     let mut nudges = 0u32;
+    let mut context_retries = 0u32;
 
     for _step in 0..max_steps {
         if handles.cancel.load(Ordering::SeqCst) {
@@ -288,7 +290,36 @@ async fn drive(
 
         let response = tokio::select! {
             result = client.exec_chat(&provider.model, chat_req.clone(), Some(&chat_options)) =>
-                result.map_err(|error| error.message)?,
+                match result {
+                    Ok(response) => response,
+                    Err(mut error) => {
+                        if context_retries < 2 && _step + 1 < max_steps && super::failure::context_overflow(&error) {
+                            context_retries += 1;
+                            compressor.tighten(&chat_req);
+                            let recovery = tokio::select! {
+                                result = compressor.fit(&mut chat_req, &client, &provider.model, &state.ai) => result,
+                                _ = handles.cancel_notify.notified() => return Ok(()),
+                            };
+                            match recovery {
+                                Ok(true) => {
+                                    emit(app, AiEvent::Assistant { run_id: run_id.clone(), text: "服务报告上下文超限，已压缩较早记录，准备重新请求。".into() });
+                                    continue;
+                                }
+                                Err(reason) => {
+                                    if let Some(details) = error.details.as_mut().and_then(Value::as_object_mut) {
+                                        details.insert("compressionFailure".into(), serde_json::json!(reason));
+                                    }
+                                }
+                                Ok(false) => {}
+                            }
+                        }
+                        if let Some(details) = error.details.as_mut().and_then(Value::as_object_mut) {
+                            details.insert("step".into(), serde_json::json!(_step + 1));
+                        }
+                        emit(app, AiEvent::Error { run_id: run_id.clone(), message: error.message, details: error.details });
+                        return Ok(());
+                    }
+                },
             _ = handles.cancel_notify.notified() => return Ok(()),
         };
 

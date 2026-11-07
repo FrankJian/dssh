@@ -1,4 +1,5 @@
 //! Safe diagnostic text only; credentials never leave Rust, including error echoes.
+use base64::Engine;
 use serde_json::{Value, json};
 
 pub struct Redactor {
@@ -28,6 +29,29 @@ impl Redactor {
             secrets.push(decode_percent(password));
         }
         secrets.extend(values.filter(|value| !value.is_empty()).map(String::from));
+        // Gateways sometimes echo only the credential, without its auth scheme.
+        let mut auth_secrets = Vec::new();
+        for secret in &secrets {
+            if let Some((scheme, credential)) = secret.split_once(' ')
+                && !credential.trim().is_empty()
+                && (scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("basic"))
+            {
+                auth_secrets.push(credential.trim().to_string());
+                if scheme.eq_ignore_ascii_case("basic")
+                    && let Ok(bytes) =
+                        base64::engine::general_purpose::STANDARD.decode(credential.trim())
+                    && let Ok(decoded) = String::from_utf8(bytes)
+                {
+                    if let Some((_, password)) = decoded.split_once(':')
+                        && !password.is_empty()
+                    {
+                        auth_secrets.push(password.to_string());
+                    }
+                    auth_secrets.push(decoded);
+                }
+            }
+        }
+        secrets.extend(auth_secrets);
         let encoded: Vec<String> = secrets
             .iter()
             .flat_map(|secret| {
@@ -197,6 +221,20 @@ pub fn status_hint(status: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auth_credentials_remain_redacted_when_provider_omits_the_scheme() {
+        let redactor = Redactor::with_values(
+            None,
+            "",
+            ["Bearer bearer-secret", "Basic dXNlcjpiYXNpYy1zZWNyZXQ="].into_iter(),
+        );
+        let text =
+            redactor.text("bearer-secret basic-secret user:basic-secret dXNlcjpiYXNpYy1zZWNyZXQ=");
+        assert!(!text.contains("bearer-secret"));
+        assert!(!text.contains("basic-secret"));
+        assert!(!text.contains("dXNlcjpiYXNpYy1zZWNyZXQ="));
+    }
+
     #[test]
     fn credentials_are_redacted_in_headers_body_errors_and_encoded_echoes() {
         let key = "synthetic/key+value";

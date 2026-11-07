@@ -7,6 +7,8 @@ pub type AppResult<T> = Result<T, AppError>;
 pub struct AppError {
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 impl AppError {
@@ -14,6 +16,7 @@ impl AppError {
         Self {
             code: code.into(),
             message: message.into(),
+            details: None,
         }
     }
 }

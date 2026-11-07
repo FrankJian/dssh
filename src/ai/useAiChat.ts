@@ -26,7 +26,7 @@ export type ChatItem =
       status: ToolStatus;
       result: string | null;
     }
-  | { id: string; type: "error"; text: string };
+  | { id: string; type: "error"; text: string; details?: Record<string, unknown> };
 
 interface SendArgs {
   provider: AiProvider;
@@ -173,7 +173,7 @@ export function useAiChat(): AiChat {
           }
           break;
         case "error":
-          setItems((prev) => [...prev, { id: nextId("error"), type: "error", text: event.message }]);
+          setItems((prev) => [...prev, { id: nextId("error"), type: "error", text: event.message, details: event.details }]);
           break;
         case "done":
           runIdRef.current = null;
@@ -339,7 +339,10 @@ function normalizeChatItem(value: unknown): ChatItem[] {
   if (!isRecord(value) || typeof value.id !== "string") {
     return [];
   }
-  if (value.type === "user" || value.type === "error") {
+  if (value.type === "error") {
+    return typeof value.text === "string" ? [{ id: value.id, type: "error", text: value.text, details: isRecord(value.details) ? value.details : undefined }] : [];
+  }
+  if (value.type === "user") {
     return typeof value.text === "string" ? [{ id: value.id, type: value.type, text: value.text }] : [];
   }
   if (value.type === "assistant") {

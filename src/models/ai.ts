@@ -124,5 +124,5 @@ export type AiEvent =
       args: Record<string, unknown>;
     }
   | { kind: "final"; runId: string; text: string | null }
-  | { kind: "error"; runId: string; message: string }
+  | { kind: "error"; runId: string; message: string; details?: Record<string, unknown> }
   | { kind: "done"; runId: string };

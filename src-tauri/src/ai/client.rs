@@ -55,12 +55,14 @@ pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
             .with_reqwest(http_client)
             .build(),
         native,
+        provider: provider.clone(),
         extra_headers: super::headers::request_headers(&provider.extra_headers)?,
     })
 }
 
 pub struct AiClient {
     genai: Client,
+    provider: AiProviderConfig,
     extra_headers: reqwest::header::HeaderMap,
     native: Option<super::anthropic::AnthropicClient>,
 }
@@ -72,10 +74,75 @@ impl AiClient {
         request: ChatRequest,
         options: Option<&ChatOptions>,
     ) -> AppResult<ChatResponse> {
+        let started = std::time::Instant::now();
+        for attempt in 1..=3 {
+            let outcome = self.exec_once(model, request.clone(), options).await;
+            match outcome {
+                Ok(response)
+                    if response
+                        .captured_raw_body
+                        .as_ref()
+                        .is_some_and(|body| body.get("error").is_some()) =>
+                {
+                    let error = super::failure::http(
+                        200,
+                        &reqwest::header::HeaderMap::new(),
+                        &response.captured_raw_body.as_ref().unwrap().to_string(),
+                    );
+                    return Err(super::failure::describe(
+                        error,
+                        &self.provider,
+                        &request,
+                        options,
+                        started.elapsed().as_millis(),
+                        attempt,
+                    ));
+                }
+                Ok(response) if !response.content.is_empty() => return Ok(response),
+                Ok(_) => {
+                    return Err(super::failure::describe(
+                        super::failure::protocol(
+                            "服务未返回文本或工具调用，可能已耗尽推理输出预算。",
+                        ),
+                        &self.provider,
+                        &request,
+                        options,
+                        started.elapsed().as_millis(),
+                        attempt,
+                    ));
+                }
+                Err(error) if attempt < 3 && super::failure::retryable(&error) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * u64::from(attempt)))
+                        .await;
+                }
+                Err(error) => {
+                    return Err(super::failure::describe(
+                        error,
+                        &self.provider,
+                        &request,
+                        options,
+                        started.elapsed().as_millis(),
+                        attempt,
+                    ));
+                }
+            }
+        }
+        unreachable!("bounded attempts always return")
+    }
+
+    async fn exec_once(
+        &self,
+        model: &str,
+        request: ChatRequest,
+        options: Option<&ChatOptions>,
+    ) -> AppResult<ChatResponse> {
         if let Some(native) = &self.native {
             return native.exec_chat(model, request, options).await;
         }
-        let mut options = options.cloned().unwrap_or_default();
+        let mut options = options
+            .cloned()
+            .unwrap_or_default()
+            .with_capture_raw_body(true);
         let headers: genai::Headers = self
             .extra_headers
             .iter()
@@ -100,12 +167,7 @@ impl AiClient {
         self.genai
             .exec_chat(model, request, Some(&options))
             .await
-            .map_err(|_| {
-                AppError::new(
-                    "ai_request_error",
-                    "模型请求失败，请检查 API 地址、协议、密钥及模型是否可用。",
-                )
-            })
+            .map_err(super::failure::sdk)
     }
 }
 
@@ -254,7 +316,7 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
-                for turn in 0..2 {
+                for turn in 0..6 {
                     let (mut socket, _) = listener.accept().await.unwrap();
                     let mut bytes = Vec::new();
                     let header_end = loop {
@@ -326,6 +388,12 @@ mod tests {
                         let serialized = body.to_string();
                         assert!(serialized.contains("host-result"));
                         assert!(serialized.contains("call_1"));
+                        if protocol == AiProtocol::Completions {
+                            assert_eq!(
+                                body["messages"][2]["reasoning_content"],
+                                "retain exact tool reasoning"
+                            );
+                        }
                         if protocol == AiProtocol::Responses {
                             assert_eq!(body["store"], false);
                             let input = body["input"].as_array().unwrap();
@@ -357,14 +425,14 @@ mod tests {
                             );
                         }
                     }
-                    let response = match (protocol, turn) {
-                        (AiProtocol::Completions, 0) => json!({"model":"ambiguous-model","choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"inspect_host","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
+                    let response = match (protocol, if turn < 5 { 0 } else { 1 }) {
+                        (AiProtocol::Completions, 0) => json!({"model":"ambiguous-model","choices":[{"message":{"role":"assistant","reasoning_content":"retain exact tool reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"inspect_host","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
                         (AiProtocol::Completions, _) => json!({"model":"ambiguous-model","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}),
                         (AiProtocol::Responses, 0) => json!({"id":"resp_1","model":"ambiguous-model","status":"completed","output":[{"type":"reasoning","encrypted_content":"opaque-test-blob","summary":[]},{"type":"function_call","call_id":"call_1","name":"inspect_host","arguments":"{}"}]}),
                         (AiProtocol::Responses, _) => json!({"id":"resp_2","model":"ambiguous-model","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}),
                         (AiProtocol::Anthropic, 0) => json!({"model":"ambiguous-model","role":"assistant","content":[{"type":"thinking","thinking":"private test reasoning","signature":"opaque-test-signature"},{"type":"redacted_thinking","data":"opaque-redacted-block"},{"type":"tool_use","id":"call_1","name":"inspect_host","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}),
                         (AiProtocol::Anthropic, _) => json!({"model":"ambiguous-model","role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}),
-                    }.to_string();
+                    }.to_string().replace("call_1", &format!("call_{}", turn + 1));
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         response.len(),
@@ -422,19 +490,24 @@ mod tests {
                 .with_tools([
                     Tool::new("inspect_host").with_schema(json!({"type":"object","properties":{}}))
                 ]);
-            let first = client
-                .exec_chat(&provider.model, request.clone(), Some(&options))
-                .await
-                .unwrap();
-            assert_eq!(first.tool_calls().len(), 1);
-            let next = request
-                .append_message(assistant_message(&first, protocol))
-                .append_message(ToolResponse::new("call_1", "host-result"));
-            let result = client
-                .exec_chat(&provider.model, next, Some(&options))
-                .await
-                .unwrap();
-            assert_eq!(result.first_text(), Some("done"));
+            let mut request = request;
+            for turn in 0..6 {
+                let response = client
+                    .exec_chat(&provider.model, request.clone(), Some(&options))
+                    .await
+                    .unwrap();
+                if turn == 5 {
+                    assert_eq!(response.first_text(), Some("done"));
+                } else {
+                    assert_eq!(response.tool_calls().len(), 1);
+                    request = request
+                        .append_message(assistant_message(&response, protocol))
+                        .append_message(ToolResponse::new(
+                            format!("call_{}", turn + 1),
+                            "host-result",
+                        ));
+                }
+            }
             server.await.unwrap();
         }
     }

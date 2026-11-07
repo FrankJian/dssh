@@ -172,6 +172,12 @@ impl ContextCompressor {
         }
     }
 
+    /// A gateway may enforce a smaller window than the configured model catalog.
+    /// Force a conservative reduction after an explicit context-overflow rejection.
+    pub fn tighten(&mut self, request: &ChatRequest) {
+        self.input_budget = (self.input_budget / 2).min(request_tokens(request) * 3 / 4);
+    }
+
     pub async fn fit(
         &mut self,
         request: &mut ChatRequest,
@@ -318,6 +324,42 @@ mod tests {
     use super::*;
     use genai::chat::{Tool, ToolCall, ToolResponse};
     use serde_json::json;
+
+    #[tokio::test]
+    async fn server_window_rejection_forces_compression_with_complete_tool_pairs() {
+        let mut request = ChatRequest::from_user("keep current task")
+            .append_message(ChatMessage::from(vec![ToolCall {
+                call_id: "call".into(),
+                fn_name: "inspect".into(),
+                fn_arguments: json!({}),
+                thought_signatures: None,
+            }]))
+            .append_message(ToolResponse::new("call", "large tool output ".repeat(1800)));
+        let mut compressor = ContextCompressor::new(&request, 256000, 32000);
+        assert!(request_tokens(&request) < compressor.input_budget);
+        compressor.tighten(&request);
+        assert!(request_tokens(&request) > compressor.input_budget);
+        assert!(
+            compressor
+                .fit_with(&mut request, |_, _| async {
+                    Ok("completed tool work summary".into())
+                })
+                .await
+                .unwrap()
+        );
+        assert!(request_tokens(&request) <= compressor.input_budget);
+        assert!(request.messages.iter().any(|message| {
+            message
+                .content
+                .joined_texts()
+                .is_some_and(|text| text.contains("keep current task"))
+        }));
+        assert!(
+            !serde_json::to_string(&request)
+                .unwrap()
+                .contains("large tool output")
+        );
+    }
 
     #[tokio::test]
     async fn requests_with_space_are_unchanged() {

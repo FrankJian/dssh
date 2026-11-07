@@ -45,17 +45,30 @@ impl AnthropicClient {
             .headers(self.extra_headers.clone())
             .send()
             .await
-            .map_err(|_| AppError::new("ai_request_error", "无法连接 Anthropic 模型服务。"))?;
-        if !response.status().is_success() {
-            return Err(AppError::new(
-                "ai_request_error",
-                format!(
-                    "模型请求失败（HTTP {}），请检查地址、协议和认证。",
-                    response.status()
-                ),
+            .map_err(|error| super::failure::network(&error))?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        // Read failures preserve the original network/TLS/timeout chain.
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| super::failure::network(&error))?;
+        if !status.is_success() {
+            return Err(super::failure::http(
+                status.as_u16(),
+                &headers,
+                &String::from_utf8_lossy(&bytes),
             ));
         }
-        let body: Value = response.json().await.map_err(|_| protocol_error())?;
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| super::failure::protocol(error.to_string()))?;
+        if body.get("error").is_some() {
+            return Err(super::failure::http(
+                status.as_u16(),
+                &headers,
+                &body.to_string(),
+            ));
+        }
         let mut content = MessageContent::default();
         for block in body["content"].as_array().ok_or_else(protocol_error)? {
             match block["type"].as_str() {
