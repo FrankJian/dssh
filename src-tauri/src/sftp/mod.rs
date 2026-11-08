@@ -1468,8 +1468,7 @@ fn child_path(parent: &str, name: &str) -> AppResult<String> {
 }
 
 fn non_empty_path(path: &str) -> AppResult<&str> {
-    let path = path.trim();
-    if path.is_empty() || path.contains('\0') {
+    if path.trim().is_empty() || path.contains('\0') {
         return Err(AppError::new("sftp_invalid_path", "远程路径无效。"));
     }
     Ok(path)
@@ -1503,15 +1502,31 @@ fn join_path(dir: &str, name: &str) -> String {
 
 /// Trim a trailing slash except for the filesystem root.
 fn normalize_dir(path: &str) -> String {
-    if path.len() > 1 {
-        path.trim_end_matches('/').to_string()
-    } else {
-        path.to_string()
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() && path.starts_with('/') {
+        return "/".to_string();
     }
+    let drive = trimmed.strip_prefix('/').unwrap_or(trimmed).as_bytes();
+    if path.ends_with('/') && drive.len() == 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':'
+    {
+        return format!("{trimmed}/");
+    }
+    trimmed.to_string()
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn path_normalization_preserves_sftp_drive_roots_and_literal_spaces() {
+        assert_eq!(super::normalize_dir("C:/"), "C:/");
+        assert_eq!(super::normalize_dir("/C:/"), "/C:/");
+        assert_eq!(super::normalize_dir("/C:/Users/"), "/C:/Users");
+        assert_eq!(super::normalize_dir("///"), "/");
+        assert_eq!(super::normalize_dir("/srv/name /"), "/srv/name ");
+        assert_eq!(super::non_empty_path("/srv/name ").unwrap(), "/srv/name ");
+        assert!(super::non_root_path("///").is_err());
+    }
+
     use super::{
         DeletePlanItem, delete_preview, has_binary_signature, is_descendant, is_known_binary_path,
     };

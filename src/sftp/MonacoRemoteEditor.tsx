@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import type { EditorOptions } from "../settings/settings";
 import { loadMonaco, refreshMonacoTheme } from "./monacoLoader";
@@ -127,6 +127,9 @@ export function MonacoRemoteEditor({
   const onContentChangeRef = useRef(onContentChange);
   const onSaveRef = useRef(onSave);
   const onScrollRef = useRef(onScroll);
+  // A file may be open in a terminal, an SFTP tab, and a detached window.
+  // Each editor owns its models and unsaved buffer independently.
+  const modelNamespace = useId();
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -226,7 +229,12 @@ export function MonacoRemoteEditor({
 
     for (const [path, document] of Object.entries(documents)) {
       if (document.isLoading || document.error || modelsRef.current.has(path)) continue;
-      const uri = monaco.Uri.from({ authority: profileId, path: path.startsWith("/") ? path : `/${path}`, scheme: "dssh-sftp" });
+      const uri = monaco.Uri.from({
+        authority: profileId,
+        path: path.startsWith("/") ? path : `/${path}`,
+        scheme: "dssh-sftp",
+        fragment: modelNamespace,
+      });
       const model = monaco.editor.createModel(
         document.content,
         languageOverrides[path] ?? languageForPath(path),

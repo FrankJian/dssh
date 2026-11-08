@@ -52,24 +52,43 @@ fn local_error(error: impl std::fmt::Display) -> AppError {
 }
 
 fn local_home_path() -> AppResult<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    #[cfg(windows)]
+    let value = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    #[cfg(not(windows))]
+    let value = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    value
         .map(PathBuf::from)
         .ok_or_else(|| AppError::new("local_file_error", "无法确定本机主目录。"))
+}
+
+#[cfg(any(windows, test))]
+fn windows_display_path(value: &str) -> String {
+    if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc_path}");
+    }
+    if let Some(normal_path) = value.strip_prefix(r"\\?\") {
+        let bytes = normal_path.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+        {
+            return normal_path.to_string();
+        }
+    }
+    value.to_string()
 }
 
 fn local_display_path(path: &std::path::Path) -> String {
     let value = path.to_string_lossy();
     #[cfg(windows)]
     {
-        if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
-            return format!(r"\\{unc_path}");
-        }
-        if let Some(normal_path) = value.strip_prefix(r"\\?\") {
-            return normal_path.to_string();
-        }
+        windows_display_path(&value)
     }
-    value.into_owned()
+    #[cfg(not(windows))]
+    {
+        value.into_owned()
+    }
 }
 
 const LOCAL_MAX_EDITABLE_TEXT_BYTES: u64 = 1_024 * 1_024 * 1_024;
@@ -153,7 +172,7 @@ fn local_child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
             "文件名不能包含路径分隔符。",
         ));
     }
-    Ok(PathBuf::from(parent.trim()).join(trimmed_name))
+    Ok(PathBuf::from(parent).join(trimmed_name))
 }
 
 #[tauri::command]
@@ -198,7 +217,7 @@ pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
     let requested = if path.trim().is_empty() {
         local_home_path()?
     } else {
-        PathBuf::from(path.trim())
+        PathBuf::from(&path)
     };
     let canonical = tokio::fs::canonicalize(&requested)
         .await
@@ -236,7 +255,7 @@ pub async fn sftp_local_list(path: String) -> AppResult<LocalListing> {
 
 #[tauri::command]
 pub async fn sftp_local_read_text(path: String) -> AppResult<SftpTextFile> {
-    let requested = PathBuf::from(path.trim());
+    let requested = PathBuf::from(&path);
     let canonical = tokio::fs::canonicalize(&requested)
         .await
         .map_err(local_error)?;
@@ -283,7 +302,7 @@ pub async fn sftp_local_write_text(path: String, content: String) -> AppResult<(
             "文本内容不能包含 NUL 字符。",
         ));
     }
-    let requested = PathBuf::from(path.trim());
+    let requested = PathBuf::from(&path);
     let canonical = tokio::fs::canonicalize(&requested)
         .await
         .map_err(local_error)?;
@@ -301,7 +320,7 @@ pub async fn sftp_local_write_text(path: String, content: String) -> AppResult<(
 
 #[tauri::command]
 pub async fn sftp_local_read_image(path: String) -> AppResult<SftpImageFile> {
-    let requested = PathBuf::from(path.trim());
+    let requested = PathBuf::from(&path);
     let canonical = tokio::fs::canonicalize(&requested)
         .await
         .map_err(local_error)?;
@@ -321,7 +340,7 @@ pub async fn sftp_local_read_image(path: String) -> AppResult<SftpImageFile> {
 
 #[tauri::command]
 pub async fn sftp_local_create_dir(parent_path: String, name: String) -> AppResult<()> {
-    let parent = tokio::fs::canonicalize(PathBuf::from(parent_path.trim()))
+    let parent = tokio::fs::canonicalize(PathBuf::from(&parent_path))
         .await
         .map_err(local_error)?;
     tokio::fs::create_dir(local_child_path(&parent.to_string_lossy(), &name)?)
@@ -331,10 +350,13 @@ pub async fn sftp_local_create_dir(parent_path: String, name: String) -> AppResu
 
 #[tauri::command]
 pub async fn sftp_local_create_file(parent_path: String, name: String) -> AppResult<()> {
-    let parent = tokio::fs::canonicalize(PathBuf::from(parent_path.trim()))
+    let parent = tokio::fs::canonicalize(PathBuf::from(&parent_path))
         .await
         .map_err(local_error)?;
-    tokio::fs::File::create(local_child_path(&parent.to_string_lossy(), &name)?)
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(local_child_path(&parent.to_string_lossy(), &name)?)
         .await
         .map(|_| ())
         .map_err(local_error)
@@ -342,7 +364,7 @@ pub async fn sftp_local_create_file(parent_path: String, name: String) -> AppRes
 
 #[tauri::command]
 pub async fn sftp_local_rename(path: String, new_path: String) -> AppResult<()> {
-    let requested_source = PathBuf::from(path.trim());
+    let requested_source = PathBuf::from(&path);
     let source_metadata = tokio::fs::symlink_metadata(&requested_source)
         .await
         .map_err(local_error)?;
@@ -353,7 +375,7 @@ pub async fn sftp_local_rename(path: String, new_path: String) -> AppResult<()> 
             .await
             .map_err(local_error)?
     };
-    let destination = PathBuf::from(new_path.trim());
+    let destination = PathBuf::from(&new_path);
     if destination.as_os_str().is_empty() {
         return Err(AppError::new("local_invalid_name", "目标路径不能为空。"));
     }
@@ -391,7 +413,7 @@ pub async fn sftp_local_rename(path: String, new_path: String) -> AppResult<()> 
 
 #[tauri::command]
 pub async fn sftp_local_delete(path: String) -> AppResult<()> {
-    let requested = PathBuf::from(path.trim());
+    let requested = PathBuf::from(&path);
     let metadata = tokio::fs::symlink_metadata(&requested)
         .await
         .map_err(local_error)?;
@@ -674,4 +696,85 @@ pub async fn sftp_cancel_operation(
 pub async fn sftp_disconnect(state: State<'_, AppState>, profile_id: String) -> AppResult<()> {
     state.sftp.disconnect(&profile_id).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn windows_display_paths_keep_roots_unicode_and_volume_paths() {
+        assert_eq!(windows_display_path(r"\\?\C:\"), r"C:\");
+        assert_eq!(
+            windows_display_path(r"\\?\C:\Users\User Name"),
+            r"C:\Users\User Name"
+        );
+        assert_eq!(
+            windows_display_path(r"\\?\UNC\server\share\folder"),
+            r"\\server\share\folder"
+        );
+        assert_eq!(
+            windows_display_path(r"\\?\Volume{example}\folder"),
+            r"\\?\Volume{example}\folder"
+        );
+        assert_eq!(windows_display_path("/tmp/folder "), "/tmp/folder ");
+    }
+
+    #[test]
+    fn local_child_keeps_the_exact_parent_path() {
+        assert_eq!(
+            local_child_path("parent ", "file.txt").unwrap(),
+            PathBuf::from("parent ").join("file.txt")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn local_operations_do_not_trim_paths_into_a_different_file() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("dssh-path-test-{}-{nonce}", std::process::id()));
+        let parent = root.join("folder ");
+        tokio::fs::create_dir_all(&parent).await.unwrap();
+        tokio::fs::create_dir(root.join("folder")).await.unwrap();
+        tokio::fs::write(parent.join("file "), "intended")
+            .await
+            .unwrap();
+        tokio::fs::write(parent.join("file"), "neighbor")
+            .await
+            .unwrap();
+        assert!(
+            sftp_local_create_file(parent.to_string_lossy().into_owned(), "file".into())
+                .await
+                .is_err()
+        );
+        let listing = sftp_local_list(parent.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(listing.entries.len(), 2);
+        let source = parent.join("file ").to_string_lossy().into_owned();
+        assert_eq!(
+            sftp_local_read_text(source.clone()).await.unwrap().content,
+            "intended"
+        );
+        let destination = parent.join("renamed ").to_string_lossy().into_owned();
+        sftp_local_rename(source, destination.clone())
+            .await
+            .unwrap();
+        sftp_local_delete(destination).await.unwrap();
+        assert_eq!(
+            tokio::fs::read_to_string(parent.join("file"))
+                .await
+                .unwrap(),
+            "neighbor"
+        );
+        sftp_local_delete(parent.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert!(root.join("folder").exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 }

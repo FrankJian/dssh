@@ -129,6 +129,8 @@
   --space-6: 24px;
 
   /* Metrics */
+  --sftp-toolbar-icon-size: 16px;
+  --sftp-toolbar-button-size: 28px;
   --rdp-editor-width: 620px;
   --rdp-text-size: 12px;
   --rdp-caption-size: 11px;
@@ -7795,8 +7797,20 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
 }
 
 .sftp-dual-browser__pane-header .icon-button {
-  width: 25px;
-  height: 25px;
+  width: var(--sftp-toolbar-button-size);
+  height: var(--sftp-toolbar-button-size);
+}
+
+/* Reset native button padding so compact buttons never squeeze the SVG. */
+.sftp-dual-browser .icon-button {
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.sftp-dual-browser .icon-button > svg {
+  width: var(--sftp-toolbar-icon-size);
+  height: var(--sftp-toolbar-icon-size);
+  flex-shrink: 0;
 }
 
 .sftp-dual-browser__path {
@@ -8153,6 +8167,514 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   background: var(--bg-hover);
   color: var(--accent-strong);
 }
+
+.sftp-dual-browser__files { display: contents; }
+
+/* Compact file details and navigation shared by the local and remote panes. */
+.sftp-dual-browser {
+  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-auto-rows: auto;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.sftp-dual-browser__pane {
+  position: relative;
+  overflow: hidden;
+}
+.sftp-dual-browser__pane:focus-within .sftp-dual-browser__pane-header {
+  box-shadow: inset 0 -1px var(--accent-border);
+}
+.sftp-dual-browser__pane[data-drop="true"] .sftp-dual-browser__list {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -3px;
+  background: var(--bg-selected);
+}
+.sftp-dual-browser__pane-header {
+  height: 40px;
+  gap: 8px;
+  padding-inline: 12px 8px;
+}
+.sftp-dual-browser__identity {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.sftp-dual-browser__identity > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.sftp-dual-browser__identity-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sftp-dual-browser__identity-copy > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 14px;
+  font-weight: 600;
+}
+.sftp-dual-browser__pane-header > div {
+  flex-shrink: 0;
+}
+.sftp-dual-browser__pane-header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 12px;
+  font-weight: 400;
+}
+.sftp-dual-browser__path {
+  height: 40px;
+  gap: 2px;
+  border: 0;
+  background: var(--bg-panel);
+}
+.sftp-dual-browser__path .icon-button {
+  width: 24px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.sftp-dual-browser__path input {
+  height: 28px;
+}
+.sftp-dual-browser__path > button:last-child {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  width: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.sftp-dual-browser__filters {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 8px;
+  align-items: center;
+}
+.sftp-dual-browser__filters .sftp-dual-browser__search {
+  margin: 0;
+  height: 28px;
+  flex: 1;
+  min-width: 0;
+}
+.sftp-dual-browser__filters select {
+  max-width: 100px;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.sftp-dual-browser__toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.sftp-dual-browser__toggle[aria-pressed="true"] {
+  color: var(--accent-strong);
+  background: var(--bg-selected);
+  border-color: var(--accent-border);
+}
+.sftp-dual-browser__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 8px;
+  min-height: 34px;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-toolbar);
+}
+.sftp-dual-browser__actions > button:not(.icon-button),
+.sftp-dual-browser__queue-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-base);
+  background: transparent;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sftp-dual-browser__actions > button:first-child {
+  color: var(--accent-strong);
+  margin-right: auto;
+}
+.sftp-dual-browser__actions .icon-button {
+  width: 25px;
+  height: 25px;
+}
+.sftp-dual-browser button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.sftp-dual-browser__actions > button:hover:not(:disabled),
+.sftp-dual-browser__queue-bar button:hover,
+.sftp-dual-browser__toggle:hover {
+  background: var(--bg-hover);
+}
+.sftp-dual-browser__columns,
+.sftp-dual-browser__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 126px;
+  gap: 8px;
+  padding-inline: 12px;
+}
+.sftp-dual-browser__columns {
+  height: 28px;
+  align-items: center;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sftp-dual-browser__columns button {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.sftp-dual-browser__columns button:nth-child(2) {
+  justify-content: flex-end;
+}
+.sftp-dual-browser__columns button span {
+  color: var(--accent-strong);
+}
+.sftp-dual-browser__list {
+  padding: 2px 0 8px;
+  overscroll-behavior: contain;
+}
+.sftp-dual-browser__row {
+  height: 30px;
+  font-size: 12px;
+}
+.sftp-dual-browser__row .sftp-dual-browser__name {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow: hidden;
+}
+.sftp-dual-browser__name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-dual-browser__name svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.sftp-dual-browser__row > small {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.sftp-dual-browser__row > time {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sftp-dual-browser__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: center;
+}
+.sftp-dual-browser__empty strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.sftp-dual-browser__pane-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sftp-dual-browser__transfer {
+  gap: 12px;
+}
+.sftp-dual-browser__transfer-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+.sftp-dual-browser__queue-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-toolbar);
+}
+.sftp-dual-browser__queue-bar > span {
+  flex: 1;
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-dual-browser__queue {
+  grid-column: 1 / -1;
+  max-height: 132px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+.sftp-dual-browser__queue > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 11.5px;
+}
+.sftp-dual-browser__queue > div span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-dual-browser__queue small,
+.sftp-dual-browser__queue svg {
+  color: var(--text-muted);
+}
+.sftp-dual-browser__queue small {
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-dual-browser__queue p {
+  padding: 0 14px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.sftp-dual-browser__error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-height: 80px;
+  overflow: auto;
+}
+.sftp-dual-browser__error button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.sftp-dual-browser__editor {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  min-height: 0;
+  background: var(--bg-panel);
+}
+.sftp-dual-browser__editor[hidden] {
+  display: none;
+}
+.sftp-dual-browser__editor > * {
+  flex: 1;
+  min-width: 0;
+}
+.sftp-create-directory__dialog p {
+  overflow-wrap: anywhere;
+  max-height: 150px;
+  overflow: auto;
+}
+.sftp-dual-browser__recursive-toggle { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.sftp-dual-browser__recursive-toggle input { margin: 0; accent-color: var(--accent); }
+.sftp-dual-browser__search-status { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px; border-top: 1px solid var(--border-subtle); font-size: 11px; color: var(--text-muted); }
+.sftp-dual-browser__search-status > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-dual-browser__search-status > button { padding: 2px 4px; border: 0; background: transparent; color: var(--accent-strong); font-size: 11px; cursor: pointer; }
+.sftp-dual-browser__row[data-search-result="true"] { height: 44px; }
+.sftp-dual-browser__filename { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.sftp-dual-browser__filename > span, .sftp-dual-browser__filename > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-dual-browser__filename > small { color: var(--text-faint); font-size: 10.5px; }
+.sftp-dual-browser__native-drop-hint {
+  position: absolute;
+  bottom: 36px;
+  inset-inline: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--accent-strong);
+  font-size: 12px;
+  pointer-events: none;
+}
+.sftp-dual-browser__native-drop-hint > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-dual-browser__native-drop-hint > svg { flex-shrink: 0; }
+.sftp-dual-browser__drag-preview {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text-base);
+  font-size: 12px;
+  box-shadow: var(--shadow-popover);
+  pointer-events: none;
+}
+.sftp-dual-browser__drag-preview > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-dual-browser__drag-preview > svg { flex-shrink: 0; color: var(--accent-strong); }
+.sftp-dual-browser__drag-preview > small { flex-shrink: 0; color: var(--text-muted); font-size: 11px; }
+.sftp-dual-browser__row { touch-action: none; }
+.sftp-dual-browser__menu-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+.sftp-dual-browser__menu {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-popover);
+}
+.sftp-dual-browser__menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  padding: 7px 8px;
+  background: transparent;
+  color: var(--text-base);
+  border: 0;
+  border-radius: var(--radius-xs);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.sftp-dual-browser__menu button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.sftp-dual-browser__menu kbd {
+  color: var(--text-faint);
+}
+.sftp-dual-browser button:focus-visible,
+.sftp-dual-browser [role="listbox"]:focus-visible,
+.sftp-dual-browser select:focus-visible {
+  outline: 1px solid var(--accent-border);
+  outline-offset: -1px;
+}
+@container (max-width: 1000px) {
+  .sftp-dual-browser__columns,
+  .sftp-dual-browser__row {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+  .sftp-dual-browser__columns button:last-child,
+  .sftp-dual-browser__row > time {
+    display: none;
+  }
+  .sftp-dual-browser__pane-status > span:last-child {
+    display: none;
+  }
+}
+@container (max-width: 650px) {
+  .sftp-dual-browser__filters select,
+  .sftp-dual-browser__actions > button:nth-child(2):not(.icon-button),
+  .sftp-dual-browser__queue-bar > span {
+    display: none;
+  }
+  .sftp-dual-browser__path {
+    padding-inline: 4px;
+  }
+  .sftp-dual-browser__path .icon-button {
+    width: 20px;
+  }
+  .sftp-dual-browser__columns,
+  .sftp-dual-browser__row {
+    padding-inline: 8px;
+    gap: 4px;
+  }
+}
+.sftp-modal {
+  width: min(440px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  overflow: auto;
+}
+.sftp-modal::backdrop {
+  background: var(--bg-modal-backdrop);
+}
+.sftp-modal .sftp-create-directory__dialog {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sftp-dual-browser__progress-track { width: 100%; height: 4px; border: 0; accent-color: var(--accent); }
+.sftp-dual-browser__progress-track::-webkit-progress-bar { background: var(--bg-hover); }
+.sftp-dual-browser__progress-track::-webkit-progress-value { background: var(--accent); }
 
 .file-list {
   display: grid;

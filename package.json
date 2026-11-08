@@ -8,6 +8,7 @@
     "rdp:package": "pnpm rdp:build && pnpm tauri build --config src-tauri/tauri.rdp.conf.json",
     "test:rdp-worker": "python3 scripts/test-rdp-worker.py",
     "test:connection-library": "node --experimental-strip-types --test src/ssh/connectionFolders.test.mjs src/ssh/profileClone.test.mjs src/ssh/connectionTypes.test.mjs src/app/sftpTerminal.test.mjs src/app/connectionPalette.test.mjs",
+    "test:sftp": "node --experimental-strip-types --test src/sftp/fileBrowserModel.test.mjs src/sftp/filePaneDrag.test.mjs src/sftp/nativeFileDrop.test.mjs src/sftp/recursiveSearch.test.mjs src/sftp/browserPaths.test.mjs",
     "test:rdp": "node --experimental-strip-types --test src/rdp/sessionState.test.mjs",
     "test:rdp-build": "node --test scripts/rdp-archive.test.mjs scripts/rdp-windows.test.mjs scripts/rdp-chrome-theme.test.mjs",
     "dev": "vite",

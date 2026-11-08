@@ -5,3 +5,6 @@
  */
 export const isMacOS: boolean =
   typeof navigator !== "undefined" && /Mac|iP(hone|ad|od)/.test(navigator.userAgent);
+
+export const isWindows: boolean =
+  typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);

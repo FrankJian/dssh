@@ -38,6 +38,8 @@ export type IconName =
   | "folder"
   | "tag"
   | "folderPlus"
+  | "filePlus"
+  | "house"
   | "forward"
   | "gauge"
   | "gitBranch"
@@ -260,6 +262,18 @@ export function Icon({ name, ...props }: IconProps) {
       ) : null}
       {name === "folder" ? (
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+      ) : null}
+      {name === "house" ? (
+        <>
+          <path d="m3 10 9-7 9 7" />
+          <path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M9 20v-7h6v7" />
+        </>
+      ) : null}
+      {name === "filePlus" ? (
+        <>
+          <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z" />
+          <path d="M14 3v5h5M12 11v6M9 14h6" />
+        </>
       ) : null}
       {name === "folderPlus" ? (
         <>

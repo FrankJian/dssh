@@ -674,13 +674,21 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     .map((tab) => {
       const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !appLock.status?.locked;
       const terminal = findSftpTerminal(sessions, tab.profileId, activeSessionId);
+      const profile = profiles.find((item) => item.id === tab.profileId);
+      const host = profile?.host.trim();
+      const endpoint = profile && host
+        ? `${profile.username ? `${profile.username}@` : ""}${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${profile.port}`
+        : undefined;
       return (
         <div aria-hidden={!isActive} className="sftp-tab" hidden={!isActive} key={tab.id}>
           <FileBrowser
+            editorOptions={editorSettings.options}
             initialLocalPath={tab.localPath}
             initialRemotePath={tab.remotePath}
             onTabPathsChange={updateSftpTabPaths}
             profileId={tab.profileId}
+            remoteName={profile?.name.trim() || tab.title}
+            remoteEndpoint={endpoint}
             tabId={tab.id}
             onOpenInTerminal={terminal ? (dir) => {
               const quoted = `'${dir.replace(/'/g, "'\\''")}'`;

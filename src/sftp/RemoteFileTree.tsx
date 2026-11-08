@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { isMacOS } from "../platform";
+import { nativeDropClientPoint } from "./nativeFileDrop";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -196,7 +198,10 @@ export function RemoteFileTree({
   const nativeDropTargetRef = useRef<string | null>(null);
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const suppressClickRef = useRef(false);
-  const nativeCoordinateScaleRef = useRef({ x: 1, y: 1 });
+  const nativeCoordinateScaleRef = useRef({
+    size: { width: window.innerWidth, height: window.innerHeight },
+    nativeToPhysicalScale: 1,
+  });
   const transferStateRef = useRef({ isTransferring, profileId, rootPath });
   transferStateRef.current = { isTransferring, profileId, rootPath };
 
@@ -550,16 +555,23 @@ export function RemoteFileTree({
     let disposed = false;
 
     function targetDirectory(position: { x: number; y: number }) {
-      const scale = nativeCoordinateScaleRef.current;
-      return directoryAtClientPoint(position.x / scale.x, position.y / scale.y);
+      const { size, nativeToPhysicalScale } = nativeCoordinateScaleRef.current;
+      const point = nativeDropClientPoint(
+        position,
+        size,
+        { width: window.innerWidth, height: window.innerHeight },
+        nativeToPhysicalScale,
+      );
+      return point ? directoryAtClientPoint(point.x, point.y) : null;
     }
 
     async function updateCoordinateScale() {
-      const size = await getCurrentWindow().innerSize();
-      nativeCoordinateScaleRef.current = {
-        x: size.width / Math.max(window.innerWidth, 1),
-        y: size.height / Math.max(window.innerHeight, 1),
-      };
+      const nativeWindow = getCurrentWindow();
+      const [size, nativeToPhysicalScale] = await Promise.all([
+        nativeWindow.innerSize(),
+        isMacOS ? nativeWindow.scaleFactor() : Promise.resolve(1),
+      ]);
+      nativeCoordinateScaleRef.current = { size, nativeToPhysicalScale };
     }
 
     void updateCoordinateScale();

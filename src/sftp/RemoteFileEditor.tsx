@@ -27,6 +27,7 @@ interface RemoteFileEditorProps {
   onCloseFile: (path: string) => void;
   onSelectFile: (path: string) => void;
   onShowTerminal: () => void;
+  backLabel?: string;
   profileId: string;
   fileSystem?: "remote" | "local";
 }
@@ -57,8 +58,8 @@ interface TabContextMenu {
 }
 
 function fileName(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
+  const trimmed = path.replace(/[\\/]+$/, "");
+  return trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1) || path;
 }
 
 function isDirty(document: EditorDocument | undefined): boolean {
@@ -94,6 +95,7 @@ export function RemoteFileEditor({
   onCloseFile,
   onSelectFile,
   onShowTerminal,
+  backLabel,
   profileId,
   fileSystem = "remote",
 }: RemoteFileEditorProps) {
@@ -507,13 +509,13 @@ export function RemoteFileEditor({
     <section className="remote-file-editor" aria-label={`${isLocalFileSystem ? "本地" : "远程"}文件编辑器`}>
       <header className="remote-file-editor__tabs" role="tablist" aria-label="已打开文件">
         <button
-          aria-label="显示终端"
+          aria-label={backLabel ?? "显示终端"}
           className="remote-file-editor__terminal-button"
           onClick={onShowTerminal}
-          title="显示终端"
+          title={backLabel ?? "显示终端"}
           type="button"
         >
-          <Icon name="terminalTool" height="16" width="16" />
+          <Icon name={backLabel ? "folder" : "terminalTool"} height="16" width="16" />
         </button>
         {filePaths.map((path) => {
           const dirty = isDirty(documents[path]);
