@@ -3,6 +3,7 @@ import type { AuthMethod, SshProfile, SshProfileIcon } from "../models";
 export type ProfileEditorMode = "create" | "edit";
 
 export interface ProfileDraft {
+  connectionType: "ssh" | "sftp";
   name: string;
   folder: string;
   host: string;
@@ -29,6 +30,7 @@ export interface ProfileDraft {
 
 export function createEmptyProfileDraft(): ProfileDraft {
   return {
+    connectionType: "ssh",
     name: "",
     folder: "",
     host: "",
@@ -54,6 +56,7 @@ export function createEmptyProfileDraft(): ProfileDraft {
 
 export function profileToDraft(profile: SshProfile): ProfileDraft {
   return {
+    connectionType: profile.connectionType ?? "ssh",
     name: profile.name,
     folder: profile.folder ?? "",
     host: profile.host,

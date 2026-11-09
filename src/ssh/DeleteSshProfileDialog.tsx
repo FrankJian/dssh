@@ -28,7 +28,7 @@ export function DeleteSshProfileDialog({ profile, onClose, onConfirm }: Props) {
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="ssh-delete-dialog" aria-label="确认删除 SSH 配置">
+      <section className="ssh-delete-dialog" aria-label="确认删除连接配置">
         <header className="profile-editor__topbar">
           <h2>确认删除配置</h2>
           <button aria-label="关闭" className="icon-button" onClick={onClose} type="button">
@@ -36,8 +36,8 @@ export function DeleteSshProfileDialog({ profile, onClose, onConfirm }: Props) {
           </button>
         </header>
         <div className="ssh-delete-dialog__body">
-          <p>确定删除 SSH 配置“{profile.name}”吗？</p>
-          <p className="ssh-delete-dialog__warning">此操作无法撤销。</p>
+          <p>确定删除连接配置“{profile.name}”吗？</p>
+          <p className="ssh-delete-dialog__warning">此操作会删除连接管理和 SFTP 连接库共享的配置，无法撤销。</p>
           {error ? <div className="form-errors">{error}</div> : null}
           <footer className="s3-dialog-actions">
             <Button disabled={deleting} onClick={onClose} variant="secondary">取消</Button>

@@ -21,7 +21,7 @@ const expectedFields = [
   "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
 ];
 
-test("all twelve presets define a complete terminal palette and preserve Graphite defaults", () => {
+test("all twelve presets define a complete terminal palette and retain stable default IDs", () => {
   assert.equal(BUILTIN_TERMINAL_SCHEMES.length, 12);
   for (const scheme of BUILTIN_TERMINAL_SCHEMES) {
     assert.deepEqual(Object.keys(scheme.colors).sort(), [...expectedFields].sort());
@@ -30,15 +30,18 @@ test("all twelve presets define a complete terminal palette and preserve Graphit
     }
   }
   assert.equal(DEFAULT_TERMINAL_SCHEME_ID, "builtin:graphite-dark");
-  const graphite = BUILTIN_TERMINAL_SCHEMES[0].colors;
-  assert.deepEqual(graphite, {
-    background: "#0b0e12", foreground: "#dde4ea", cursor: "#a8c7de", cursorAccent: "#0b0e12",
-    selectionBackground: "#182630", selectionInactiveBackground: "#121c24", selectionForeground: null,
-    black: "#151b22", red: "#e18484", green: "#73c9a2", yellow: "#d6b56c", blue: "#79a6c9",
-    magenta: "#c69ac9", cyan: "#70c5c8", white: "#dde4ea", brightBlack: "#65717c",
-    brightRed: "#efaaaa", brightGreen: "#9ad8ba", brightYellow: "#e5ca8b", brightBlue: "#a8c7de",
-    brightMagenta: "#dbb7dc", brightCyan: "#9bdcdf", brightWhite: "#ffffff",
-  });
+});
+
+test("Graphite text, directory accents and selection remain readable in both appearances", () => {
+  for (const { colors, id } of BUILTIN_TERMINAL_SCHEMES.slice(0, 2)) {
+    for (const field of ["foreground", "red", "green", "yellow", "blue", "magenta", "cyan", "brightBlack",
+      "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan"]) {
+      assert.ok(store.contrastRatio(colors[field], colors.background) >= 4.5, `${id}.${field}`);
+    }
+    for (const background of ["selectionBackground", "selectionInactiveBackground"]) {
+      assert.ok(store.contrastRatio(colors.foreground, colors[background]) >= 4.5, `${id}.${background}`);
+    }
+  }
 });
 
 test("HEX input accepts short and long RGB forms and rejects other CSS values", () => {

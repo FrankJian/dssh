@@ -3,6 +3,7 @@ import type { AuthMethod, SshProfile, SshProfileIcon, SshProxy } from "../models
 import { invokeCommand } from "./tauri";
 
 export interface CreateSshProfileRequest {
+  connectionType?: "ssh" | "sftp";
   name: string;
   folder?: string;
   host: string;

@@ -88,3 +88,12 @@ test('Chinese tag and folder prefixes also find direct connection actions', asyn
   assert.equal(filterPaletteItems(items, '目录 华东').length, 2);
   assert.ok(filterPaletteItems(items, '编辑 核服').every(item => item.icon === 'edit'));
 });
+
+test('independent SFTP entries default to file actions and retain edit and group keywords',async()=>{
+ const {connectionActionPaletteItems}=await import('./connectionPalette.ts');
+ let opened='';const profile={id:'upload',connectionType:'sftp',name:'Upload',host:'files.test',username:'u',port:22,tags:['backup'],folder:'storage'};
+ const items=connectionActionPaletteItems([profile],{onOpen:p=>opened=p.id,onEdit:()=>{}});
+ const action=items.find(item=>item.label.startsWith('打开 SFTP'));
+ assert.equal(action.icon,'folder');action.run();assert.equal(opened,'upload');
+ assert.equal(filterPaletteItems(items,'backup').length,2);
+});

@@ -52,7 +52,7 @@ impl ProfileRepository {
         let mut statement = connection.prepare(
             "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
                     key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                    proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder
+                    proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
              FROM ssh_profiles
              ORDER BY favorite DESC, name COLLATE NOCASE ASC",
         )?;
@@ -68,6 +68,7 @@ impl ProfileRepository {
             id,
             name: request.name.trim().to_string(),
             folder: normalize_folder(&request.folder)?,
+            connection_type: request.connection_type,
             host: request.host.trim().to_string(),
             port: request.port,
             username: request.username.trim().to_string(),
@@ -123,6 +124,7 @@ impl ProfileRepository {
             id: existing.id,
             name: request.name.trim().to_string(),
             folder: normalize_folder(&request.folder)?,
+            connection_type: request.connection_type,
             host: request.host.trim().to_string(),
             port: request.port,
             username: request.username.trim().to_string(),
@@ -221,7 +223,7 @@ impl ProfileRepository {
             .query_row(
                 "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
                         key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder
+                        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
                  FROM ssh_profiles
                  WHERE id = ?1",
                 params![id],
@@ -577,6 +579,7 @@ impl ProfileRepository {
         connection.execute_batch(include_str!("../../migrations/010_rdp_profiles.sql"))?;
         connection.execute_batch(include_str!("../../migrations/011_jumpserver_profiles.sql"))?;
         connection.execute_batch(include_str!("../../migrations/012_connection_folders.sql"))?;
+        connection.execute_batch(include_str!("../../migrations/013_sftp_profiles.sql"))?;
         ensure_columns(&connection)?;
         Ok(())
     }
@@ -900,8 +903,8 @@ fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
         "INSERT INTO ssh_profiles (
             id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
             key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             profile.id,
             profile.name,
@@ -926,6 +929,7 @@ fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             proxy_fields.password,
             profile.icon,
             profile.folder,
+            profile.connection_type.as_str(),
         ],
     )?;
     Ok(())
@@ -940,7 +944,7 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
              secret_ref = ?7, key_path = ?8, key_data = ?9, key_name = ?10,
              passphrase_ref = ?11, description = ?12, favorite = ?13, tags = ?14,
              updated_at = ?15, proxy_type = ?16, proxy_host = ?17, proxy_port = ?18,
-             proxy_username = ?19, proxy_password = ?20, icon = ?21, folder = ?22
+             proxy_username = ?19, proxy_password = ?20, icon = ?21, folder = ?22, connection_type = ?23
          WHERE id = ?1",
         params![
             profile.id,
@@ -965,6 +969,7 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             proxy_fields.password,
             profile.icon,
             profile.folder,
+            profile.connection_type.as_str(),
         ],
     )?;
     Ok(())
@@ -988,6 +993,17 @@ fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
     Ok(SshProfile {
         id: row.get(0)?,
         folder: row.get(22)?,
+        connection_type: match row.get::<_, String>(23)?.as_str() {
+            "ssh" => crate::models::ssh_profile::SshConnectionType::Ssh,
+            "sftp" => crate::models::ssh_profile::SshConnectionType::Sftp,
+            _ => {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    23,
+                    "connection_type".into(),
+                    rusqlite::types::Type::Text,
+                ));
+            }
+        },
         name: row.get(1)?,
         host: row.get(2)?,
         port: row.get(3)?,
@@ -1069,6 +1085,10 @@ fn ensure_columns(connection: &Connection) -> AppResult<()> {
         .collect::<Result<HashSet<_>, _>>()?;
 
     for (column, ddl) in [
+        (
+            "connection_type",
+            "ALTER TABLE ssh_profiles ADD COLUMN connection_type TEXT NOT NULL DEFAULT 'ssh' CHECK (connection_type IN ('ssh', 'sftp'))",
+        ),
         (
             "key_data",
             "ALTER TABLE ssh_profiles ADD COLUMN key_data TEXT",
@@ -1507,6 +1527,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sftp_type_migrates_legacy_rows_and_survives_crud_and_clone() {
+        use crate::models::ssh_profile::SshConnectionType;
+        let directory =
+            std::env::temp_dir().join(format!("dssh-sftp-{:032x}", rand::random::<u128>()));
+        let repository = ProfileRepository::initialize(&directory, "test.db").unwrap();
+        let request = serde_json::json!({"name":"Legacy", "host":"example.test", "port":22,
+            "username":"upload", "authMethod":{"type":"password", "secretRef":"fixture-only"},
+            "favorite":false, "folder":"a/b", "tags":["backup"]});
+        let legacy = repository
+            .create_profile(serde_json::from_value(request.clone()).unwrap())
+            .unwrap();
+        assert_eq!(legacy.connection_type, SshConnectionType::Ssh);
+        repository
+            .connection()
+            .unwrap()
+            .execute_batch("ALTER TABLE ssh_profiles DROP COLUMN connection_type")
+            .unwrap();
+        ProfileRepository::initialize(&directory, "test.db").unwrap();
+        let repository = ProfileRepository::initialize(&directory, "test.db").unwrap();
+        assert_eq!(
+            repository
+                .get_profile(&legacy.id)
+                .unwrap()
+                .unwrap()
+                .connection_type,
+            SshConnectionType::Ssh
+        );
+        let mut request = request;
+        request["id"] = serde_json::json!(legacy.id);
+        request["connectionType"] = serde_json::json!("sftp");
+        let updated = repository
+            .update_profile(serde_json::from_value(request.clone()).unwrap())
+            .unwrap();
+        assert_eq!(updated.connection_type, SshConnectionType::Sftp);
+        let public = serde_json::to_value(&updated).unwrap();
+        assert!(!public.to_string().contains("fixture-only"));
+        let cloned = repository
+            .clone_profile(&updated.id, serde_json::from_value(public).unwrap())
+            .unwrap();
+        assert_ne!(cloned.id, updated.id);
+        assert_eq!(cloned.connection_type, SshConnectionType::Sftp);
+        assert_eq!(cloned.folder, "a/b");
+        assert!(matches!(
+            cloned.auth_method,
+            AuthMethod::Password {
+                secret_ref: Some(_)
+            }
+        ));
+        assert_eq!(repository.list_profiles().unwrap().len(), 2);
+        request["connectionType"] = serde_json::json!("ftp");
+        assert!(serde_json::from_value::<CreateSshProfileRequest>(request).is_err());
+        repository.delete_profile(&cloned.id).unwrap();
+        assert_eq!(repository.list_profiles().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn folder_migration_and_updates_preserve_legacy_connections() {
         let directory =
             std::env::temp_dir().join(format!("dssh-folder-{:032x}", rand::random::<u128>()));
@@ -1563,6 +1640,7 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("dssh-clone-{}", timestamp()));
         let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
         let source = SshProfile {
+            connection_type: Default::default(),
             id: "clone-source".into(),
             name: "Original".into(),
             folder: "a/b/c".into(),
@@ -1646,6 +1724,7 @@ mod tests {
             insert_profile(
                 &repository.connection().unwrap(),
                 &SshProfile {
+                    connection_type: Default::default(),
                     id: format!("tag-test-{index}"),
                     created_at: timestamp(),
                     updated_at: timestamp(),
@@ -1854,6 +1933,7 @@ mod tests {
         let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
         let created = repository
             .create_profile(CreateSshProfileRequest {
+                connection_type: Default::default(),
                 name: "Ubuntu host".to_string(),
                 folder: String::new(),
                 host: "ubuntu.example.test".to_string(),
@@ -1875,6 +1955,7 @@ mod tests {
         );
 
         let invalid = repository.create_profile(CreateSshProfileRequest {
+            connection_type: Default::default(),
             name: "Unknown icon".to_string(),
             folder: String::new(),
             host: "unknown.example.test".to_string(),

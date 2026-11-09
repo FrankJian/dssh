@@ -66,6 +66,7 @@ interface SessionManagerProps {
   onConnect: (profile: ConnectionProfile) => void;
   onOpenSftp: (profile: SshProfile) => void;
   onCreate: (initialTags?: string[], initialFolder?: string) => void;
+  onCreateSftp: (initialTags?: string[], initialFolder?: string) => void;
   onCreateRdp: (initialTags?: string[], initialFolder?: string) => void;
   onCreateJumpServer: (initialFolder?: string) => void;
   onEdit: (profile: ConnectionProfile) => void;
@@ -87,6 +88,7 @@ export function SessionManager({
   onConnect,
   onOpenSftp,
   onCreate,
+  onCreateSftp,
   onCreateRdp,
   onCreateJumpServer,
   onEdit,
@@ -268,7 +270,7 @@ export function SessionManager({
   function createConnection() {
     const folder = activeScope.startsWith("folder:") ? activeScope.slice(7) : "";
     if (activeTypeFilter === "jumpserver") { onCreateJumpServer(folder); return; }
-    (activeTypeFilter === "rdp" ? onCreateRdp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : [], folder);
+    (activeTypeFilter === "rdp" ? onCreateRdp : activeTypeFilter === "sftp" ? onCreateSftp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : [], folder);
   }
 
   function renderCards(list: ConnectionProfile[]) {

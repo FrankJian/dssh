@@ -46,6 +46,10 @@ fn is_default_ssh_profile_icon(icon: &String) -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProfileEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proxy: Option<ProfileProxyEntry>,
+    #[serde(default, rename = "connectionType")]
+    connection_type: crate::models::ssh_profile::SshConnectionType,
     name: String,
     host: String,
     #[serde(default = "default_port")]
@@ -65,6 +69,16 @@ struct ProfileEntry {
     tags: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     folder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileProxyEntry {
+    proxy_type: String,
+    host: String,
+    port: u16,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -164,6 +178,18 @@ fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
     };
 
     ProfileEntry {
+        proxy: profile.proxy.as_ref().map(|proxy| ProfileProxyEntry {
+            proxy_type: proxy.proxy_type.clone(),
+            host: proxy.host.clone(),
+            port: proxy.port,
+            username: proxy.username.clone(),
+            password: if mask {
+                mask_secret(&proxy.password)
+            } else {
+                proxy.password.clone()
+            },
+        }),
+        connection_type: profile.connection_type,
         name: profile.name.clone(),
         host: profile.host.clone(),
         port: profile.port,
@@ -244,12 +270,21 @@ fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
     };
 
     CreateSshProfileRequest {
+        connection_type: entry.connection_type,
         name: entry.name,
         host: entry.host,
         port: entry.port,
         username: entry.username,
         auth_method,
-        proxy: None,
+        proxy: entry
+            .proxy
+            .map(|proxy| crate::models::ssh_profile::SshProxy {
+                proxy_type: proxy.proxy_type,
+                host: proxy.host,
+                port: proxy.port,
+                username: proxy.username,
+                password: proxy.password,
+            }),
         description: entry.description,
         favorite: entry.favorite,
         icon: entry.icon,
@@ -301,9 +336,32 @@ pub fn import_profiles_encrypted(
     import_document(&state, &yaml)
 }
 
+fn has_masked_profile_secrets(entry: &ProfileEntry) -> bool {
+    let masked_auth = match &entry.auth {
+        AuthEntry::Password { password } => password.as_deref() == Some(SECRET_MASK),
+        AuthEntry::PrivateKey {
+            key_data,
+            passphrase,
+            ..
+        } => key_data.as_deref() == Some(SECRET_MASK) || passphrase.as_deref() == Some(SECRET_MASK),
+    };
+    masked_auth
+        || entry
+            .proxy
+            .as_ref()
+            .is_some_and(|proxy| proxy.password.as_deref() == Some(SECRET_MASK))
+}
+
 fn import_document(state: &State<'_, AppState>, yaml: &str) -> AppResult<Vec<SshProfile>> {
     let document: ProfilesDocument = serde_yaml::from_str(yaml)
         .map_err(|error| AppError::new("import_error", error.to_string()))?;
+
+    if document.profiles.iter().any(has_masked_profile_secrets) {
+        return Err(AppError::new(
+            "import_error",
+            "预览中的密码或密钥已脱敏，请使用加密导出文件恢复连接。",
+        ));
+    }
 
     for entry in &document.s3_profiles {
         if entry
@@ -456,6 +514,71 @@ pub fn read_image_data_url(path: String) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sftp_yaml_roundtrip_preserves_type_proxy_and_masks_secrets() {
+        use super::*;
+        let yaml = "name: Upload\nhost: files.test\nusername: upload\nconnectionType: sftp\nfolder: backup/daily\ntags: [backup]\nauth:\n  type: password\n  password: fixture-auth\nproxy:\n  proxyType: socks5\n  host: proxy.test\n  port: 1080\n  username: proxy-user\n  password: fixture-proxy\n";
+        let entry: ProfileEntry = serde_yaml::from_str(yaml).unwrap();
+        let request = request_from_entry(entry);
+        assert_eq!(
+            request.connection_type,
+            crate::models::ssh_profile::SshConnectionType::Sftp
+        );
+        let profile = SshProfile {
+            id: "test".into(),
+            connection_type: request.connection_type,
+            name: request.name,
+            host: request.host,
+            port: request.port,
+            username: request.username,
+            auth_method: request.auth_method,
+            proxy: request.proxy,
+            description: request.description,
+            favorite: request.favorite,
+            icon: request.icon,
+            tags: request.tags,
+            folder: request.folder,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let preview = serde_yaml::to_string(&entry_from_profile(&profile, true)).unwrap();
+        assert!(preview.contains("connectionType: sftp"));
+        assert!(!preview.contains("fixture-auth"));
+        assert!(!preview.contains("fixture-proxy"));
+        assert!(has_masked_profile_secrets(
+            &serde_yaml::from_str(&preview).unwrap()
+        ));
+        assert!(!has_masked_profile_secrets(&entry_from_profile(
+            &profile, false
+        )));
+        let restored = request_from_entry(
+            serde_yaml::from_str(
+                &serde_yaml::to_string(&entry_from_profile(&profile, false)).unwrap(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(restored.connection_type, profile.connection_type);
+        assert_eq!(
+            restored.proxy.unwrap().password.as_deref(),
+            Some("fixture-proxy")
+        );
+        assert_eq!(restored.folder, "backup/daily");
+        let legacy: ProfileEntry = serde_yaml::from_str(
+            "name: Legacy\nhost: host.test\nusername: user\nauth: {type: password}",
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.connection_type,
+            crate::models::ssh_profile::SshConnectionType::Ssh
+        );
+        assert!(
+            serde_yaml::from_str::<ProfileEntry>(
+                &yaml.replace("connectionType: sftp", "connectionType: ftp")
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn ssh_folder_import_export_and_legacy_defaults() {
         let entry: ProfileEntry = serde_yaml::from_str("name: Test\nhost: example.test\nusername: deploy\nauth:\n  type: password\nfolder: a/b/c\n").unwrap();

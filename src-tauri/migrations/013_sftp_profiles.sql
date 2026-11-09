@@ -1,0 +1,2 @@
+-- SSH/SFTP surface preference is added idempotently by ensure_columns.
+-- Existing profiles default to ssh and retain their IDs and credentials.

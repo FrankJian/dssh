@@ -28,6 +28,7 @@ interface ProfileEditorProps {
   allTags: string[];
   initialTags?: string[];
   initialFolder?: string;
+  initialConnectionType?: "ssh" | "sftp";
   onClose: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
   onCreateRdp?: (folder: string) => void;
@@ -44,18 +45,18 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, initialTags, initialFolder, initialConnectionType = "ssh", mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
-    profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])], folder: initialFolder ?? "" },
+    profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), connectionType: initialConnectionType, tags: [...(initialTags ?? [])], folder: initialFolder ?? "" },
   );
-  const [connectionType, setConnectionType] = useState<ConnectionType>("ssh");
+  const [connectionType, setConnectionType] = useState<ConnectionType>(profile?.connectionType ?? initialConnectionType);
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), tags: [...(initialTags ?? [])], folder: initialFolder ?? "" });
-    setConnectionType("ssh");
+    setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), connectionType: initialConnectionType, tags: [...(initialTags ?? [])], folder: initialFolder ?? "" });
+    setConnectionType(profile?.connectionType ?? initialConnectionType);
     setErrors([]);
-  }, [initialTags, initialFolder, mode, profile]);
+  }, [initialTags, initialFolder, initialConnectionType, mode, profile]);
 
   function updateDraft<Field extends keyof ProfileDraft>(field: Field, value: ProfileDraft[Field]) {
     setDraft((currentDraft) => ({
@@ -111,7 +112,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClo
     }
   }
 
-  const title = mode === "create" ? `新建 ${connectionTypeLabel(connectionType)} 连接` : "编辑 SSH 连接";
+  const title = mode === "create" ? `新建 ${connectionTypeLabel(connectionType)} 连接` : `编辑 ${connectionTypeLabel(connectionType)} 连接`;
   const passwordLabel = profile ? "密码（留空则保留原配置密码）" : "密码";
   const connectionRoute: ConnectionRoute = draft.useProxy ? draft.proxyType : "direct";
   const proxyLabel = connectionRoute === "http" ? "HTTP 代理" : "SOCKS5 代理";
@@ -146,7 +147,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClo
                 <span>连接类型</span>
                 <SelectMenu
                   ariaLabel="连接类型"
-                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(draft.folder); else if (value === "jumpserver") onCreateJumpServer?.(draft.folder); else setConnectionType(value as ConnectionType); }}
+                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(draft.folder); else if (value === "jumpserver") onCreateJumpServer?.(draft.folder); else if (value === "ssh" || value === "sftp") { setConnectionType(value); updateDraft("connectionType", value); } }}
                   options={CONNECTION_TYPE_OPTIONS.map((option) => ({
                     disabled: !option.available,
                     label: option.available ? option.label : `${option.label}（即将支持）`,
@@ -154,7 +155,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, mode, onClo
                   }))}
                   value={connectionType}
                 />
-                <small className="profile-form__hint">Telnet 与 SFTP 将在支持后开放创建。</small>
+                <small className="profile-form__hint">SFTP 默认打开文件管理，也可主动打开 SSH 终端。</small>
               </label>
             ) : null}
 

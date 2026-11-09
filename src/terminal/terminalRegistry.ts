@@ -22,7 +22,7 @@ import {
 } from "../settings/settings";
 import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
 import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
-import { toXtermTheme } from "./themes/resolve";
+import { TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "./themes/resolve";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 import { CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands, recordCommand } from "./commandCompletion";
 import { completionAreaBounds, placeCompletionMenu, type CompletionBounds } from "./completionPosition";
@@ -241,6 +241,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     lineHeight: TERMINAL_LINE_HEIGHT_DEFAULT,
     scrollback: 5000,
     tabStopWidth: 4,
+    minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
     // CSS owns the terminal background layer so wallpaper and opacity work
     // consistently with both the DOM and WebGL renderers. xterm only paints
     // text/cursor/selection over that layer while transparency is enabled.

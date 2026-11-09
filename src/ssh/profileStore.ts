@@ -68,6 +68,7 @@ function normalizeTags(tags: string[]): string[] {
 
 export function createProfileRequestFromDraft(draft: ProfileDraft): CreateSshProfileRequest {
   return {
+    connectionType: draft.connectionType,
     name: draft.name.trim(),
     folder: normalizeConnectionFolder(draft.folder),
     host: draft.host.trim(),
@@ -88,6 +89,7 @@ export function updateProfileRequestFromDraft(
 ): UpdateSshProfileRequest {
   return {
     id: profile.id,
+    connectionType: draft.connectionType,
     name: draft.name.trim(),
     folder: normalizeConnectionFolder(draft.folder),
     host: draft.host.trim(),

@@ -86,6 +86,7 @@ interface FileBrowserProps {
   ) => void;
   /** Enter the given remote directory in the active terminal (`cd <dir>`). */
   onOpenInTerminal?: (dir: string) => void;
+  onOpenSshTerminal?: () => void;
 }
 
 interface TransferState {
@@ -170,6 +171,7 @@ export function FileBrowser({
   initialLocalPath,
   initialRemotePath,
   onOpenInTerminal,
+  onOpenSshTerminal,
   onTabPathsChange,
   profileId,
   remoteName,
@@ -1398,6 +1400,7 @@ export function FileBrowser({
               : `已完成 ${transferSummary.completedFiles} / ${transferSummary.totalFiles} 个文件；成功 ${transferSummary.completed}，失败 ${transferSummary.failed} 项。`}
           </p>
         ) : null}
+        {onOpenSshTerminal ? <button className="sftp-dual-browser__terminal" type="button" onClick={onOpenSshTerminal}><Icon name="terminalTool" height="14" width="14"/><span>打开 SSH 终端</span></button> : null}
         {onOpenInTerminal && remotePath ? (
           <button
             className="sftp-dual-browser__terminal"

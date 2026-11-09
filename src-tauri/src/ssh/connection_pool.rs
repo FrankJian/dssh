@@ -964,6 +964,7 @@ mod tests {
 
     fn profile() -> SshProfile {
         SshProfile {
+            connection_type: Default::default(),
             id: "profile-1".to_string(),
             name: "example".to_string(),
             folder: String::new(),

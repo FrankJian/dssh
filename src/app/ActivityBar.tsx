@@ -3,7 +3,7 @@ import type { IconName } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 
 /** Left-sidebar selectors. */
-export type ActivityId = "sessions" | "connections" | "s3";
+export type ActivityId = "sessions" | "connections" | "sftp" | "s3";
 /** Right-panel selectors. */
 export type RightPanelId = "assistant" | "hosttools";
 /** Configurable icons shown in the left activity rail. */
@@ -24,6 +24,7 @@ interface ActivityBarProps {
 const ACTIVITIES: { id: ActivityId; label: string; icon: IconName }[] = [
   { id: "sessions", label: "会话", icon: "sessions" },
   { id: "connections", label: "连接管理", icon: "connections" },
+  { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
 ];
 

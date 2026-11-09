@@ -627,6 +627,7 @@ impl JumpServerManager {
 }
 fn source_profile(id: &str, target: &JumpServerTarget, platform: &str) -> SshProfile {
     SshProfile {
+        connection_type: Default::default(),
         folder: String::new(),
         id: id.into(),
         name: format!(

@@ -32,6 +32,8 @@ export interface SshProxy {
 }
 
 export interface SshProfile {
+  /** Missing legacy values are SSH. Both types share SSH transport. */
+  connectionType?: "ssh" | "sftp";
   id: string;
   name: string;
   folder?: string;

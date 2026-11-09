@@ -48,7 +48,7 @@ export function EmptyTerminal({
                       className="terminal-empty__recent-item"
                       onClick={() => onConnectProfile(profile)}
                       title={`${profile.name}\n${address}`}
-                      aria-label={`连接 ${profile.name}，${address}`}
+                      aria-label={`${connectionTypeForProfile(profile) === "sftp" ? "打开 SFTP" : "连接"} ${profile.name}，${address}`}
                       type="button"
                     >
                       <span className="terminal-empty__recent-card-head">
@@ -72,7 +72,7 @@ export function EmptyTerminal({
                           {profile.tags.slice(0, 2).map(tag => <span className="conn-card__tag" key={tag} title={tag}>{tag}</span>)}
                           {profile.tags.length > 2 ? <span className="conn-card__tag conn-card__tag--overflow">+{profile.tags.length - 2}</span> : null}
                         </span>
-                        <span className="terminal-empty__recent-open">{isJumpServerProfile(profile) ? "打开资产" : "连接"}<Icon name="arrowRight" height="14" width="14" /></span>
+                        <span className="terminal-empty__recent-open">{isJumpServerProfile(profile) ? "打开资产" : connectionTypeForProfile(profile) === "sftp" ? "打开 SFTP" : "连接"}<Icon name="arrowRight" height="14" width="14" /></span>
                       </span>
                     </button>
                   </li>

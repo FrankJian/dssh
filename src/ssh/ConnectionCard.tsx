@@ -20,6 +20,7 @@ export function ConnectionCard({
   const jumpserver = isJumpServerProfile(profile);
   const type = connectionTypeForProfile(profile);
   const typeLabel = connectionTypeLabel(type);
+  const actionLabel = jumpserver ? "打开资产" : type === "sftp" ? "打开 SFTP" : "连接";
   const visibleTagCount = variant === "grid" ? 2 : 4;
   const address = jumpserver ? profile.coreUrl : `${profile.username}@${profile.host}:${profile.port}`;
   const details = <>
@@ -62,8 +63,8 @@ export function ConnectionCard({
       {variant === "list" ? <span className="conn-card__type">{typeLabel}</span> : null}
 
       <div className="conn-card__actions">
-        <button className="conn-card__connect" aria-label={`${jumpserver ? "打开资产" : "连接"} ${profile.name}`} onClick={onConnect} type="button">
-          <Icon name="play" height="14" width="14" /><span>{jumpserver ? "打开资产" : "连接"}</span>
+        <button className="conn-card__connect" aria-label={`${actionLabel} ${profile.name}`} onClick={onConnect} type="button">
+          <Icon name="play" height="14" width="14" /><span>{actionLabel}</span>
         </button>
         <div className="conn-card__tools" role="group" aria-label="连接操作">
           {onOpenSftp ? <IconButton label="打开 SFTP" onClick={onOpenSftp}><Icon name="folder" height="16" width="16" /></IconButton> : null}

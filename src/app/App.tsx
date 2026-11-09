@@ -1,3 +1,5 @@
+import { DEFAULT_NAVIGATION_ICONS, parseNavigationIcons } from "./navigationPreferences";
+import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
 import { renameConnectionFolder } from "../services/sshProfileService";
 import { findSftpTerminal } from "./sftpTerminal";
@@ -126,6 +128,7 @@ interface EditorState {
   profile: SshProfile | null;
   initialTags?: string[];
   initialFolder?: string;
+  initialConnectionType?: "ssh" | "sftp";
 }
 
 interface S3EditorState {
@@ -146,7 +149,6 @@ const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
 const RIGHT_PANEL_WIDTH_DEFAULT = 360;
 const SIDE_PANEL_WIDTH_DEFAULT = 288;
-const DEFAULT_NAVIGATION_ICONS: NavigationIconId[] = ["sessions", "connections", "assistant"];
 const AI_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "appearance",
   "terminal",
@@ -187,23 +189,7 @@ function loadNavigationIcons(): NavigationIconId[] {
   try {
     const saved = localStorage.getItem(NAVIGATION_ICONS_KEY);
     const raw = saved ?? localStorage.getItem("dssh.navigation.icons");
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_NAVIGATION_ICONS;
-    }
-    const valid = parsed.filter(
-      (item): item is NavigationIconId =>
-        item === "sessions" ||
-        item === "connections" ||
-        item === "s3" ||
-        item === "browser" ||
-        item === "assistant" ||
-        item === "newLocalTerminal",
-    );
-    const unique = [...new Set(valid)];
-    return unique.some((item) => item === "sessions" || item === "connections" || item === "s3")
-      ? unique
-      : DEFAULT_NAVIGATION_ICONS;
+    return parseNavigationIcons(raw);
   } catch {
     return DEFAULT_NAVIGATION_ICONS;
   }
@@ -346,7 +332,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   useEffect(() => {
     if (!navigationIcons.includes(activeActivity)) {
       const fallback = navigationIcons.find(
-        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "s3",
+        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "sftp" || item === "s3",
       );
       if (fallback) {
         setActiveActivity(fallback);
@@ -484,7 +470,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
   function connectManagedProfile(profile: ConnectionProfile) {
     if (isJumpServerProfile(profile)) { setJumpServerOpen(profile.id); recordUse(profile.id); setActiveActivity("connections"); }
-    else if (isRdpProfile(profile)) openRdp(profile); else handleConnectProfile(profile);
+    else if (isRdpProfile(profile)) openRdp(profile); else if (profile.connectionType === "sftp") handleOpenSftpForProfile(profile); else handleConnectProfile(profile);
   }
   function editManagedProfile(profile: ConnectionProfile) {
     if (isJumpServerProfile(profile)) setJumpServerEditor({ profile });
@@ -686,6 +672,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             initialLocalPath={tab.localPath}
             initialRemotePath={tab.remotePath}
             onTabPathsChange={updateSftpTabPaths}
+            onOpenSshTerminal={profile ? () => void handleOpenSftpTerminal(profile) : undefined}
             profileId={tab.profileId}
             remoteName={profile?.name.trim() || tab.title}
             remoteEndpoint={endpoint}
@@ -704,7 +691,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // switch to the Sessions activity (S3 / Connections otherwise fill the column).
   const showTerminalSurface = useCallback(() => {
     focusTerminal();
-    setActiveActivity("sessions");
+    setActiveActivity(current => current === "sftp" ? current : "sessions");
   }, [focusTerminal]);
 
   const activeSessionProfile =
@@ -1001,6 +988,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   async function confirmDeleteSshProfile(profileId: string) {
     try {
+      if (sftpTabs.some(tab => tab.profileId === profileId)) throw new Error("请先关闭该连接的 SFTP 标签，再删除配置，避免中断文件操作。");
       await deleteProfile(profileId);
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : "删除 SSH 配置失败。");
@@ -1209,8 +1197,25 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   function handleOpenSftpForProfile(profile: SshProfile) {
-    setActiveActivity("sessions");
+    setActiveActivity(current => current === "sftp" ? current : "sessions");
     openSftpTab(profile.id, profile.name);
+    recordUse(profile.id);
+  }
+
+  async function handleOpenSftpTerminal(profile: SshProfile) {
+    const existing = findSftpTerminal(sessions, profile.id, activeSessionId);
+    if (existing) { handleFocusTerminal(existing.id); setActiveRemoteFilePath(null); return; }
+    await handleConnectProfile(profile);
+  }
+
+  async function handleRenameConnectionFolder(oldPath: string, newName: string) {
+    await renameConnectionFolder(oldPath, newName);
+    await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload()]);
+  }
+  async function handleRenameConnectionTag(oldTag: string, newTag: string) {
+    await renameTag(oldTag, newTag);
+    await Promise.all(rdp.profiles.filter(p => p.tags.includes(oldTag)).map(p => saveRdpProfile({ ...p, tags: [...new Set(p.tags.map(t => t === oldTag ? newTag : t))] }, { action: "keep" })));
+    await rdp.reload();
   }
 
   function handleOpenForwardForNode(node: SessionNode) {
@@ -1673,7 +1678,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   const sidebarContent =
-    sidebarCollapsed || isConnections ? null : isS3 ? (
+    sidebarCollapsed || isConnections ? null : activeActivity === "sftp" ? (
+        <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
+          onOpen={handleOpenSftpForProfile} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
+          onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
+          onEdit={openEditProfile} onClone={profile => setEditorState({ mode: "create", profile })}
+          onDelete={profile => handleDeleteProfile(profile.id)} onRenameFolder={handleRenameConnectionFolder} onRenameTag={handleRenameConnectionTag} />
+      ) : isS3 ? (
         <S3ProfileSidebar
           errorMessage={s3Profiles.errorMessage}
           isLoading={s3Profiles.isLoading}
@@ -1713,7 +1724,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           onRenameTerminal={handleRenameTerminal}
           onRenamePane={handleRenamePane}
           onDisconnectNode={handleDisconnectNode}
-          onConnectProfile={handleConnectProfile}
           onOpenConnections={() => setActiveActivity("connections")}
         />
       );
@@ -1806,6 +1816,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         onConnect={connectManagedProfile}
         onOpenSftp={handleOpenSftpForProfile}
         onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder })}
+        onCreateSftp={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
         onCreateRdp={(initialTags, initialFolder) => setRdpEditor({ profile: null, initialTags, initialFolder })}
         onEdit={editManagedProfile}
         onClone={(profile) => {
@@ -1814,15 +1825,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           else setEditorState({ mode: "create", profile });
         }}
         onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
-        onRenameFolder={async (oldPath, newName) => {
-          await renameConnectionFolder(oldPath, newName);
-          await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload()]);
-        }}
-        onRenameTag={async (oldTag, newTag) => {
-          await renameTag(oldTag, newTag);
-          await Promise.all(rdp.profiles.filter((p) => p.tags.includes(oldTag)).map((p) => saveRdpProfile({ ...p, tags: p.tags.map((t) => t === oldTag ? newTag : t) }, { action: "keep" })));
-          await rdp.reload();
-        }}
+        onRenameFolder={handleRenameConnectionFolder}
+        onRenameTag={handleRenameConnectionTag}
       />
     );
   } else if (isS3) {
@@ -1939,6 +1943,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
       { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
       { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
+      { id: "act:sftp-library", label: "打开 SFTP 连接库", hint: "导航", icon: "folder", keywords: "sftp files 文件 连接库", run: () => { setActiveActivity("sftp"); setSidebarCollapsed(false); } },
       { id: "act:new-s3", label: "新建 S3 配置", hint: "对象存储", icon: "bucket", keywords: "object storage profile", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); setS3EditorState({ mode: "create", profile: null }); } },
       { id: "act:terminal-surface", label: "显示终端", hint: "导航", icon: "terminalTool", keywords: "terminal shell", run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); } },
       { id: "act:assistant", label: rightPanel === "assistant" ? "关闭 AI 助手" : "打开 AI 助手", hint: "面板", icon: "bot", keywords: "ai assistant", run: () => toggleRightPanel("assistant") },
@@ -2360,6 +2365,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           allTags={allTags}
           initialTags={editorState.initialTags}
           initialFolder={editorState.initialFolder}
+          initialConnectionType={editorState.initialConnectionType}
           mode={editorState.mode}
           onClose={closeEditor}
           onSubmit={handleSubmitProfile}

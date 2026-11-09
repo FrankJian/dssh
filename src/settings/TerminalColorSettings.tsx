@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_TERMINAL_SCHEME_ID } from "../terminal/themes/presets";
-import { toXtermTheme } from "../terminal/themes/resolve";
+import { TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "../terminal/themes/resolve";
 import type { CustomTerminalScheme, TerminalColorField, TerminalColors, TerminalThemeKind } from "../terminal/themes/types";
 import { Button } from "../ui/Button";
 import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
@@ -270,11 +270,11 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
         <div
         aria-label="终端配色预览"
         className="terminal-color-preview"
-        style={{ height: `${Math.max(142, fontSize * 12 + 12)}px` }}
+        style={{ height: `${Math.max(142, fontSize * 14 + 12)}px` }}
       >
         <TerminalColorPreview colors={previewColors} fontFamily={fontFamily} fontSize={fontSize} />
         </div>
-        <p className="settings-field__hint" title="默认文字色不覆盖程序指定的 ANSI 色或真彩色。背景透明度与壁纸由背景设置控制。">预览使用不透明背景，不影响程序自定义颜色。</p>
+        <p className="settings-field__hint" title="低对比度文字会自动校正。背景透明度与壁纸由背景设置控制。">预览使用不透明背景，文字会自动调整以保持可读性。</p>
       </details>
 
       {draft ? (
@@ -477,8 +477,9 @@ function TerminalColorPreview({
       disableStdin: true,
       fontFamily,
       fontSize,
-      rows: 10,
+      rows: 11,
       scrollback: 0,
+      minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
       theme: toXtermTheme(colors, false),
     });
     const fit = new FitAddon();
@@ -504,10 +505,11 @@ function TerminalColorPreview({
       `ANSI 前景 8–15 ${brightForeground}\r\n` +
       `ANSI 背景 0–7  ${standardBackground}\r\n` +
       `ANSI 背景 8–15 ${brightBackground}\r\n` +
+      "目录 \x1b[1;34msrc/\x1b[0m  \x1b[34;42m shared/ \x1b[0m  \x1b[30;43m uploads/ \x1b[0m\r\n" +
       "\x1b[7m选区示例 Selected text\x1b[27m\r\n" +
       "灰阶 \x1b[38;5;244m████\x1b[0m  真彩色 \x1b[38;2;100;180;230mRGB sample\x1b[0m\r\n" +
       "光标位于此处 ▌",
-      () => terminal.select(0, 6, 8),
+      () => terminal.select(0, 7, 8),
     );
     terminalRef.current = terminal;
     const observer = new ResizeObserver(() => fit.fit());

@@ -1,5 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+/// Preferred surface; both variants use the shared SSH transport and credentials.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshConnectionType {
+    #[default]
+    Ssh,
+    Sftp,
+}
+impl SshConnectionType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ssh => "ssh",
+            Self::Sftp => "sftp",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(
     tag = "type",
@@ -54,6 +71,8 @@ pub struct SshProxy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshProfile {
+    #[serde(default)]
+    pub connection_type: SshConnectionType,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -76,6 +95,8 @@ pub struct SshProfile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSshProfileRequest {
+    #[serde(default)]
+    pub connection_type: SshConnectionType,
     pub name: String,
     #[serde(default)]
     pub folder: String,
@@ -95,6 +116,8 @@ pub struct CreateSshProfileRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSshProfileRequest {
+    #[serde(default)]
+    pub connection_type: SshConnectionType,
     pub id: String,
     pub name: String,
     #[serde(default)]

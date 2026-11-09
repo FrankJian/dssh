@@ -158,10 +158,11 @@ const themeOptions: Array<{
 const NAVIGATION_ICON_OPTIONS: Array<{
   id: NavigationIconId;
   label: string;
-  icon: "sessions" | "connections" | "bucket" | "globe" | "bot" | "terminalTool";
+  icon: "folder" | "sessions" | "connections" | "bucket" | "globe" | "bot" | "terminalTool";
 }> = [
   { id: "sessions", label: "活动会话", icon: "sessions" },
   { id: "connections", label: "连接管理", icon: "connections" },
+  { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "browser", label: "浏览器", icon: "globe" },
   { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
   { id: "assistant", label: "AI 助手", icon: "bot" },

@@ -33,7 +33,7 @@ extractArchive(archive, cache);
 const sdl = join(source, "client", "SDL", "SDL3");
 copyFileSync(join(root, "native", "rdp", "dssh_worker.hpp"), join(sdl, "dssh_worker.hpp"));
 copyFileSync(join(root, "native/rdp/test_preferences.cpp"), join(sdl, "dssh_test_preferences.cpp"));
-for (const file of ["dssh_window.hpp", "dssh_window.cpp", "dssh_activity.h", "dssh_activity.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_visual.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
+for (const file of ["dssh_window.hpp", "dssh_window.cpp", "dssh_render.cpp", "test_render.cpp", "dssh_activity.h", "dssh_activity.cpp", "test_window.cpp", "dssh_chrome.h", "dssh_chrome_visual.h", "dssh_chrome_win.cpp", "dssh_chrome_mac.m", "dssh_clipboard.h", "test_clipboard.cpp", "dssh_keyboard.hpp", "test_keyboard.cpp", "dssh_visibility.h", "dssh_visibility.cpp", "dssh_visibility_state.h"]) {
   copyFileSync(join(root, "native/rdp", file), join(sdl, file));
 }
 writeFileSync(join(sdl, "dssh_chrome_palette.h"), chromeThemeHeader(readFileSync(join(root, "src/theme/global.css"), "utf8")));
@@ -64,10 +64,13 @@ adapt(window, "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::
 // Initial window and fallback/recreated window must both retain the icon.
 adapt(window, "\t_window = SDL_CreateWindowWithProperties(props);", "\tif (dssh_desktop_locked()) SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);\n\t_window = SDL_CreateWindowWithProperties(props);\n\tdssh_visibility_created(_window);\n\tdssh_set_window_icon(_window);", 2);
 adapt(window, '#include "dssh_chrome.h"', '#include "dssh_chrome.h"\n#include "dssh_visibility.h"');
+// SDL 3.4.20 no longer implies all four diagnostic event enums exist. Probe
+// the installed headers, rather than assuming an SDK feature from its number.
+adapt(join(sdl, "sdl_utils.cpp"), "#if SDL_VERSION_ATLEAST(3, 4, 20)", "#if defined(DSSH_SDL_EXTENDED_EVENTS)");
 const clientCmake = join(sdl, "CMakeLists.txt");
 // Enable at the common root so sibling macOS targets share Objective-C rules.
 adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
-adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp dssh_visibility.cpp dssh_activity.cpp)
+adapt(clientCmake, "target_link_libraries(${MODULE_NAME} PRIVATE ${LIBS})", `target_sources(\${MODULE_NAME} PRIVATE dssh_icon.cpp dssh_window.cpp dssh_visibility.cpp dssh_activity.cpp dssh_render.cpp)
 if(APPLE)
   target_sources(\${MODULE_NAME} PRIVATE dssh_icon.m dssh_chrome_mac.m)
   set_source_files_properties(dssh_icon.m dssh_chrome_mac.m PROPERTIES COMPILE_FLAGS "-fobjc-arc")
@@ -78,7 +81,18 @@ elseif(WIN32)
   target_include_directories(\${MODULE_NAME} PRIVATE \${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(\${MODULE_NAME} PRIVATE user32 gdi32 ole32 shell32 imm32 dwmapi uuid)
 endif()
-target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})`);
+target_link_libraries(\${MODULE_NAME} PRIVATE \${LIBS})
+include(CMakePushCheckState)
+include(CheckCXXSourceCompiles)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_LIBRARIES SDL3::SDL3${windows ? "-static" : ""})
+unset(DSSH_SDL_EXTENDED_EVENTS CACHE)
+check_cxx_source_compiles("#include <SDL3/SDL.h>
+int main() { return SDL_EVENT_WINDOW_SETTINGS_CHANGED + SDL_EVENT_GAMEPAD_CAPSENSE_TOUCH + SDL_EVENT_GAMEPAD_CAPSENSE_RELEASE + SDL_EVENT_NOTIFICATION_ACTION_INVOKED; }" DSSH_SDL_EXTENDED_EVENTS)
+cmake_pop_check_state()
+if(DSSH_SDL_EXTENDED_EVENTS)
+  target_compile_definitions(\${MODULE_NAME} PRIVATE DSSH_SDL_EXTENDED_EVENTS)
+endif()`);
 // Optional SDL preferences must not prevent a managed connection from starting.
 // ProgramData is a common folder: querying it as Default User (-1) can fail when
 // that profile's hive is unavailable. Use the current token (NULL) instead.
@@ -100,6 +114,9 @@ add_executable(dssh-rdp-prefs-test dssh_test_preferences.cpp ../common/sdl_prefs
 target_include_directories(dssh-rdp-prefs-test PRIVATE ../common)
 target_compile_definitions(dssh-rdp-prefs-test PRIVATE freerdp_GetConfigFilePath=dssh_test_config_path)
 target_link_libraries(dssh-rdp-prefs-test PRIVATE freerdp freerdp-cxx-filesystem)
+add_executable(dssh-rdp-render-test test_render.cpp sdl_window.cpp dssh_render.cpp)
+target_include_directories(dssh-rdp-render-test PRIVATE ../common)
+target_link_libraries(dssh-rdp-render-test PRIVATE freerdp SDL3::SDL3${windows ? "-static" : ""})
 add_executable(dssh-rdp-window-test test_window.cpp dssh_window.cpp dssh_visibility.cpp dssh_activity.cpp)
 target_compile_definitions(dssh-rdp-window-test PRIVATE DSSH_CHROME_TESTING)
 target_link_libraries(dssh-rdp-window-test PRIVATE freerdp SDL3::SDL3${windows ? "-static" : ""})
@@ -189,6 +206,17 @@ adapt(main, "\t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))", `         
                 }
 \t\t\t\tif (sdl->getDialog().handleEvent(windowEvent))`);
 const context = join(sdl, "sdl_context.cpp");
+// Keep dirty uploads, but compose each desktop frame with a single transform.
+adapt(join(sdl, "sdl_window.hpp"), "  private:\n\tvoid ensureRenderTarget();", `  public:
+    bool drawDesktopFrame(SDL_Surface* surface, const SDL_FPoint& scale,
+                          SDL_Point offset, const std::vector<SDL_Rect>& damage);
+  private:
+\tvoid ensureRenderTarget();`);
+adapt(context, "window.drawScaledRects(surface, _localScale, rects)",
+  "window.drawDesktopFrame(surface, _localScale, {0, 0}, rects)");
+adapt(context, "window.drawRects(surface, offset, rects)",
+  "window.drawDesktopFrame(surface, {1, 1}, offset, rects)");
+
 adapt(context, "\tif (!sdl->setResizeable(false))", "\tif (!sdl->setResizeable(true))");
 adapt(context, '#include "sdl_context.hpp"', '#include "sdl_context.hpp"\n#include "dssh_worker.hpp"');
 adapt(context, '\t\t\tSDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Window closed, terminating RDP session...");', '\t\t\tdssh_status("user-close");\n\t\t\tSDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Window closed, terminating RDP session...");');
@@ -273,11 +301,12 @@ if (windows) {
 }
 run("cmake", args);
 if (windows) validateWindowsRuntime(readFileSync(join(build, "CMakeCache.txt"), "utf8"));
-run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "dssh-rdp-window-test", "dssh-rdp-clipboard-test", "dssh-rdp-keyboard-test", "--parallel", "4"]);
+run("cmake", ["--build", build, "--target", "sdl3-freerdp", "dssh-rdp-prefs-test", "dssh-rdp-window-test", "dssh-rdp-clipboard-test", "dssh-rdp-keyboard-test", "dssh-rdp-render-test", "--parallel", "4"]);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-keyboard-test.exe" : "dssh-rdp-keyboard-test"), []);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-clipboard-test.exe" : "dssh-rdp-clipboard-test"), []);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-prefs-test.exe" : "dssh-rdp-prefs-test"), []);
 run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-window-test.exe" : "dssh-rdp-window-test"), []);
+run(join(build, "client/SDL/SDL3", windows ? "dssh-rdp-render-test.exe" : "dssh-rdp-render-test"), []);
 const output = join(build, "client/SDL/SDL3", windows ? "sdl3-freerdp.exe" : "sdl3-freerdp");
 const binary = join(runtime, windows ? "dssh-rdp-client.exe" : "dssh-rdp-client");
 copyFileSync(output, binary);

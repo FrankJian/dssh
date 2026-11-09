@@ -53,7 +53,7 @@ export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
     label: "Telnet",
   },
   {
-    available: false,
+    available: true,
     description: "独立文件传输连接",
     icon: "folder",
     id: "sftp",
@@ -76,7 +76,7 @@ export interface ConnectionTypeGroup {
 
 /** Connection cards use a discriminator; legacy SSH DTOs remain compatible. */
 export function connectionTypeForProfile(profile: ConnectionProfile): ConnectionType {
-  return isJumpServerProfile(profile) ? "jumpserver" : isRdpProfile(profile) ? "rdp" : "ssh";
+  return isJumpServerProfile(profile) ? "jumpserver" : isRdpProfile(profile) ? "rdp" : profile.connectionType ?? "ssh";
 }
 
 export function connectionTypeLabel(type: ConnectionType): string {

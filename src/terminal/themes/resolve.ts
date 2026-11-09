@@ -1,6 +1,10 @@
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalColors } from "./types";
 
+// Remote LS_COLORS and TUI programs can combine any ANSI/256/RGB colors.
+// Protect text against its actual cell background, including colored directories.
+export const TERMINAL_MINIMUM_CONTRAST_RATIO = 4.5;
+
 export function toXtermTheme(colors: TerminalColors, transparent: boolean): ITheme {
   const { selectionForeground, ...theme } = colors;
   return {

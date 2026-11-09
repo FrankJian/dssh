@@ -90,16 +90,10 @@ interface SessionTreeProps {
   onRenameTerminal: (sessionId: string, name: string) => void;
   onRenamePane: (sessionId: string, name: string) => void;
   onDisconnectNode: (node: SessionNode) => void;
-  onConnectProfile: (profile: SshProfile) => void;
   onOpenConnections: () => void;
 }
 
-/**
- * The Sessions sidebar: an "active sessions" tree of live host nodes, plus a
- * compact Favorites quick-launch list. The full saved-connection library lives
- * in the Connections hub (Session Manager) — this sidebar only shows what's
- * running and a shortcut to favorites, so the two don't duplicate each other.
- */
+/** Live sessions only; the saved-connection library is opened via the footer. */
 export function SessionTree({
   remoteDesktops,
   sessions,
@@ -119,11 +113,9 @@ export function SessionTree({
   onRenameTerminal,
   onRenamePane,
   onDisconnectNode,
-  onConnectProfile,
   onOpenConnections,
 }: SessionTreeProps) {
   const nodes = buildNodes(sessions, profiles);
-  const favorites = profiles.filter((profile) => profile.favorite);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -422,7 +414,7 @@ export function SessionTree({
           <div className="session-tree__empty-content">
             <span className="session-tree__empty-icon"><Icon name="terminalTool" height="20" width="20" /></span>
             <p className="session-tree__empty-title">开始一个会话</p>
-            <p className="session-tree__empty-hint">{favorites.length > 0 ? "从连接库选择主机，或点击下方收藏快速连接。" : "打开连接管理，选择或新建一个连接。"}</p>
+            <p className="session-tree__empty-hint">打开连接管理，选择或新建一个连接。</p>
             <button className="session-tree__empty-action" type="button" onClick={onOpenConnections}>
               <Icon name="connections" height="14" width="14" /><span>打开连接管理</span><Icon name="arrowRight" height="13" width="13" />
             </button>
@@ -431,34 +423,12 @@ export function SessionTree({
       )}
       </div>
 
-      {favorites.length > 0 || nodes.length > 0 || remoteDesktops ? <div className="session-fav">
-        <div className="session-fav__head">
-          <span className="session-tree__section-head"><Icon name="star" height="13" width="13" /><span className="session-tree__eyebrow">收藏</span><span className="session-tree__section-count">{favorites.length}</span></span>
-          <button className="session-fav__all" onClick={onOpenConnections} type="button">
-            <span>全部连接</span>
-            <Icon name="chevron-right" height="13" width="13" />
-          </button>
-        </div>
-        {favorites.length > 0 ? (
-          <div className="session-fav__list">
-            {favorites.map((profile) => (
-              <button
-                className="session-fav__row"
-                key={profile.id}
-                onClick={() => onConnectProfile(profile)}
-                title={`连接 ${profile.username}@${profile.host}:${profile.port}`}
-                type="button"
-              >
-                <Icon name={profileIconName(profile.icon)} height="16" width="16" />
-                <span className="session-fav__details"><span className="session-fav__name">{profile.name}</span>
-                  <span className="session-fav__host">{profile.host}:{profile.port}</span></span>
-                <Icon name="play" height="13" width="13" />
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="session-fav__hint">收藏常用连接，即可在这里快速启动。</p>
-        )}
+      {nodes.length > 0 || remoteDesktops ? <div className="session-sidebar__footer">
+        <button className="session-sidebar__all" onClick={onOpenConnections} type="button">
+          <Icon name="connections" height="14" width="14" />
+          <span>全部连接</span>
+          <Icon name="arrowRight" height="13" width="13" />
+        </button>
       </div> : null}
     </aside>
   );
