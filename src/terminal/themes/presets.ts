@@ -1,4 +1,5 @@
 import type { BuiltinTerminalScheme, TerminalColors } from "./types";
+import { GALLERY_TERMINAL_SCHEMES } from "./galleryPresets.ts";
 
 // Original Graphite palettes: quiet neutral surfaces and restrained ANSI accents.
 // Keep white slots light for programs that use them as backgrounds; xterm's
@@ -53,6 +54,34 @@ const graphiteLightColors: TerminalColors = {
   brightMagenta: "#725286",
   brightCyan: "#326670",
   brightWhite: "#eef1f5",
+};
+
+// Pure white with ink-gray text and muted botanical/mineral accents. White
+// ANSI slots stay light for background use; minimum contrast protects text.
+const porcelainWhiteColors: TerminalColors = {
+  background: "#ffffff",
+  foreground: "#4c515b",
+  cursor: "#5f7898",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#eaf0f5",
+  selectionInactiveBackground: "#f2f5f8",
+  selectionForeground: null,
+  black: "#3c424c",
+  red: "#a76069",
+  green: "#587560",
+  yellow: "#8a6c3b",
+  blue: "#5b7597",
+  magenta: "#84678f",
+  cyan: "#507780",
+  white: "#e1e5ea",
+  brightBlack: "#707782",
+  brightRed: "#a8626c",
+  brightGreen: "#5e7865",
+  brightYellow: "#8e7040",
+  brightBlue: "#5f7898",
+  brightMagenta: "#886b93",
+  brightCyan: "#557b83",
+  brightWhite: "#ffffff",
 };
 
 const graphiteContrastColors: TerminalColors = {
@@ -317,9 +346,10 @@ const gruvboxLightColors: TerminalColors = {
   brightWhite: "#3c3836",
 };
 
-export const BUILTIN_TERMINAL_SCHEMES: readonly BuiltinTerminalScheme[] = [
+const baseSchemes: readonly BuiltinTerminalScheme[] = [
   { id: "builtin:graphite-dark", name: "Graphite Dark", kind: "dark", colors: graphiteDarkColors },
   { id: "builtin:graphite-light", name: "Graphite Light", kind: "light", colors: graphiteLightColors },
+  { id: "builtin:porcelain-white", name: "Porcelain White（瓷白）", kind: "light", colors: porcelainWhiteColors },
   { id: "builtin:graphite-contrast", name: "Graphite Contrast", kind: "dark", colors: graphiteContrastColors },
   { id: "builtin:nord", name: "Nord", kind: "dark", colors: nordColors },
   { id: "builtin:solarized-dark", name: "Solarized Dark", kind: "dark", colors: solarizedDarkColors },
@@ -330,7 +360,61 @@ export const BUILTIN_TERMINAL_SCHEMES: readonly BuiltinTerminalScheme[] = [
   { id: "builtin:tokyo-night-day", name: "Tokyo Night Day", kind: "light", colors: tokyoNightDayColors },
   { id: "builtin:gruvbox-dark", name: "Gruvbox Dark", kind: "dark", colors: gruvboxDarkColors },
   { id: "builtin:gruvbox-light", name: "Gruvbox Light", kind: "light", colors: gruvboxLightColors },
+  ...GALLERY_TERMINAL_SCHEMES,
 ];
+
+// Linux ls commonly uses background slot 2 (SGR 42) for writable directories.
+// Give that slot a theme-specific accent instead of making every preset green.
+// This deliberately also changes SGR 32/92 text; custom palettes remain literal.
+const directoryAccents = {
+  blue: ["blue", "brightBlue"],
+  cyan: ["cyan", "brightCyan"],
+  magenta: ["magenta", "brightMagenta"],
+  yellow: ["yellow", "brightYellow"],
+} as const;
+const directoryAccentByScheme: Record<string, keyof typeof directoryAccents> = {
+  "builtin:graphite-dark": "blue",
+  "builtin:graphite-light": "blue",
+  "builtin:porcelain-white": "magenta",
+  "builtin:graphite-contrast": "cyan",
+  "builtin:nord": "blue",
+  "builtin:solarized-dark": "cyan",
+  "builtin:solarized-light": "yellow",
+  "builtin:catppuccin-mocha": "magenta",
+  "builtin:catppuccin-latte": "magenta",
+  "builtin:tokyo-night": "magenta",
+  "builtin:tokyo-night-day": "cyan",
+  "builtin:gruvbox-dark": "yellow",
+  "builtin:gruvbox-light": "cyan",
+  "builtin:light-owl": "cyan",
+  "builtin:one-half-light": "blue",
+  "builtin:pencil-light": "magenta",
+  "builtin:piatto-light": "yellow",
+  "builtin:atom-one-light": "blue",
+  "builtin:ayu-light": "yellow",
+  "builtin:base2tone-heath-light": "blue",
+  "builtin:base2tone-morning-light": "blue",
+  "builtin:3024-night": "yellow",
+  "builtin:belafonte-night": "yellow",
+  "builtin:night-owl": "magenta",
+  "builtin:night-lion-v1": "cyan",
+  "builtin:night-lion-v2": "magenta",
+  "builtin:tokyo-night-storm": "blue",
+  "builtin:tomorrow-night": "cyan",
+  "builtin:tomorrow-night-blue": "magenta",
+  "builtin:tomorrow-night-bright": "yellow",
+  "builtin:tomorrow-night-eighties": "blue",
+};
+
+export const BUILTIN_TERMINAL_SCHEMES: readonly BuiltinTerminalScheme[] = baseSchemes.map((scheme) => {
+  const accent = directoryAccentByScheme[scheme.id];
+  if (!accent) return scheme;
+  const [normal, bright] = directoryAccents[accent];
+  return {
+    ...scheme,
+    colors: { ...scheme.colors, green: scheme.colors[normal], brightGreen: scheme.colors[bright] },
+  };
+});
 
 export const DEFAULT_TERMINAL_SCHEME_ID = "builtin:graphite-dark";
 export const DEFAULT_LIGHT_TERMINAL_SCHEME_ID = "builtin:graphite-light";

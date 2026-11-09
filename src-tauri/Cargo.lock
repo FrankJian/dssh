@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "dssh"
-version = "0.6.21"
+version = "0.6.22"
 dependencies = [
  "aes-gcm",
  "argon2 0.5.3",

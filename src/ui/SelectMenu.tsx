@@ -21,6 +21,8 @@ interface SelectMenuProps {
   onChange: (value: string) => void;
   options: readonly SelectMenuOption[];
   searchable?: boolean;
+  /** Select immediately with arrows even while closed, retaining trigger focus. */
+  selectOnArrowKeys?: boolean;
   searchPlaceholder?: string;
   value: string;
 }
@@ -69,6 +71,7 @@ export function SelectMenu({
   onChange,
   options,
   searchable = false,
+  selectOnArrowKeys = false,
   searchPlaceholder = "搜索…",
   value,
 }: SelectMenuProps) {
@@ -76,6 +79,7 @@ export function SelectMenu({
   const canOpen = !disabled && options.length > 0;
   const [searchQuery, setSearchQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const previousValueRef = useRef(value);
   const listId = useId();
@@ -151,6 +155,7 @@ export function SelectMenu({
     // prevents that synchronous update from leaving the popover mounted.
     setOpen(false);
     setSearchQuery("");
+    if (selectOnArrowKeys) triggerRef.current?.focus({ preventScroll: true });
     onChange(option.value);
   }
 
@@ -170,14 +175,14 @@ export function SelectMenu({
     if (!canOpen) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      if (open) {
+      if (open || selectOnArrowKeys) {
         moveSelection(1);
       } else {
         setOpen(true);
       }
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      if (open) {
+      if (open || selectOnArrowKeys) {
         moveSelection(-1);
       } else {
         setOpen(true);
@@ -201,6 +206,7 @@ export function SelectMenu({
         disabled={!canOpen}
         onClick={() => { if (canOpen) setOpen((current) => !current); }}
         onKeyDown={handleTriggerKeyDown}
+        ref={triggerRef}
         type="button"
       >
         <span>{selected?.label ?? "暂无选项"}</span>

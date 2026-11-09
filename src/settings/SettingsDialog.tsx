@@ -507,7 +507,7 @@ export function SettingsDialog({
   }
 
   return (
-    <div className="profile-editor-backdrop" role="presentation">
+    <div className="profile-editor-backdrop settings-window-backdrop" role="presentation">
       <section
         aria-label="设置"
         className={`settings-window is-glass-overlay${isDraggingWindow ? " is-dragging" : ""}`}

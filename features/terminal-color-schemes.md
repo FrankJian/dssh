@@ -23,7 +23,7 @@
 
 ## 2. 首版范围
 
-- 十二套内置方案、浅色/深色标识、默认随应用外观切换，并可分别保存浅色与深色方案。
+- 31 套内置方案、浅色/深色标识、默认随应用外观切换，并可分别保存浅色与深色方案。
 - 自定义方案：复制、新建副本、编辑、重命名、删除；颜色输入和静态终端预览。
 - 所有已存在与后续创建的终端同步更新，不重建 xterm，不重连，不清屏，不重新播放历史输出。
 - 默认仍是当前 Graphite Dark；升级不改变原有字体、字号、行高、字间距、GPU、壁纸和透明度。
@@ -37,6 +37,7 @@
 | --- | --- | --- | --- |
 | `builtin:graphite-dark` | Graphite Dark | 深色、默认 | 完整保留当前 `terminalTheme.ts`，包括低对比选区 |
 | `builtin:graphite-light` | Graphite Light | 浅色 | 项目自有；雾白底、深石墨文字、冰蓝光标 |
+| `builtin:porcelain-white` | Porcelain White（瓷白） | 浅色 | 项目自有；纯白底、墨灰文字，低饱和灰蓝、鼠尾草绿、灰紫与玫瑰色；背景不透明度为 100% 时呈现纯白 |
 | `builtin:graphite-contrast` | Graphite Contrast | 深色、高对比 | 项目自有；强调文字可读性，选区仍需单独验证 |
 | `builtin:nord` | Nord | 深色 | 基于 Nord 官方调色板，记录终端字段映射 |
 | `builtin:solarized-dark` | Solarized Dark | 深色 | 基于 Solarized 官方终端深色映射 |
@@ -48,6 +49,16 @@
 | `builtin:gruvbox-dark` | Gruvbox Dark | 深色 | Gruvbox 官方 medium-contrast 终端映射；Tabby 提供 Gruvbox 主题 |
 | `builtin:gruvbox-light` | Gruvbox Light | 浅色 | Gruvbox 官方 medium-contrast 终端映射，可与 Dark 成对跟随外观 |
 
+### 截图图库补充方案
+
+新增 18 套，以上游背景 / 默认文字 / 光标 / ANSI 色值为基础，选区使用项目自己的低反差颜色；版本和作者见 [配色来源](../src/terminal/themes/NOTICE.md#screenshot-gallery-palettes)。原有 Solarized Light、Tokyo Night 和 Tokyo Night Day 复用原 ID；Tokyo Night Day 属于浅色方案。
+
+| 分类 | 新增方案 |
+| --- | --- |
+| Light | Light Owl、OneHalfLight、PencilLight、Piatto Light、AtomOneLight、ayu_light、base2tone-heath-light、base2tone-morning-light |
+| Night（深色） | 3024 Night、Belafonte Night、Night Owl、NightLion v1、NightLion v2、TokyoNight Storm、Tomorrow Night、Tomorrow Night Blue、Tomorrow Night Bright、Tomorrow Night Eighties |
+
+
 每套必须显式定义默认文字、背景、光标、块光标文字、活动/非活动选区和全部 16 ANSI 色，不依赖 xterm 隐式默认色。选中文字默认保留原色。Graphite Light 与 Contrast 的完整数值在第一阶段视觉校准后冻结为数据及快照；不能仅换背景而复用不适合浅底的 ANSI 色。
 
 Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其官方项目；Ghostty 将 iTerm2 主题库作为内置主题来源，Tabby 也提供 Gruvbox 与 Catppuccin 等社区主题。颜色映射与项目自行适配的光标/选区已记录在 [`NOTICE.md`](../src/terminal/themes/NOTICE.md)。运行时不联网获取主题。
@@ -58,7 +69,9 @@ Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其
 
 “设置 → 终端”增加“配色方案”，与原有字体设置相邻。默认勾选“跟随应用外观”：应用为浅色时只显示浅色方案，为深色时只显示深色方案，分别记住每种外观的选择；切换应用主题会立即切换终端至相应方案。用户可关闭该选项以固定一个配色，此时允许选择不同明暗的方案，并明确提示它可能与应用外观不一致。使用紧凑分组下拉菜单（内置、自定义），展示名称、深浅类型和小色样；不新增大卡片或独立工作区。
 
-选择即提交，更新所有终端。关闭设置不会撤销已选择的方案；与下面明确标识的编辑草稿区分。提供“恢复默认配色”，只选择 Graphite Dark，不删除自定义方案，不重置字体或背景图片。
+选择即提交，更新所有终端。选择方案后焦点保留在配色选择框，按 ↑ / ↓ 可循环切换当前列表中的方案并即时应用，无需再次展开列表；Enter / 空格仍可展开列表。关闭设置不会撤销已选择的方案；与下面明确标识的编辑草稿区分。提供“恢复默认配色”，只选择 Graphite Dark，不删除自定义方案，不重置字体或背景图片。
+
+内置配色将 ANSI 绿 / 亮绿（编号 2 / 10）分别适配为同方案中的蓝、青、紫或琥珀色，使 Linux `ls` 常见的可写目录底色随方案变化。这也会影响使用同一编号的文字与其他背景。自定义配色不会被重映射；在“复制并编辑 → ANSI 16 色 → 绿（可写目录背景）”可设为任意颜色。现存自定义方案保持原值，纯真彩色输出仍由程序指定。
 
 ### 4.2 自定义编辑
 
@@ -144,7 +157,7 @@ interface TerminalThemePreferencesV1 {
 | 类别 | 必须验证的结果 |
 | --- | --- |
 | 兼容升级 | 无新 key 时与原 Graphite 逐字段相同；已有字体、背景设置不变 |
-| 十二套预设 | 基础色与 16 ANSI 均完整；深浅背景、光标、选区可读；第三方来源可追溯 |
+| 31 套预设 | 基础色与 16 ANSI 均完整；深浅背景、光标、选区可读；第三方来源可追溯 |
 | 编辑闭环 | 新建/复制/编辑/重命名/重置/删除/取消正确；重启后名称与颜色一致 |
 | 颜色边界 | 非法 HEX 不生效；null 选中文字清除前值；真彩色不被默认文字设置覆盖 |
 | 背景 | 0/50/100% 不透明度、壁纸开关、磨砂开关下画布与边缘一致，文字不随背景变透明 |
@@ -154,6 +167,6 @@ interface TerminalThemePreferencesV1 {
 | 渲染 | macOS/Windows，GPU 开/关及上下文丢失回退；特别检查选区字重观感、中英文、粗体、细线和浅色 ANSI |
 | 资源/性能 | 连续切换 100 次与反复开关编辑器，无 terminal/listener/context 持续增长；无 SSH 重连或额外 PTY resize |
 
-首轮已增加 Node 24 原生测试入口 `pnpm test:terminal-themes`，覆盖十二套预设完整性、Graphite 兼容、HEX 边界、透明主题解析、自定义方案保存/删除及无效数据保留。registry 生命周期、冲突和跨窗口传播仍需补充自动覆盖或人工验收；真实 GPU 和 Tauri 多窗口必须实机验证。
+首轮已增加 Node 24 原生测试入口 `pnpm test:terminal-themes`，覆盖31 套预设完整性、Graphite 兼容、HEX 边界、透明主题解析、自定义方案保存/删除及无效数据保留。registry 生命周期、冲突和跨窗口传播仍需补充自动覆盖或人工验收；真实 GPU 和 Tauri 多窗口必须实机验证。
 
 发布门槛：自动测试、`pnpm exec tsc --noEmit`、`pnpm build` 通过，`pnpm tauri dev` 完成双平台矩阵并记录证据。预计不涉及 Rust；若同步方案确需 Rust 变更，再执行 Rust fmt、严格 clippy 和 cargo test。未完成真实平台验收的项目不能勾选为通过。

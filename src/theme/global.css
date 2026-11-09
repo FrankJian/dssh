@@ -6255,6 +6255,11 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   font-size: 12px;
 }
 
+.profile-editor-backdrop.settings-window-backdrop {
+  /* Keep live terminal colours accurate while changing their settings. */
+  background: transparent;
+}
+
 .settings-window {
   display: flex;
   width: min(1040px, 100%);

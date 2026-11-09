@@ -53,7 +53,7 @@ const basicFields: Array<{ field: TerminalColorField; label: string }> = [
 
 const ansiFields: Array<{ field: TerminalColorField; label: string }> = [
   { field: "black", label: "黑" }, { field: "red", label: "红" },
-  { field: "green", label: "绿" }, { field: "yellow", label: "黄" },
+  { field: "green", label: "绿（可写目录背景）" }, { field: "yellow", label: "黄" },
   { field: "blue", label: "蓝" }, { field: "magenta", label: "品红" },
   { field: "cyan", label: "青" }, { field: "white", label: "白" },
   { field: "brightBlack", label: "亮黑" }, { field: "brightRed", label: "亮红" },
@@ -213,9 +213,11 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
           className="settings-select-menu"
           onChange={handleSelectScheme}
           options={schemeOptions}
+          selectOnArrowKeys
           value={active.id}
         />
       </div>
+      <p className="settings-field__hint">选择后可按 ↑ / ↓ 逐个切换配色，立即查看终端效果。</p>
       <div className="terminal-color-settings__actions">
         <Button
           disabled={active.id === (appearanceKind === "light" ? "builtin:graphite-light" : DEFAULT_TERMINAL_SCHEME_ID)}
@@ -324,7 +326,8 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
             ))}
           </div>
           <details className="terminal-color-editor__ansi">
-            <summary>ANSI 16 色</summary>
+            <summary>ANSI 16 色（含目录背景）</summary>
+            <p className="settings-field__hint">常见 Linux 可写目录使用“绿”作为背景，可改为任意颜色；同时影响程序使用该编号的文字与背景。文字会按对比度自动调整。</p>
             <div className="terminal-color-editor__fields">
               {ansiFields.map(({ field, label }) => (
                 <ColorField
