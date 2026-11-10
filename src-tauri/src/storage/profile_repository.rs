@@ -580,6 +580,9 @@ impl ProfileRepository {
         connection.execute_batch(include_str!("../../migrations/011_jumpserver_profiles.sql"))?;
         connection.execute_batch(include_str!("../../migrations/012_connection_folders.sql"))?;
         connection.execute_batch(include_str!("../../migrations/013_sftp_profiles.sql"))?;
+        connection.execute_batch(include_str!(
+            "../../migrations/014_artifactory_profiles.sql"
+        ))?;
         ensure_columns(&connection)?;
         Ok(())
     }

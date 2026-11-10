@@ -9,6 +9,7 @@ import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
+import { TerminalCursorSettings } from "./TerminalCursorSettings";
 import {
   clampCommandHistoryLimit,
   clearCommandHistory,
@@ -158,13 +159,14 @@ const themeOptions: Array<{
 const NAVIGATION_ICON_OPTIONS: Array<{
   id: NavigationIconId;
   label: string;
-  icon: "folder" | "sessions" | "connections" | "bucket" | "globe" | "bot" | "terminalTool";
+  icon: "folder" | "sessions" | "connections" | "bucket" | "database" | "globe" | "bot" | "terminalTool";
 }> = [
   { id: "sessions", label: "活动会话", icon: "sessions" },
   { id: "connections", label: "连接管理", icon: "connections" },
   { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "browser", label: "浏览器", icon: "globe" },
   { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
+  { id: "artifactory", label: "Artifactory", icon: "database" },
   { id: "assistant", label: "AI 助手", icon: "bot" },
   { id: "newLocalTerminal", label: "新建本地终端", icon: "terminalTool" },
 ];
@@ -261,6 +263,7 @@ export function SettingsDialog({
         : initialCategory ?? "appearance"
     ),
   );
+  const [terminalSection, setTerminalSection] = useState<"display" | "interaction" | "background">("display");
   const [commandHistoryLimitDraft, setCommandHistoryLimitDraft] = useState(String(commandHistoryLimit));
   const [confirmClearCommandHistory, setConfirmClearCommandHistory] = useState(false);
   const [commandHistoryCleared, setCommandHistoryCleared] = useState(false);
@@ -589,11 +592,11 @@ export function SettingsDialog({
                   {NAVIGATION_ICON_OPTIONS.map((option) => {
                     const checked = navigationIcons.includes(option.id);
                     const visibleActivityCount = navigationIcons.filter(
-                      (item) => item === "sessions" || item === "connections" || item === "s3",
+                      (item) => item === "sessions" || item === "connections" || item === "s3" || item === "artifactory" || item === "sftp",
                     ).length;
                     const disableLastActivity =
                       checked &&
-                      (option.id === "sessions" || option.id === "connections" || option.id === "s3") &&
+                      (option.id === "sessions" || option.id === "connections" || option.id === "s3" || option.id === "artifactory" || option.id === "sftp") &&
                       visibleActivityCount === 1;
                     return (
                       <label className="checkbox-field" key={option.id}>
@@ -621,11 +624,34 @@ export function SettingsDialog({
               <section className="settings-section terminal-settings" aria-label="终端设置">
                 <div className="settings-section__head">
                   <h3>终端</h3>
-                  <p>修改即时生效</p>
+                  <span className="terminal-settings__live"><Icon name="check" width="12" height="12" />实时生效</span>
                 </div>
-                <BrowserLinkSettings />
+                <div className="terminal-settings__tabs" role="tablist" aria-label="终端设置分组">
+                  {([
+                    { id: "display", label: "显示与配色", icon: "sun" },
+                    { id: "interaction", label: "输入与交互", icon: "terminalTool" },
+                    { id: "background", label: "背景与布局", icon: "monitor" },
+                  ] as const).map((item) => <button key={item.id} type="button" role="tab" id={`terminal-preferences-tab-${item.id}`}
+                    aria-selected={terminalSection === item.id} aria-controls={`terminal-preferences-${item.id}`} tabIndex={terminalSection === item.id ? 0 : -1}
+                    onClick={(event) => { setTerminalSection(item.id); event.currentTarget.closest(".settings-content")?.scrollTo({ top: 0 }); }} onKeyDown={(event) => {
+                      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                      event.preventDefault();
+                      const tabs = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("[role=tab]"));
+                      const index = tabs.indexOf(event.currentTarget);
+                      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                      tabs[next].click(); tabs[next].focus();
+                    }}><Icon name={item.icon} width="14" height="14" /><span>{item.label}</span></button>)}
+                </div>
+                <div className="terminal-settings__panel" role="tabpanel" id="terminal-preferences-display" aria-labelledby="terminal-preferences-tab-display" hidden={terminalSection !== "display"}>
+                <TerminalColorSettings
+                  fontFamily={fontFamily}
+                  fontSize={fontSize}
+                  onCloseGuardChange={(guard) => { terminalDraftGuardRef.current = guard; }}
+                />
+
+                  <div className="terminal-settings__appearance-grid">
                 <section className="terminal-settings__group" aria-label="终端字体设置">
-                  <h4>字体</h4>
+                  <h4>字体与排版</h4>
                   <SelectMenu
                     ariaLabel="终端字体"
                     className="settings-select-menu"
@@ -666,16 +692,17 @@ export function SettingsDialog({
                   </div>
                 </section>
 
-                <section className="terminal-settings__group" aria-label="终端交互设置">
-                  <h4>交互与渲染</h4>
-                  <div className="terminal-settings__toggles">
-                    <label className="checkbox-field">
-                      <input checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} type="checkbox" />选中即复制
-                    </label>
-                    <label className="checkbox-field" title="使用 WebGL 加速，不支持时自动回退。选中文字的抗锯齿效果可能略有不同，可关闭此项。">
-                      <input checked={gpuAcceleration} onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)} type="checkbox" />GPU 加速
-                    </label>
+                <TerminalCursorSettings />
+
                   </div>
+                </div>
+                <div className="terminal-settings__panel" role="tabpanel" id="terminal-preferences-interaction" aria-labelledby="terminal-preferences-tab-interaction" hidden={terminalSection !== "interaction"}>
+                <section className="terminal-settings__group" aria-label="终端交互设置">
+                  <h4>鼠标与复制</h4>
+                  <label className="terminal-settings__toggle-row">
+                    <span><strong>选中即复制</strong><small>选中文字后自动写入剪贴板。</small></span>
+                    <input checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} type="checkbox" role="switch" aria-label="选中即复制" />
+                  </label>
                   <label className="terminal-settings__inline-field">
                     <span className="settings-field__label">右键操作</span>
                     <SelectMenu ariaLabel="右键点击" className="settings-select-menu" onChange={(value) => onRightClickChange(value as RightClickAction)} options={RIGHT_CLICK_OPTIONS} value={rightClick} />
@@ -684,8 +711,9 @@ export function SettingsDialog({
 
                 <section className="terminal-settings__group" aria-label="命令补全设置">
                   <h4>命令补全</h4>
-                  <label className="checkbox-field" title="正常回显的命令按回车后记录，所有终端共享。历史仅保存在本机，密码提示、隐藏或掩码输入、敏感信息和多行输入不记录。">
-                    <input
+                  <label className="terminal-settings__toggle-row" title="正常回显的命令按回车后记录，所有终端共享。历史仅保存在本机，密码提示、隐藏或掩码输入、敏感信息和多行输入不记录。">
+                    <span><strong>启用命令补全</strong><small>基于本机历史，所有终端共享。</small></span>
+                    <input aria-label="启用命令补全" role="switch"
                       checked={commandCompletion}
                       onChange={(event) => {
                         const enabled = event.currentTarget.checked;
@@ -697,7 +725,6 @@ export function SettingsDialog({
                       }}
                       type="checkbox"
                     />
-                    启用命令补全
                   </label>
                   {commandCompletion ? (
                     <div className="command-history-settings">
@@ -743,14 +770,18 @@ export function SettingsDialog({
                   ) : null}
                 </section>
 
-                <TerminalColorSettings
-                  fontFamily={fontFamily}
-                  fontSize={fontSize}
-                  onCloseGuardChange={(guard) => { terminalDraftGuardRef.current = guard; }}
-                />
-
-                <details className="terminal-settings__background">
-                  <summary>背景与留白<span>不透明度 {terminalBgOpacity}% · 下 {terminalWorkspaceBottomInset}px · 右 {terminalWorkspaceRightInset}px</span></summary>
+                  <BrowserLinkSettings />
+                </div>
+                <div className="terminal-settings__panel" role="tabpanel" id="terminal-preferences-background" aria-labelledby="terminal-preferences-tab-background" hidden={terminalSection !== "background"}>
+                  <section className="terminal-settings__group" aria-label="终端渲染设置">
+                    <h4>渲染</h4>
+                    <label className="terminal-settings__toggle-row">
+                      <span><strong>GPU 加速</strong><small>使用 WebGL 渲染，不支持时自动回退。</small></span>
+                      <input checked={gpuAcceleration} onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)} type="checkbox" role="switch" aria-label="GPU 加速" />
+                    </label>
+                  </section>
+                <section className="terminal-settings__background" aria-label="背景与留白设置">
+                  <div className="terminal-settings__group-head"><h4>背景与留白</h4><span>不透明度 {terminalBgOpacity}%</span></div>
                   <div className="terminal-settings__background-body">
                     <div className="terminal-settings__ranges">
                       <label className="settings-field" title="调低后透出应用背景；启用磨砂图片且系统支持时透出图片。">
@@ -771,8 +802,9 @@ export function SettingsDialog({
                       <span className="settings-bg__path" title={terminalBgImage}>{terminalBgImage.split(/[\\/]/).pop() || "未设置图片"}</span>
                       <Button disabled={!terminalBgImage} onClick={() => onTerminalBgImageChange("")} variant="ghost">清除</Button>
                     </div>
-                    <label className="checkbox-field" title="背景图仅以磨砂形式显示；关闭此项或系统不支持时会隐藏图片。">
-                      <input checked={terminalBgGlassEnabled} onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)} type="checkbox" />背景图磨砂
+                    <label className="terminal-settings__toggle-row" title="背景图仅以磨砂形式显示；关闭此项或系统不支持时会隐藏图片。">
+                      <span><strong>背景图磨砂</strong><small>使用模糊处理后的背景图片。</small></span>
+                      <input aria-label="背景图磨砂" role="switch" checked={terminalBgGlassEnabled} onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)} type="checkbox" />
                     </label>
                     <label className="settings-field">
                       <span className="terminal-settings__range-label">模糊度<output>{terminalBgGlassBlur}px</output></span>
@@ -780,7 +812,8 @@ export function SettingsDialog({
                     </label>
                     <p className="settings-field__hint">背景图仅在支持背景模糊的系统上显示。</p>
                   </div>
-                </details>
+                </section>
+                </div>
               </section>
             ) : null}
 

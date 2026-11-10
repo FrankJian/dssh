@@ -23,6 +23,7 @@ import {
 import { isPaneDragging, onPaneDragEnd } from "./paneDrag";
 import { getActiveTerminalColors, subscribeTerminalThemeStore } from "../settings/terminalThemeStore";
 import { TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "./themes/resolve";
+import { getTerminalCursorOptions, getTerminalCursorPreferences, subscribeTerminalCursorPreferences } from "../settings/terminalCursorStore";
 import type { TerminalOutputListener } from "./useTerminalSessions";
 import { CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands, recordCommand } from "./commandCompletion";
 import { completionAreaBounds, placeCompletionMenu, type CompletionBounds } from "./completionPosition";
@@ -111,6 +112,7 @@ interface RegistryEntry {
   handle: TerminalHandle;
   dispose: () => void;
   transparent: boolean;
+  applyCursor: () => void;
 }
 
 const instances = new Map<string, RegistryEntry>();
@@ -120,6 +122,10 @@ subscribeTerminalThemeStore(() => {
   for (const entry of instances.values()) {
     entry.handle.terminal.options.theme = toXtermTheme(colors, entry.transparent);
   }
+});
+
+subscribeTerminalCursorPreferences(() => {
+  for (const entry of instances.values()) entry.applyCursor();
 });
 
 // Detached native windows have a separate JS runtime, so their xterm instance
@@ -233,8 +239,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // when the terminal is actually translucent or a wallpaper is behind it.
     allowTransparency: transparent,
     convertEol: false,
-    cursorBlink: true,
-    cursorStyle: "bar",
+    ...getTerminalCursorOptions(),
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: FONT_SIZE_DEFAULT,
     letterSpacing: TERMINAL_LETTER_SPACING_DEFAULT,
@@ -259,6 +264,8 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     commandInput.reset();
     hideSuggestions();
     if (buffer.type !== "normal") {
+      delete host.dataset.cursorStyle;
+      syncRenderer();
       return;
     }
     if (cursorRestoreTimer !== null) {
@@ -269,11 +276,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       if (terminal.buffer.active.type !== "normal") {
         return;
       }
-      terminal.options.cursorBlink = true;
-      terminal.options.cursorStyle = "bar";
-      // Reset any DEC private cursor override left by the alternate-screen
-      // application so the options above are the values the renderer uses.
-      terminal.write("\x1b[0 q");
+      applyCursor();
     }, 0);
   });
   const fitAddon = new FitAddon();
@@ -762,7 +765,12 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   // before it starts dropping the oldest. Only visible terminals get one; a
   // detached instance falls back to the DOM renderer until it is shown again.
   function syncRenderer() {
-    const wantsGpu = (props.gpuAcceleration ?? true) && container !== null;
+    // WebGL hard-codes a one-pixel underline. Use xterm's DOM renderer for
+    // the thick variant so its native blink/visibility/scroll semantics remain
+    // intact; restore GPU for other shapes and full-screen applications.
+    const thickUnderline = terminal.buffer.active.type === "normal"
+      && getTerminalCursorPreferences().cursorStyle === "thick-underline";
+    const wantsGpu = (props.gpuAcceleration ?? true) && container !== null && !thickUnderline;
     if (wantsGpu === (webgl !== null)) {
       return;
     }
@@ -873,11 +881,27 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
       }
     }
 
+    host.dataset.cursorStyle = terminal.buffer.active.type === "normal"
+      ? getTerminalCursorPreferences().cursorStyle : "";
     syncRenderer();
     if (focus) {
       terminal.focus();
     }
     scheduleFit();
+  }
+
+  function applyCursor() {
+    // Full-screen applications own their cursor until they leave the alternate
+    // screen. Read the latest preference on return, including changes made in
+    // another window while this terminal was hidden or running an application.
+    if (terminal.buffer.active.type !== "normal") return;
+    host.dataset.cursorStyle = getTerminalCursorPreferences().cursorStyle;
+    const cursor = getTerminalCursorOptions();
+    terminal.options.cursorStyle = cursor.cursorStyle;
+    terminal.options.cursorBlink = cursor.cursorBlink;
+    // Clear DEC overrides locally, without sending input to the remote shell.
+    terminal.write("\x1b[0 q");
+    syncRenderer();
   }
 
   function detach(previousContainer: HTMLElement) {
@@ -946,5 +970,6 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     },
     dispose,
     transparent,
+    applyCursor,
   };
 }

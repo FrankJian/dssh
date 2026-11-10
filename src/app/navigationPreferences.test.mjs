@@ -14,3 +14,9 @@ test('an explicit SFTP visibility choice is preserved alongside other icons', ()
   assert.deepEqual(parseNavigationIcons('["sessions","sftp","assistant"]'), ['sessions', 'sftp', 'assistant']);
   assert.deepEqual(parseNavigationIcons('["sftp","sftp","unknown"]'), ['sftp']);
 });
+
+test('Artifactory is hidden by default and an explicit visibility choice is preserved', () => {
+  assert.ok(!DEFAULT_NAVIGATION_ICONS.includes('artifactory'));
+  assert.deepEqual(parseNavigationIcons('["sessions","artifactory","assistant"]'), ['sessions', 'artifactory', 'assistant']);
+  assert.deepEqual(parseNavigationIcons('["artifactory","artifactory"]'), ['artifactory']);
+});

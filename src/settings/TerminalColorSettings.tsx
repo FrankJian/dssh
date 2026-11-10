@@ -21,6 +21,7 @@ import {
   setTerminalThemeFollowAppearance,
 } from "./terminalThemeStore";
 import { useTerminalTheme } from "./useTerminalTheme";
+import { getTerminalCursorOptions, getTerminalCursorPreferences, subscribeTerminalCursorPreferences } from "./terminalCursorStore";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalColorSettingsProps {
@@ -184,9 +185,8 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
 
   return (
     <section aria-label="终端配色方案" className="settings-section terminal-color-settings">
-      <div className="settings-section__head">
-        <h3>配色方案</h3>
-      </div>
+      <div className="terminal-color-settings__heading">
+        <div className="settings-section__head"><h3>配色方案</h3></div>
       <label className="checkbox-field terminal-color-settings__follow" title="开启后仅显示与应用深浅外观一致的方案，关闭后可固定使用任意配色。">
         <input
           checked={store.preferences.followAppearance}
@@ -202,6 +202,8 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
         />
         跟随应用外观
       </label>
+      </div>
+      <div className="terminal-color-settings__controls">
       <div className="terminal-color-settings__selector">
         <div className="terminal-color-settings__swatches" aria-hidden="true">
           {[active.colors.background, active.colors.foreground, active.colors.red, active.colors.green, active.colors.blue].map((color, index) => (
@@ -246,6 +248,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
         )}
       </div>
 
+      </div>
       {store.storageError ? (
         <div className="terminal-color-settings__error" role="alert">
           <span>{store.storageError}</span>
@@ -267,7 +270,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       ) : null}
       {editorError ? <div className="terminal-color-settings__error" role="alert">{editorError}</div> : null}
 
-      <details className="terminal-color-settings__preview" open={draft ? true : undefined}>
+      <details className="terminal-color-settings__preview" open>
         <summary>配色预览</summary>
         <div
         aria-label="终端配色预览"
@@ -473,10 +476,10 @@ function TerminalColorPreview({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    container.dataset.cursorStyle = getTerminalCursorPreferences().cursorStyle;
     const terminal = new Terminal({
       allowTransparency: false,
-      cursorBlink: false,
-      cursorStyle: "block",
+      ...getTerminalCursorOptions(),
       disableStdin: true,
       fontFamily,
       fontSize,
@@ -501,7 +504,7 @@ function TerminalColorPreview({
     const brightBackground = Array.from({ length: 8 }, (_, index) =>
       `\x1b[${100 + index}m  \x1b[0m`,
     ).join("");
-    terminal.write(
+    const sample =
       "\x1b[1mTerminal preview\x1b[0m\r\n" +
       "普通文本 0123456789  \x1b[1m粗体 Bold\x1b[0m\r\n" +
       `ANSI 前景 0–7  ${standardForeground}\r\n` +
@@ -511,14 +514,31 @@ function TerminalColorPreview({
       "目录 \x1b[1;34msrc/\x1b[0m  \x1b[34;42m shared/ \x1b[0m  \x1b[30;43m uploads/ \x1b[0m\r\n" +
       "选区示例 \x1b[31mSelected\x1b[0m text\r\n" +
       "灰阶 \x1b[38;5;244m████\x1b[0m  真彩色 \x1b[38;2;100;180;230mRGB sample\x1b[0m\r\n" +
-      "光标位于此处 ▌",
-      () => terminal.select(0, 7, 26),
-    );
+      "光标位于此处 ▌";
+    const paintSample = () => {
+      terminal.write(`\x1b[0m\x1b[2J\x1b[H${sample}`, () => terminal.select(0, 7, 26));
+    };
+    paintSample();
     terminalRef.current = terminal;
-    const observer = new ResizeObserver(() => fit.fit());
+    const unsubscribeCursor = subscribeTerminalCursorPreferences(() => {
+      container.dataset.cursorStyle = getTerminalCursorPreferences().cursorStyle;
+      const cursor = getTerminalCursorOptions();
+      terminal.options.cursorStyle = cursor.cursorStyle;
+      terminal.options.cursorBlink = cursor.cursorBlink;
+    });
+    const observer = new ResizeObserver(() => {
+      // Hidden settings panels have no usable size. Avoid reflowing the sample
+      // to zero columns, and repaint static content after a real size change.
+      if (!container.clientWidth || !container.clientHeight) return;
+      const { cols, rows } = terminal;
+      fit.fit();
+      if (terminal.cols !== cols || terminal.rows !== rows) paintSample();
+      else terminal.refresh(0, terminal.rows - 1);
+    });
     observer.observe(container);
     return () => {
       observer.disconnect();
+      unsubscribeCursor();
       terminal.dispose();
       terminalRef.current = null;
   };

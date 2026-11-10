@@ -1,5 +1,6 @@
 import { DEFAULT_NAVIGATION_ICONS, parseNavigationIcons } from "./navigationPreferences";
 import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
+import { ArtifactoryWorkspace } from "../artifactory/ArtifactoryWorkspace";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
 import { renameConnectionFolder } from "../services/sshProfileService";
 import { findSftpTerminal } from "./sftpTerminal";
@@ -332,7 +333,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   useEffect(() => {
     if (!navigationIcons.includes(activeActivity)) {
       const fallback = navigationIcons.find(
-        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "sftp" || item === "s3",
+        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "sftp" || item === "s3" || item === "artifactory",
       );
       if (fallback) {
         setActiveActivity(fallback);
@@ -650,6 +651,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }, [terminalBgDataUrl, terminalBgGlassBlur, terminalBgOpacity]);
 
   const isS3 = activeActivity === "s3";
+  const isArtifactory = activeActivity === "artifactory";
   const isConnections = activeActivity === "connections";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
@@ -658,7 +660,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // alive while the user temporarily switches to a terminal or another tab.
   const sftpTabSurfaces = sftpTabs
     .map((tab) => {
-      const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !appLock.status?.locked;
+      const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !isArtifactory && !appLock.status?.locked;
       const terminal = findSftpTerminal(sessions, tab.profileId, activeSessionId);
       const profile = profiles.find((item) => item.id === tab.profileId);
       const host = profile?.host.trim();
@@ -1556,7 +1558,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
-  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
+  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isArtifactory && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
   const currentWorkspaceTab = workspaceTabs.find((tab) => tab.active);
   function switchWorkspaceTab(step: number) {
     const id = cycleItem(workspaceTabs.map((tab) => tab.id), currentWorkspaceTab?.id ?? null, step);
@@ -1593,7 +1595,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     closePane: terminalShortcutsAvailable && activeSession ? () => handleClosePane(activeSession.id) : undefined,
     nextTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(1) : undefined,
     previousTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(-1) : undefined,
-    closeTab: !isConnections && !isS3 && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
+    closeTab: !isConnections && !isS3 && !isArtifactory && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
   }, appLock.status?.locked);
 
   windowCloseRef.current = async () => {
@@ -1678,7 +1680,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   const sidebarContent =
-    sidebarCollapsed || isConnections ? null : activeActivity === "sftp" ? (
+    sidebarCollapsed || isConnections || isArtifactory ? null : activeActivity === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
           onOpen={handleOpenSftpForProfile} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
           onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
@@ -1829,6 +1831,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         onRenameTag={handleRenameConnectionTag}
       />
     );
+  } else if (isArtifactory) {
+    mainSurface = <ArtifactoryWorkspace />;
   } else if (isS3) {
     mainSurface = (
       <S3Workspace
@@ -2250,7 +2254,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                 <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />
               </div>
             )}
-            {isS3 || isConnections ? null : (
+            {isS3 || isConnections || isArtifactory ? null : (
               <div className="titlebar__workspace">
                 <WorkspaceTabStrip
                   tabs={workspaceTabs}
@@ -2271,7 +2275,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
               </div>
             )}
             <div className="titlebar__drag" data-tauri-drag-region />
-            {!isS3 && !isConnections ? (
+            {!isS3 && !isConnections && !isArtifactory ? (
               <>
                 <button
                   className="tab-action titlebar__new-terminal"
@@ -2356,7 +2360,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           )
         }
         main={<>{mainSurface}{sftpTabSurfaces}{browserTabs.map((tab) => {
-          const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !appLock.status?.locked;
+          const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !isArtifactory && !appLock.status?.locked;
           return <div className="browser-tab" hidden={!visible} key={tab.id}><BrowserWorkspace tab={tab} visible={visible} /></div>;
         })}</>}
       />

@@ -235,7 +235,13 @@ export function SelectMenu({
                     aria-selected={isSelected}
                     className={`select-menu__option${isSelected ? " is-selected" : ""}`}
                     disabled={option.disabled}
-                    onClick={() => selectOption(option)}
+                    onClick={(event) => {
+                      // The option disappears on selection. If a caller wraps
+                      // this custom control in a label, prevent its default
+                      // activation from clicking the trigger and reopening it.
+                      event.preventDefault();
+                      selectOption(option);
+                    }}
                     role="option"
                     type="button"
                   >

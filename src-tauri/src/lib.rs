@@ -46,6 +46,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(browser::guard(tauri::generate_handler![
+            commands::artifactory::list_artifactory_profiles,
+            commands::artifactory::save_artifactory_profile,
+            commands::artifactory::delete_artifactory_profile,
+            commands::artifactory::artifactory_repositories,
+            commands::artifactory::artifactory_list_folder,
+            commands::artifactory::artifactory_item_info,
+            commands::artifactory::artifactory_upload,
+            commands::artifactory::artifactory_download,
             commands::jumpserver::list_jumpserver_profiles,
             commands::jumpserver::save_jumpserver_profile,
             commands::jumpserver::delete_jumpserver_profile,
