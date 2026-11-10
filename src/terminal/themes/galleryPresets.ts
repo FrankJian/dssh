@@ -2,7 +2,7 @@ import type { BuiltinTerminalScheme } from "./types";
 
 // Screenshot gallery presets. Upstream background, foreground, cursor and ANSI
 // slots are preserved. Source revisions and author credits are in NOTICE.md.
-// Selection is a subtle neutral blend so WebGL-selected glyphs stay consistent.
+// Base selection values are adapted to readable focus-state pairs in presets.ts.
 export const GALLERY_TERMINAL_SCHEMES: readonly BuiltinTerminalScheme[] = [
   {
     id: "builtin:light-owl",

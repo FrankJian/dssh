@@ -353,7 +353,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
               默认文字与不透明背景的对比度低于 4.5:1；透明背景或壁纸下实际对比度还会变化。
             </p>
           ) : null}
-          <p className="settings-field__hint">选区颜色会影响 WebGL 下所选文字的抗锯齿观感，请同时检查 GPU 开关两种状态。</p>
+          <p className="settings-field__hint">选区背景按所选颜色清晰显示；建议同时设置选中文字颜色，保持彩色输出被选中后的可读性。</p>
           {draftError ? <div className="terminal-color-settings__error" role="alert">{draftError}</div> : null}
           <div className="terminal-color-settings__actions">
             <Button onClick={resetColorsToBase} variant="ghost">恢复副本初始颜色</Button>
@@ -509,10 +509,10 @@ function TerminalColorPreview({
       `ANSI 背景 0–7  ${standardBackground}\r\n` +
       `ANSI 背景 8–15 ${brightBackground}\r\n` +
       "目录 \x1b[1;34msrc/\x1b[0m  \x1b[34;42m shared/ \x1b[0m  \x1b[30;43m uploads/ \x1b[0m\r\n" +
-      "\x1b[7m选区示例 Selected text\x1b[27m\r\n" +
+      "选区示例 \x1b[31mSelected\x1b[0m text\r\n" +
       "灰阶 \x1b[38;5;244m████\x1b[0m  真彩色 \x1b[38;2;100;180;230mRGB sample\x1b[0m\r\n" +
       "光标位于此处 ▌",
-      () => terminal.select(0, 7, 8),
+      () => terminal.select(0, 7, 26),
     );
     terminalRef.current = terminal;
     const observer = new ResizeObserver(() => fit.fit());

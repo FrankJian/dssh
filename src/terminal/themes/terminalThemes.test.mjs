@@ -87,7 +87,24 @@ test("Graphite and Porcelain text, directory accents and selection remain readab
       assert.ok(store.contrastRatio(colors[field], colors.background) >= 4.5, `${id}.${field}`);
     }
     for (const background of ["selectionBackground", "selectionInactiveBackground"]) {
-      assert.ok(store.contrastRatio(colors.foreground, colors[background]) >= 4.5, `${id}.${background}`);
+      assert.ok(store.contrastRatio(colors.selectionForeground ?? colors.foreground, colors[background]) >= 4.5, `${id}.${background}`);
+    }
+  }
+});
+
+test("all built-in selections stay visible and selected text stays readable when focused or blurred", () => {
+  for (const { id, colors } of BUILTIN_TERMINAL_SCHEMES) {
+    assert.ok(colors.selectionForeground, id);
+    assert.ok(store.contrastRatio(colors.selectionBackground, colors.background) >= 1.5, `${id}: selection visibility`);
+    assert.ok(store.contrastRatio(colors.selectionBackground, colors.selectionInactiveBackground) >= 1.1, `${id}: focus state`);
+    for (const field of ["selectionBackground", "selectionInactiveBackground"]) {
+      assert.ok(store.contrastRatio(colors.selectionForeground, colors[field]) >= 4.5, `${id}: ${field} text`);
+    }
+    for (const transparent of [false, true]) {
+      const theme = toXtermTheme(colors, transparent);
+      assert.equal(theme.selectionBackground, `${colors.selectionBackground}fe`);
+      assert.equal(theme.selectionInactiveBackground, `${colors.selectionInactiveBackground}fe`);
+      assert.equal(theme.selectionForeground, colors.selectionForeground);
     }
   }
 });
@@ -113,7 +130,7 @@ test("HEX input accepts short and long RGB forms and rejects other CSS values", 
 });
 
 test("xterm themes support transparency and clearing optional selection foreground", () => {
-  const colors = BUILTIN_TERMINAL_SCHEMES[0].colors;
+  const colors = { ...BUILTIN_TERMINAL_SCHEMES[0].colors, selectionForeground: null };
   const opaque = toXtermTheme(colors, false);
   const transparent = toXtermTheme(colors, true);
   assert.equal(opaque.background, colors.background);

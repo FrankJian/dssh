@@ -1,5 +1,6 @@
 import type { BuiltinTerminalScheme, TerminalColors } from "./types";
 import { GALLERY_TERMINAL_SCHEMES } from "./galleryPresets.ts";
+import { TERMINAL_SELECTION_COLORS } from "./selection.ts";
 
 // Original Graphite palettes: quiet neutral surfaces and restrained ANSI accents.
 // Keep white slots light for programs that use them as backgrounds; xterm's
@@ -412,7 +413,12 @@ export const BUILTIN_TERMINAL_SCHEMES: readonly BuiltinTerminalScheme[] = baseSc
   const [normal, bright] = directoryAccents[accent];
   return {
     ...scheme,
-    colors: { ...scheme.colors, green: scheme.colors[normal], brightGreen: scheme.colors[bright] },
+    colors: {
+      ...scheme.colors,
+      green: scheme.colors[normal],
+      brightGreen: scheme.colors[bright],
+      ...TERMINAL_SELECTION_COLORS[scheme.kind],
+    },
   };
 });
 

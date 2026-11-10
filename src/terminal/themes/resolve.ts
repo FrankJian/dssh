@@ -10,6 +10,11 @@ export function toXtermTheme(colors: TerminalColors, transparent: boolean): IThe
   return {
     ...theme,
     ...(selectionForeground ? { selectionForeground } : {}),
+    // xterm converts fully opaque selection colors to a 30% overlay. Explicit
+    // near-opaque alpha keeps the configured color visible on DOM and WebGL,
+    // including transparent terminals, without changing persisted HEX colors.
+    selectionBackground: `${colors.selectionBackground}fe`,
+    selectionInactiveBackground: `${colors.selectionInactiveBackground}fe`,
     background: transparent ? "rgba(0, 0, 0, 0)" : colors.background,
   };
 }

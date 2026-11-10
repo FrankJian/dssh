@@ -4,7 +4,7 @@ The built-in Nord palette uses the colors from [Nord v0.2.0](https://github.com/
 
 The built-in Solarized Dark and Solarized Light palettes use the colors and mode mapping from [Solarized v1.0.0beta2](https://github.com/altercation/solarized/releases/tag/v1.0.0beta2), created by Ethan Schoonover. The application maps the Solarized palette to xterm ANSI slots and supplies its own cursor and selection colors.
 
-The built-in Catppuccin Mocha and Catppuccin Latte palettes use the complete terminal mapping from the [Catppuccin Kitty port](https://github.com/catppuccin/kitty/tree/main/themes). The application starts from the upstream ANSI slots and supplies its inactive-selection color.
+The built-in Catppuccin Mocha and Catppuccin Latte palettes use the complete terminal mapping from the [Catppuccin Kitty port](https://github.com/catppuccin/kitty/tree/main/themes). The application starts from the upstream ANSI slots and supplies focused/inactive selection backgrounds and selected-text colors.
 
 The built-in Tokyo Night and Tokyo Night Day palettes use the terminal mapping from [TokyoNight's Alacritty extras](https://github.com/folke/tokyonight.nvim/tree/main/extras/alacritty). The application starts from the upstream ANSI slots and supplies cursor and selection colors.
 
@@ -18,7 +18,7 @@ All built-in palettes adapt ANSI green / bright green (slots 2 / 10) to a blue, 
 
 ## Screenshot gallery palettes
 
-The 18 additional gallery presets start from upstream background, foreground, cursor and all 16 ANSI slots. Duo SSH supplies cursor text, low-contrast active/inactive selection colors, and preserves each cell’s foreground when selected. The renderer's minimum-contrast protection may adjust low-contrast text against its cell background.
+The 18 additional gallery presets start from upstream background, foreground, cursor and all 16 ANSI slots. Duo SSH supplies cursor text, distinct focused/inactive selection backgrounds, and explicit selected-text colors. The renderer's minimum-contrast protection may adjust low-contrast text against its cell background.
 
 Sixteen palettes are sourced from [Gogh's theme data at revision 3277da1a295142cd8664e0657c5a3c2a44cc520a](https://github.com/Gogh-Co/Gogh/blob/3277da1a295142cd8664e0657c5a3c2a44cc520a/data/themes.json). Copyright (c) 2024 Gogh. Used under the [MIT License](https://github.com/Gogh-Co/Gogh/blob/3277da1a295142cd8664e0657c5a3c2a44cc520a/LICENSE-MIT), reproduced below.
 

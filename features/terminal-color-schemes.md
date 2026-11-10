@@ -35,7 +35,7 @@
 
 | 稳定 ID | 名称 | 类型 | 设计基准 |
 | --- | --- | --- | --- |
-| `builtin:graphite-dark` | Graphite Dark | 深色、默认 | 完整保留当前 `terminalTheme.ts`，包括低对比选区 |
+| `builtin:graphite-dark` | Graphite Dark | 深色、默认 | 项目自有；石墨底、柔和彩色输出和清晰蓝色选区 |
 | `builtin:graphite-light` | Graphite Light | 浅色 | 项目自有；雾白底、深石墨文字、冰蓝光标 |
 | `builtin:porcelain-white` | Porcelain White（瓷白） | 浅色 | 项目自有；纯白底、墨灰文字，低饱和灰蓝、鼠尾草绿、灰紫与玫瑰色；背景不透明度为 100% 时呈现纯白 |
 | `builtin:graphite-contrast` | Graphite Contrast | 深色、高对比 | 项目自有；强调文字可读性，选区仍需单独验证 |
@@ -51,7 +51,7 @@
 
 ### 截图图库补充方案
 
-新增 18 套，以上游背景 / 默认文字 / 光标 / ANSI 色值为基础，选区使用项目自己的低反差颜色；版本和作者见 [配色来源](../src/terminal/themes/NOTICE.md#screenshot-gallery-palettes)。原有 Solarized Light、Tokyo Night 和 Tokyo Night Day 复用原 ID；Tokyo Night Day 属于浅色方案。
+新增 18 套，以上游背景 / 默认文字 / 光标 / ANSI 色值为基础，选区使用项目自己的聚焦 / 失焦颜色及专用文字色；版本和作者见 [配色来源](../src/terminal/themes/NOTICE.md#screenshot-gallery-palettes)。原有 Solarized Light、Tokyo Night 和 Tokyo Night Day 复用原 ID；Tokyo Night Day 属于浅色方案。
 
 | 分类 | 新增方案 |
 | --- | --- |
@@ -59,7 +59,7 @@
 | Night（深色） | 3024 Night、Belafonte Night、Night Owl、NightLion v1、NightLion v2、TokyoNight Storm、Tomorrow Night、Tomorrow Night Blue、Tomorrow Night Bright、Tomorrow Night Eighties |
 
 
-每套必须显式定义默认文字、背景、光标、块光标文字、活动/非活动选区和全部 16 ANSI 色，不依赖 xterm 隐式默认色。选中文字默认保留原色。Graphite Light 与 Contrast 的完整数值在第一阶段视觉校准后冻结为数据及快照；不能仅换背景而复用不适合浅底的 ANSI 色。
+每套必须显式定义默认文字、背景、光标、块光标文字、活动/非活动选区和全部 16 ANSI 色，不依赖 xterm 隐式默认色。内置方案使用专用选中文字色，保证 ANSI / 真彩色输出被选中后的可读性；自定义方案仍可设为保留原色。Graphite Light 与 Contrast 的完整数值在第一阶段视觉校准后冻结为数据及快照；不能仅换背景而复用不适合浅底的 ANSI 色。
 
 Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其官方项目；Ghostty 将 iTerm2 主题库作为内置主题来源，Tabby 也提供 Gruvbox 与 Catppuccin 等社区主题。颜色映射与项目自行适配的光标/选区已记录在 [`NOTICE.md`](../src/terminal/themes/NOTICE.md)。运行时不联网获取主题。
 
@@ -105,6 +105,12 @@ Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其
 单个隔离、只读 xterm 展示固定本地样例：中英文、数字、普通/粗体、16 色前景和背景、灰阶/真彩色示例、光标及文本选区。使用当前字体参数，允许拖选但不接收终端输入、不调用后端、不创建 SSH 会话。预览基础底色保持不透明，并明确提示实际终端透明度另由背景设置控制。
 
 预览默认使用非 WebGL 渲染路径，避免为编辑器额外占用 GPU context；关闭时销毁 terminal、addon 和监听器。真实终端的 WebGL 视觉一致性另行验收，不用预览代替。
+
+### 选区显示
+
+内置浅色方案采用蓝色选区 / 深色选中文字，深色方案采用钢蓝选区 / 浅色选中文字；失焦后降低强调程度但保留可见选区。选区与终端底色的对比度至少为 1.5:1，选中文字与聚焦 / 失焦选区背景至少为 4.5:1。
+
+持久化颜色仍为 HEX RGB。渲染时将选区背景转换为 alpha 254/255 的 HEX RGBA，避免 xterm 将完全不透明选区自动改成 30% 透明覆盖层。此转换同时用于实际终端和设置预览，不覆盖已有自定义配色数据。预览用真实文本选区代替反色 SGR 示例。已对比 GPU 开 / 关下的明暗选区、中英文、彩色文字与带底色目录。
 
 ## 5. 数据与持久化
 
