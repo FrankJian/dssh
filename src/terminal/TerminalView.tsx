@@ -11,6 +11,7 @@ import type { TerminalOutputListener } from "./useTerminalSessions";
 interface TerminalViewProps {
   getBacklog?: (sessionId: string) => string;
   subscribeOutput?: (sessionId: string, listener: TerminalOutputListener) => () => void;
+  onKey?: TerminalLiveProps["onKey"];
   onData?: (data: string) => Promise<void> | void;
   onResize?: (size: TerminalSize) => Promise<void> | void;
   fontSize?: number;
@@ -44,6 +45,7 @@ interface TerminalViewProps {
 export function TerminalView({
   getBacklog,
   subscribeOutput,
+  onKey,
   onData,
   onResize,
   fontSize,
@@ -87,6 +89,7 @@ export function TerminalView({
     getBacklogRef.current = getBacklog;
     subscribeOutputRef.current = subscribeOutput;
     livePropsRef.current = {
+      onKey,
       onData,
       onResize,
       onFontSizeChange,
@@ -106,6 +109,7 @@ export function TerminalView({
     currentSessionId,
     getBacklog,
     subscribeOutput,
+    onKey,
     onData,
     onResize,
     onFontSizeChange,

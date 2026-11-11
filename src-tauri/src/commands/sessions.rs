@@ -1,11 +1,15 @@
-use tauri::{AppHandle, Manager, State, Webview};
+use tauri::{AppHandle, State, Webview};
 
 use crate::{
     app::AppState,
     error::{AppError, AppResult},
-    models::terminal::{
-        ResizeSshSessionRequest, StartLocalSessionRequest, StartSshSessionRequest, TerminalSession,
-        WriteSshSessionRequest,
+    models::{
+        ssh_profile::SshProfile,
+        terminal::{
+            ResizeSshSessionRequest, SessionStatus, StartLocalSessionRequest,
+            StartSshSessionRequest, TerminalSession, TerminalSessionKind, TerminalSize,
+            WriteSshSessionRequest,
+        },
     },
 };
 
@@ -32,29 +36,30 @@ pub fn start_ssh_session(
     request: StartSshSessionRequest,
     webview: Webview,
 ) -> AppResult<TerminalSession> {
-    if crate::jumpserver::is_target(&request.profile_id) {
-        crate::browser::trusted(&webview)?;
-        if app_handle.state::<AppState>().app_lock.status()?.locked {
-            return Err(AppError::new("jumpserver_locked", "请先解锁 Duo SSH。"));
-        }
-        let profile = state.jumpserver.source(&request.profile_id)?;
-        return state
-            .sessions
-            .start_session(app_handle, profile, request.size);
-    }
-    let profile = state
-        .profiles
-        .get_profile(&request.profile_id)?
-        .ok_or_else(|| {
-            AppError::new(
-                "profile_not_found",
-                format!("SSH profile '{}' does not exist.", request.profile_id),
-            )
-        })?;
-
+    let profile = resolve_ssh_profile(&state, &webview, &request.profile_id)?;
     state
         .sessions
         .start_session(app_handle, profile, request.size)
+}
+
+fn resolve_ssh_profile(
+    state: &AppState,
+    webview: &Webview,
+    profile_id: &str,
+) -> AppResult<SshProfile> {
+    if crate::jumpserver::is_target(profile_id) {
+        crate::browser::trusted(webview)?;
+        if state.app_lock.status()?.locked {
+            return Err(AppError::new("jumpserver_locked", "请先解锁 Duo SSH。"));
+        }
+        return state.jumpserver.source(profile_id);
+    }
+    state.profiles.get_profile(profile_id)?.ok_or_else(|| {
+        AppError::new(
+            "profile_not_found",
+            format!("SSH profile '{profile_id}' does not exist."),
+        )
+    })
 }
 
 #[tauri::command]
@@ -127,6 +132,30 @@ pub async fn close_ssh_session(state: State<'_, AppState>, session_id: String) -
     // shell so tunnels never outlive the SSH connection that spawned them.
     state.forwards.stop_session(&session_id).await;
     state.sessions.close_session(&session_id).await
+}
+
+#[tauri::command]
+pub async fn reconnect_ssh_session(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    webview: Webview,
+    session_id: String,
+    size: TerminalSize,
+) -> AppResult<()> {
+    let session = state.sessions.reconnect_target(&session_id)?;
+    let profile = match session.kind {
+        TerminalSessionKind::Local => None,
+        TerminalSessionKind::Ssh => {
+            Some(resolve_ssh_profile(&state, &webview, &session.profile_id)?)
+        }
+    };
+    if matches!(session.status, SessionStatus::Connected) {
+        state.forwards.stop_session(&session_id).await;
+    }
+    state
+        .sessions
+        .reconnect_session(app_handle, &session_id, profile, size)
+        .await
 }
 
 #[tauri::command]

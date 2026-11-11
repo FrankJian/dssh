@@ -186,6 +186,9 @@ impl ContextCompressor {
         manager: &AiManager,
     ) -> Result<bool, String> {
         let summary_request_budget = self.input_budget;
+        // Share a deadline across all chunks; a busy service should not make
+        // each chunk wait its own timeout before local fallback.
+        let summary_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         self.fit_with(request, |chunk, max_output| async move {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
             (model, &chunk, max_output).hash(&mut hash);
@@ -198,10 +201,16 @@ impl ContextCompressor {
                 return Err("摘要输入超出预算".into());
             }
             let options = ChatOptions::default().with_max_tokens(max_output as u32);
-            let response = client
-                .exec_chat(model, summary_request, Some(&options))
-                .await
-                .map_err(|e| e.message)?;
+            if tokio::time::Instant::now() >= summary_deadline {
+                return Err("摘要请求超时".into());
+            }
+            let response = tokio::time::timeout_at(
+                summary_deadline,
+                client.exec_chat(model, summary_request, Some(&options)),
+            )
+            .await
+            .map_err(|_| "摘要请求超时".to_string())?
+            .map_err(|e| e.message)?;
             let summary = response.texts().join("\n");
             if summary.trim().is_empty() {
                 return Err("摘要为空".into());

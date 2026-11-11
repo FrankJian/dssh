@@ -125,6 +125,7 @@ pub enum SessionStatus {
     Reconnecting,
     Disconnecting,
     Disconnected,
+    /// The shell ended after an explicit exit from the terminal.
     Exited,
     Failed,
 }

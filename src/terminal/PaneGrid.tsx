@@ -16,6 +16,7 @@ interface PaneGridProps {
   sessions: TerminalSession[];
   getBacklog: (sessionId: string) => string;
   subscribeOutput: (sessionId: string, listener: TerminalOutputListener) => () => void;
+  onTerminalKey: (sessionId: string, event: KeyboardEvent) => boolean;
   onPaneData: (sessionId: string, data: string) => Promise<void> | void;
   onPaneResize: (sessionId: string, size: TerminalSize) => void;
   onFocusPane: (sessionId: string) => void;
@@ -39,6 +40,7 @@ export function PaneGrid({
   sessions,
   getBacklog,
   subscribeOutput,
+  onTerminalKey,
   onPaneData,
   onPaneResize,
   onFocusPane,
@@ -142,6 +144,7 @@ export function PaneGrid({
                 gpuAcceleration={gpuAcceleration}
                 hasWallpaper={hasWallpaper}
                 isLocalShell={session?.kind === "local"}
+                onKey={(event) => onTerminalKey(node.sessionId, event)}
                 onData={(data) => onPaneData(node.sessionId, data)}
                 onFontSizeChange={onFontSizeChange}
                 onResize={(size) => onPaneResize(node.sessionId, size)}

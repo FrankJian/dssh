@@ -105,6 +105,10 @@ export function closeSshSession(sessionId: string) {
   return invokeCommand<void>("close_ssh_session", { sessionId });
 }
 
+export function reconnectSshSession(sessionId: string, size: ResizeSshSessionRequest["size"]) {
+  return invokeCommand<void>("reconnect_ssh_session", { sessionId, size });
+}
+
 export function cancelReconnect(sessionId: string) {
   return invokeCommand<void>("cancel_reconnect", { sessionId });
 }

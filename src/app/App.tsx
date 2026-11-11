@@ -419,6 +419,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     forgetSession,
     getBacklog,
     reconnectSession,
+    handleTerminalKey,
     resizeSession,
     sessions: allSessions,
     terminalTransfers,
@@ -495,7 +496,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
   const [terminalNames, setTerminalNames] = useState<Record<string, string>>(initialState.terminalNames);
   const [paneNames, setPaneNames] = useState<Record<string, string>>(initialState.paneNames);
-  const handledShellExitsRef = useRef(new Set<string>());
+  const closingExitedShellsRef = useRef(new Set<string>());
   const previousSessionIdsRef = useRef(new Set<string>());
 
   const detachedTerminalSessionIds = new Set(
@@ -879,6 +880,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       [...previousSessionIdsRef.current].filter((id) => !liveSessionIds.has(id)),
     );
     previousSessionIdsRef.current = liveSessionIds;
+    for (const id of removedSessionIds) closingExitedShellsRef.current.delete(id);
     setFileTreeSessionId((current) =>
       current && liveSessionIds.has(current) ? current : null,
     );
@@ -1116,8 +1118,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
-  async function handleClosePane(sessionId: string) {
-    if (!await closeTerminalSessions([sessionId], paneName(sessionId))) return;
+  async function handleClosePane(sessionId: string, shellExited = false) {
+    if (shellExited) {
+      await closeSession(sessionId);
+    } else if (!await closeTerminalSessions([sessionId], paneName(sessionId))) {
+      return;
+    }
     const remaining = paneSessionIds(panes.findLayout(sessionId)).filter((id) => id !== sessionId);
     if (fileTreeSessionId === sessionId) {
       setFileTreeSessionId(null);
@@ -1127,36 +1133,21 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
     panes.removePane(sessionId);
     const next = remaining[0];
-    if (next) {
+    if (next && (!shellExited || activeSessionId === sessionId)) {
       setActiveSessionId(next);
       panes.focusPane(next);
     }
   }
 
-  async function handleShellExited(sessionId: string) {
-    const remaining = paneSessionIds(panes.findLayout(sessionId)).filter((id) => id !== sessionId);
-    try {
-      await closeSession(sessionId);
-      if (fileTreeSessionId === sessionId) setFileTreeSessionId(null);
-      if (terminalFullscreenPaneId === sessionId) setTerminalFullscreenPaneId(null);
-      panes.removePane(sessionId);
-      if (activeSessionId === sessionId && remaining[0]) {
-        setActiveSessionId(remaining[0]);
-        panes.focusPane(remaining[0]);
-      }
-    } catch (error) {
-      handledShellExitsRef.current.delete(sessionId);
-      toast(error instanceof Error ? error.message : "退出终端后清理分屏失败。", "error");
-    }
-  }
-
   useEffect(() => {
     for (const session of visibleSessions) {
-      if (session.status !== "exited" || handledShellExitsRef.current.has(session.id)) continue;
-      handledShellExitsRef.current.add(session.id);
-      void handleShellExited(session.id);
+      if (session.status !== "exited" || closingExitedShellsRef.current.has(session.id)) continue;
+      closingExitedShellsRef.current.add(session.id);
+      void handleClosePane(session.id, true).catch((error: unknown) => {
+        toast(error instanceof Error ? error.message : "关闭已退出的终端失败。", "error");
+      });
     }
-  }, [sessions, detachedWorkspaces]);
+  }, [visibleSessions]);
 
   async function handleCloseTerminalWindow(tabSessionId: string) {
     const layout = panes.findLayoutByTab(tabSessionId);
@@ -1787,6 +1778,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       onFontSizeChange={setFontSize}
       onResize={resizeSession}
       onStartLocalSession={handleStartLocalSession}
+      onTerminalKey={handleTerminalKey}
       onWrite={writeToSession}
       subscribeOutput={subscribeOutput}
     />
@@ -1903,6 +1895,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         sessions={sessions}
         getBacklog={getBacklog}
         subscribeOutput={subscribeOutput}
+        onTerminalKey={handleTerminalKey}
         onPaneData={(id, data) => writeToSession(id, data)}
         onPaneResize={(id, size) => void resizeSession(id, size)}
         onFocusPane={(sessionId) => {

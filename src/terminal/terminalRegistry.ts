@@ -46,6 +46,7 @@ import "@xterm/xterm/css/xterm.css";
 
 /** Props that may change while an instance stays alive. */
 export interface TerminalLiveProps {
+  onKey?: (event: KeyboardEvent) => boolean;
   onData?: (data: string) => Promise<void> | void;
   onResize?: (size: TerminalSize) => Promise<void> | void;
   onFontSizeChange?: (size: number) => void;
@@ -564,6 +565,14 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // be consumed here: xterm would call stopPropagation() and the global
     // listener would never fire. Returning false makes xterm skip the key.
     if (isAppShortcut(event)) {
+      return false;
+    }
+
+    if (props.onKey?.(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      commandInput.reset();
+      hideSuggestions();
       return false;
     }
 

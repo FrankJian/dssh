@@ -23,7 +23,7 @@ use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::TcpStream,
-    sync::{Mutex as AsyncMutex, Notify, mpsc, oneshot, watch},
+    sync::{Mutex as AsyncMutex, Notify, mpsc, watch},
 };
 
 use crate::{
@@ -51,12 +51,6 @@ use zmodem2::{
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 const TERMINAL_STATUS_EVENT: &str = "terminal-status";
-// Grace-period auto-reconnect: after an unexpected drop, keep retrying with
-// exponential backoff for up to GRACE before giving up.
-const RECONNECT_GRACE: Duration = Duration::from_secs(30);
-const RECONNECT_BACKOFF_BASE: Duration = Duration::from_secs(1);
-const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(15);
-
 /// Upper bound (in bytes) for the per-session scrollback we retain server-side
 /// so the AI agent can read what is currently on screen. Older output is
 /// dropped from the front once this is exceeded.
@@ -108,6 +102,7 @@ struct SessionHandle {
     title: String,
     tx: mpsc::Sender<SessionCommand>,
     closed: watch::Receiver<bool>,
+    closing: bool,
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
     /// to answer AI `read_terminal` requests about the visible session.
     output: Arc<Mutex<String>>,
@@ -220,7 +215,10 @@ pub(crate) struct TerminalInputSnapshot {
 
 #[derive(Debug)]
 enum SessionCommand {
-    Input(String),
+    Input {
+        data: String,
+        interactive: bool,
+    },
     ZmodemResponse {
         detection_id: String,
         paths: Option<Vec<String>>,
@@ -234,7 +232,7 @@ enum SessionCommand {
     },
     Resize(TerminalSize),
     Close,
-    /// Stop retrying during grace-period reconnect and settle as disconnected.
+    /// Cancel a user-requested reconnect that is still opening.
     CancelReconnect,
 }
 
@@ -242,24 +240,32 @@ enum SessionCommand {
 enum ConnOutcome {
     /// The user explicitly closed the session.
     Closed,
-    /// The remote shell ended without a close request from the UI.
+    /// The shell exited after an explicit terminal input.
     ShellExited,
-    /// The transport dropped unexpectedly — eligible for grace reconnect.
+    /// The transport dropped unexpectedly.
     Dropped,
 }
 
+#[derive(Clone, Copy)]
+enum ShellChannelEnd {
+    ExitStatus,
+    ExitSignal,
+    Close,
+    TransportLost,
+}
+
 fn classify_channel_end(
-    outcome: ConnOutcome,
-    channel_closed_without_status: bool,
+    end: ShellChannelEnd,
+    user_requested_exit: bool,
     transport_closed: bool,
 ) -> ConnOutcome {
-    // Some SSH servers close a PTY channel without ExitStatus. That ends only
-    // this pane while the pooled transport remains healthy for its siblings.
-    if matches!(outcome, ConnOutcome::Dropped) && channel_closed_without_status && !transport_closed
+    if user_requested_exit
+        && (matches!(end, ShellChannelEnd::ExitStatus)
+            || matches!(end, ShellChannelEnd::Close) && !transport_closed)
     {
         ConnOutcome::ShellExited
     } else {
-        outcome
+        ConnOutcome::Dropped
     }
 }
 
@@ -373,7 +379,7 @@ impl SessionManager {
         profile: SshProfile,
         size: TerminalSize,
     ) -> AppResult<TerminalSession> {
-        self.start_owned_session(app_handle, profile, size, None)
+        self.start_owned_session(app_handle, profile, size, None, None)
     }
 
     pub fn start_background_session(
@@ -390,6 +396,7 @@ impl SessionManager {
                 rows: 40,
             },
             Some(conversation.to_string()),
+            None,
         )
     }
 
@@ -399,13 +406,18 @@ impl SessionManager {
         profile: SshProfile,
         size: TerminalSize,
         conversation: Option<String>,
+        restart: Option<(&str, &watch::Receiver<bool>)>,
     ) -> AppResult<TerminalSession> {
-        let session_id = create_session_id();
+        let status = if restart.is_some() {
+            SessionStatus::Reconnecting
+        } else {
+            SessionStatus::Connecting
+        };
+        let session_id = restart.map_or_else(create_session_id, |(id, _)| id.to_owned());
         let profile_id = profile.id.clone();
         let title = profile.name.clone();
         let (tx, rx) = mpsc::channel(256);
         let (closed_tx, closed) = watch::channel(false);
-        let output = Arc::new(Mutex::new(String::new()));
         let mut registry = self.sessions.lock().map_err(lock_error)?;
         if let Some(owner) = &conversation {
             let hidden = registry.values().filter(|session| session.hidden());
@@ -433,21 +445,24 @@ impl SessionManager {
             touched: Instant::now(),
         });
         let hidden = background.is_some();
-        registry.insert(
-            session_id.clone(),
+        let output = register_session_worker(
+            &mut registry,
+            &session_id,
+            restart,
             SessionHandle {
                 kind: TerminalSessionKind::Ssh,
                 profile_id: profile.id.clone(),
                 title: title.clone(),
                 tx,
                 closed,
-                output: output.clone(),
+                closing: false,
+                output: Arc::new(Mutex::new(String::new())),
                 output_changed: Arc::new(Notify::new()),
                 input_revision: 0,
-                status: SessionStatus::Connecting,
+                status: status.clone(),
                 background,
             },
-        );
+        )?;
         drop(registry);
 
         if hidden {
@@ -481,13 +496,9 @@ impl SessionManager {
         let sessions = self.sessions.clone();
         let pool = self.pool.clone();
         let task_session_id = session_id.clone();
+        let worker_status = status.clone();
         tauri::async_runtime::spawn(async move {
-            emit_status(
-                &app_handle,
-                &task_session_id,
-                SessionStatus::Connecting,
-                None,
-            );
+            emit_status(&app_handle, &task_session_id, worker_status, None);
 
             let result = run_ssh_session(
                 app_handle.clone(),
@@ -509,12 +520,7 @@ impl SessionManager {
                 );
             }
 
-            if let Ok(mut sessions) = sessions.lock()
-                && let Some(session) = sessions.remove(&task_session_id)
-            {
-                session.output_changed.notify_waiters();
-            }
-            let _ = closed_tx.send(true);
+            finish_session_worker(&sessions, &task_session_id, closed_tx);
         });
 
         Ok(TerminalSession {
@@ -522,7 +528,7 @@ impl SessionManager {
             kind: TerminalSessionKind::Ssh,
             profile_id,
             title,
-            status: SessionStatus::Connecting,
+            status,
         })
     }
 
@@ -531,36 +537,50 @@ impl SessionManager {
         app_handle: AppHandle,
         size: TerminalSize,
     ) -> AppResult<TerminalSession> {
-        let session_id = create_session_id();
+        self.spawn_local_session(app_handle, size, None)
+    }
+
+    fn spawn_local_session(
+        &self,
+        app_handle: AppHandle,
+        size: TerminalSize,
+        restart: Option<(&str, &watch::Receiver<bool>)>,
+    ) -> AppResult<TerminalSession> {
+        let status = if restart.is_some() {
+            SessionStatus::Reconnecting
+        } else {
+            SessionStatus::Connecting
+        };
+        let session_id = restart.map_or_else(create_session_id, |(id, _)| id.to_owned());
         let title = local_shell_title();
         let (tx, rx) = mpsc::channel(256);
         let (closed_tx, closed) = watch::channel(false);
-        let output = Arc::new(Mutex::new(String::new()));
-        self.sessions.lock().map_err(lock_error)?.insert(
-            session_id.clone(),
+        let mut registry = self.sessions.lock().map_err(lock_error)?;
+        let output = register_session_worker(
+            &mut registry,
+            &session_id,
+            restart,
             SessionHandle {
                 kind: TerminalSessionKind::Local,
                 profile_id: "local".to_string(),
                 title: title.clone(),
                 tx,
                 closed,
-                output: output.clone(),
+                closing: false,
+                output: Arc::new(Mutex::new(String::new())),
                 output_changed: Arc::new(Notify::new()),
                 input_revision: 0,
-                status: SessionStatus::Connecting,
+                status: status.clone(),
                 background: None,
             },
-        );
+        )?;
 
+        drop(registry);
         let sessions = self.sessions.clone();
         let task_session_id = session_id.clone();
+        let worker_status = status.clone();
         thread::spawn(move || {
-            emit_status(
-                &app_handle,
-                &task_session_id,
-                SessionStatus::Connecting,
-                None,
-            );
+            emit_status(&app_handle, &task_session_id, worker_status, None);
 
             let result = run_local_session(
                 app_handle.clone(),
@@ -579,12 +599,7 @@ impl SessionManager {
                 );
             }
 
-            if let Ok(mut sessions) = sessions.lock()
-                && let Some(session) = sessions.remove(&task_session_id)
-            {
-                session.output_changed.notify_waiters();
-            }
-            let _ = closed_tx.send(true);
+            finish_session_worker(&sessions, &task_session_id, closed_tx);
         });
 
         Ok(TerminalSession {
@@ -592,7 +607,7 @@ impl SessionManager {
             kind: TerminalSessionKind::Local,
             profile_id: "local".to_string(),
             title,
-            status: SessionStatus::Connecting,
+            status,
         })
     }
 
@@ -601,7 +616,7 @@ impl SessionManager {
         let handle = sessions
             .get_mut(session_id)
             .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
-        queue_session_input(handle, data)
+        queue_session_input(handle, data, true)
     }
 
     pub(crate) fn read_input_snapshot(&self, session_id: &str) -> AppResult<TerminalInputSnapshot> {
@@ -667,39 +682,84 @@ impl SessionManager {
 
     pub fn resize_session(&self, session_id: &str, size: TerminalSize) -> AppResult<()> {
         let tx = self.session_tx(session_id)?;
+        if tx.is_closed() {
+            return Ok(());
+        }
         tx.try_send(SessionCommand::Resize(size))
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
     }
 
     pub async fn close_session(&self, session_id: &str) -> AppResult<()> {
-        let Some(handle) = self
-            .sessions
-            .lock()
-            .map_err(lock_error)?
-            .get(session_id)
-            .cloned()
-        else {
-            return Ok(());
+        let handle = {
+            let mut sessions = self.sessions.lock().map_err(lock_error)?;
+            let Some(handle) = sessions.get_mut(session_id) else {
+                return Ok(());
+            };
+            handle.closing = true;
+            handle.clone()
         };
-        // Closing must not be dropped when the input queue is full. Do not
-        // acknowledge it until the worker has actually released its resources.
-        tokio::time::timeout(Duration::from_secs(10), async move {
-            let mut closed = handle.closed;
-            if !*closed.borrow() {
-                let _ = handle.tx.send(SessionCommand::Close).await;
-                closed.wait_for(|done| *done).await.map_err(|_| {
-                    AppError::new("session_close_error", "终端清理失败，请重试关闭。")
-                })?;
+        let result = stop_session_worker(&handle).await;
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        if let Some(current) = sessions.get_mut(session_id)
+            && current.closed.same_channel(&handle.closed)
+        {
+            if result.is_ok() {
+                sessions.remove(session_id);
+            } else {
+                current.closing = false;
             }
-            Ok(())
-        })
-        .await
-        .map_err(|_| AppError::new("session_close_timeout", "终端尚未完成关闭，请稍后重试。"))?
+        }
+        result
     }
 
-    /// Stop an in-progress grace-period reconnect for a session (it settles as
-    /// disconnected instead of continuing to retry).
+    pub fn reconnect_target(&self, session_id: &str) -> AppResult<TerminalSession> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get(session_id)
+            .filter(|handle| !handle.hidden() && !handle.closing)
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        Ok(handle.descriptor(session_id))
+    }
+
+    pub async fn reconnect_session(
+        &self,
+        app_handle: AppHandle,
+        session_id: &str,
+        profile: Option<SshProfile>,
+        size: TerminalSize,
+    ) -> AppResult<()> {
+        let handle = {
+            let sessions = self.sessions.lock().map_err(lock_error)?;
+            let handle = sessions
+                .get(session_id)
+                .filter(|handle| !handle.hidden() && !handle.closing)
+                .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+            if matches!(
+                handle.status,
+                SessionStatus::Connecting
+                    | SessionStatus::Reconnecting
+                    | SessionStatus::Disconnecting
+            ) {
+                return Ok(());
+            }
+            handle.clone()
+        };
+        stop_session_worker(&handle).await?;
+        let restart = Some((session_id, &handle.closed));
+        match profile {
+            Some(profile) => self.start_owned_session(app_handle, profile, size, None, restart)?,
+            None => self.spawn_local_session(app_handle, size, restart)?,
+        };
+        Ok(())
+    }
+
     pub fn cancel_reconnect(&self, session_id: &str) -> AppResult<()> {
+        if !matches!(
+            self.reconnect_target(session_id)?.status,
+            SessionStatus::Reconnecting
+        ) {
+            return Ok(());
+        }
         let tx = self.session_tx(session_id)?;
         tx.try_send(SessionCommand::CancelReconnect)
             .map_err(|error| AppError::new("session_send_error", error.to_string()))
@@ -836,145 +896,102 @@ impl SessionManager {
     }
 }
 
+fn register_session_worker(
+    sessions: &mut HashMap<String, SessionHandle>,
+    id: &str,
+    restart: Option<(&str, &watch::Receiver<bool>)>,
+    mut handle: SessionHandle,
+) -> AppResult<Arc<Mutex<String>>> {
+    if let Some((_, worker)) = restart {
+        let previous = sessions
+            .get(id)
+            .filter(|previous| {
+                !previous.closing
+                    && previous.closed.same_channel(worker)
+                    && *previous.closed.borrow()
+            })
+            .ok_or_else(|| AppError::new("session_changed", "终端已关闭或正在重新连接。"))?;
+        handle.output = previous.output.clone();
+        handle.output_changed = previous.output_changed.clone();
+        // A command approved for the previous shell cannot run in a new PTY.
+        handle.input_revision = previous.input_revision.wrapping_add(1);
+    }
+    let output = handle.output.clone();
+    sessions.insert(id.to_owned(), handle);
+    Ok(output)
+}
+
+fn finish_session_worker(
+    sessions: &Mutex<HashMap<String, SessionHandle>>,
+    id: &str,
+    closed: watch::Sender<bool>,
+) {
+    if let Ok(mut sessions) = sessions.lock()
+        && let Some(session) = sessions.get(id)
+    {
+        session.output_changed.notify_waiters();
+        if session.hidden() {
+            sessions.remove(id);
+        }
+    }
+    closed.send_replace(true);
+}
+
+async fn stop_session_worker(handle: &SessionHandle) -> AppResult<()> {
+    let mut closed = handle.closed.clone();
+    // Do not lose Close when the input queue is full. Wait for the worker to
+    // release its PTY before removing or restarting the retained session.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        if !*closed.borrow() {
+            let _ = handle.tx.send(SessionCommand::Close).await;
+            closed
+                .wait_for(|done| *done)
+                .await
+                .map_err(|_| AppError::new("session_close_error", "终端清理失败，请重试关闭。"))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| AppError::new("session_close_timeout", "终端尚未完成关闭，请稍后重试。"))?
+}
+
 async fn run_ssh_session(
     app_handle: AppHandle,
     session_id: String,
     profile: SshProfile,
-    size: TerminalSize,
+    mut size: TerminalSize,
     mut rx: mpsc::Receiver<SessionCommand>,
     output: Arc<Mutex<String>>,
     pool: SshConnectionPool,
 ) -> AppResult<()> {
-    let mut size = size;
-    // Grace window + backoff are armed only after the first successful connect
-    // drops; a failure on the very first attempt is a hard error (as before).
-    let mut grace_deadline: Option<Instant> = None;
-    let mut backoff = RECONNECT_BACKOFF_BASE;
-
-    loop {
-        match connect_and_run(
-            &app_handle,
-            &session_id,
-            &profile,
-            &mut size,
-            &mut rx,
-            &output,
-            &pool,
-        )
-        .await
-        {
-            Ok(ConnOutcome::Closed) => {
-                emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
-                return Ok(());
-            }
-            Ok(ConnOutcome::ShellExited) => {
-                emit_status(&app_handle, &session_id, SessionStatus::Exited, None);
-                return Ok(());
-            }
-            Ok(ConnOutcome::Dropped) => {
-                if is_background(app_handle.clone(), &session_id) {
-                    emit_status(
-                        &app_handle,
-                        &session_id,
-                        SessionStatus::Disconnected,
-                        Some("后台连接已断开；请重新连接并确认目标资产。".into()),
-                    );
-                    return Ok(());
-                }
-                // A live session dropped — start a fresh grace window.
-                grace_deadline = None;
-                backoff = RECONNECT_BACKOFF_BASE;
-            }
-            Err(error) => {
-                if crate::jumpserver::is_target(&profile.id)
-                    && (error.code.starts_with("jumpserver_")
-                        && !matches!(
-                            error.code.as_str(),
-                            "jumpserver_network" | "jumpserver_server" | "jumpserver_rate_limit"
-                        )
-                        || error.code == "auth_error")
-                {
-                    // Approval, revoked permissions and expired identity need
-                    // user action; retrying cannot authorize them.
-                    return Err(error);
-                }
-                if error.code == "auth_prompt_cancelled" {
-                    emit_status(
-                        &app_handle,
-                        &session_id,
-                        SessionStatus::Disconnected,
-                        Some("SSH 多因子认证已取消。".to_string()),
-                    );
-                    return Ok(());
-                }
-                if grace_deadline.is_none() {
-                    // Initial connection failure: surfaced as Failed by the caller.
-                    return Err(error);
-                }
-                // A reconnect attempt failed; keep counting toward the deadline.
-            }
-        }
-
-        let deadline = *grace_deadline.get_or_insert_with(|| Instant::now() + RECONNECT_GRACE);
-        if Instant::now() >= deadline {
-            emit_status(
-                &app_handle,
-                &session_id,
-                SessionStatus::Failed,
-                Some("重连超时，连接已断开。".to_string()),
-            );
-            return Ok(());
-        }
-
-        emit_status(
-            &app_handle,
-            &session_id,
-            SessionStatus::Reconnecting,
-            Some("连接已断开，正在尝试重连…".to_string()),
-        );
-
-        // Wait out the backoff, but stay responsive to close / cancel; a resize
-        // during the wait updates the size the reconnected PTY will request.
-        let wait = backoff.min(deadline.saturating_duration_since(Instant::now()));
-        let sleep = tokio::time::sleep(wait);
-        tokio::pin!(sleep);
-        let mut cancelled = false;
-        loop {
-            tokio::select! {
-                _ = &mut sleep => break,
-                command = rx.recv() => match command {
-                    Some(SessionCommand::Close) | None => {
-                        emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
-                        return Ok(());
-                    }
-                    Some(SessionCommand::CancelReconnect) => {
-                        cancelled = true;
-                        break;
-                    }
-                    Some(SessionCommand::Resize(new_size)) => size = new_size,
-                    Some(SessionCommand::Input(_)) => {}
-                    Some(SessionCommand::ZmodemResponse { .. })
-                    | Some(SessionCommand::ZmodemConflictResponse { .. })
-                    | Some(SessionCommand::CancelZmodem { .. }) => {}
-                },
-            }
-        }
-        if cancelled {
-            emit_status(
-                &app_handle,
-                &session_id,
-                SessionStatus::Disconnected,
-                Some("已取消重连。".to_string()),
-            );
-            return Ok(());
-        }
-        backoff = (backoff * 2).min(RECONNECT_BACKOFF_MAX);
-    }
+    let (status, message) = match connect_and_run(
+        &app_handle,
+        &session_id,
+        &profile,
+        &mut size,
+        &mut rx,
+        &output,
+        &pool,
+    )
+    .await
+    {
+        Ok(ConnOutcome::Closed) => (SessionStatus::Disconnected, None),
+        Ok(ConnOutcome::ShellExited) => (SessionStatus::Exited, None),
+        Ok(ConnOutcome::Dropped) => (SessionStatus::Disconnected, Some("SSH 连接已断开。".into())),
+        Err(error) if error.code == "auth_prompt_cancelled" => (
+            SessionStatus::Disconnected,
+            Some("SSH 多因子认证已取消。".into()),
+        ),
+        Err(error) => return Err(error),
+    };
+    emit_status(&app_handle, &session_id, status, message);
+    Ok(())
 }
 
 enum SshReadEvent {
     Data(Vec<u8>),
     ExtendedData(Vec<u8>),
+    End(ShellChannelEnd),
 }
 
 struct ZmodemFile {
@@ -1118,7 +1135,7 @@ struct ZmodemInputGate {
     deadline: Instant,
     release_at: Option<Instant>,
     recovery_sent: bool,
-    queued_input: VecDeque<String>,
+    queued_input: VecDeque<(String, bool)>,
     queued_bytes: usize,
 }
 
@@ -1158,12 +1175,12 @@ impl ZmodemInputGate {
             .is_some_and(|instant| instant <= Instant::now())
     }
 
-    fn queue(&mut self, data: String) -> bool {
+    fn queue(&mut self, data: String, interactive: bool) -> bool {
         if self.queued_bytes.saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
             return false;
         }
         self.queued_bytes += data.len();
-        self.queued_input.push_back(data);
+        self.queued_input.push_back((data, interactive));
         true
     }
 }
@@ -1193,10 +1210,6 @@ fn rearm_zmodem_probes_for_input(
 /// user closes it, the remote shell exits cleanly, or the transport drops.
 /// The read side runs in its own task (keeping the decode loop intact); the
 /// write side is driven from a select loop so it can react to a drop.
-// Every parameter is a distinct piece of per-attempt state that the reconnect
-// loop owns and re-supplies on each retry; bundling them into a struct would
-// only move the same fields behind an extra indirection.
-#[allow(clippy::too_many_arguments)]
 async fn connect_and_run(
     app_handle: &AppHandle,
     session_id: &str,
@@ -1230,24 +1243,34 @@ async fn connect_and_run(
     };
     tokio::pin!(acquire);
     let mut early_input = String::new();
+    let mut exit_intent = ShellExitIntent::default();
     let transport = loop {
         tokio::select! {
             result = &mut acquire => break result?,
             command = rx.recv() => match command {
                 Some(SessionCommand::Resize(new_size)) => *size = new_size,
-                Some(SessionCommand::Input(data)) => {
+                Some(SessionCommand::Input { data, interactive }) => {
                     if crate::jumpserver::is_target(&profile.id) { continue; }
                     if early_input.len().saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
                         return Err(AppError::new("session_input_limit", "连接期间输入过多，请等待连接完成。"));
                     }
                     early_input.push_str(&data);
+                    exit_intent.observe(&data, interactive);
                 }
                 Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => return Ok(ConnOutcome::Closed),
                 _ => {}
             }
         }
     };
-    let (channel, _channel_lease) = transport.open_session_channel().await?;
+    let (channel, _channel_lease) = match transport.open_session_channel().await {
+        Ok(channel) => channel,
+        Err(error) => {
+            if transport.is_closed().await {
+                transport.invalidate_terminal().await;
+            }
+            return Err(error);
+        }
+    };
     channel
         .request_pty(
             true,
@@ -1274,9 +1297,9 @@ async fn connect_and_run(
     // prompt, so we intentionally do not nudge the shell.
     let (mut reader, mut writer) = channel.split();
     let (read_tx, mut read_rx) = mpsc::channel::<SshReadEvent>(16);
-    let (drop_tx, mut drop_rx) = oneshot::channel::<bool>();
     let read_task = tauri::async_runtime::spawn(async move {
-        let mut clean_exit = false;
+        let mut end = ShellChannelEnd::TransportLost;
+        let mut saw_eof = false;
         while let Some(message) = reader.wait().await {
             match message {
                 ChannelMsg::Data { data } => {
@@ -1297,14 +1320,27 @@ async fn connect_and_run(
                         break;
                     }
                 }
-                ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. } => {
-                    clean_exit = true;
+                ChannelMsg::ExitStatus { .. } => end = ShellChannelEnd::ExitStatus,
+                ChannelMsg::ExitSignal { .. } => end = ShellChannelEnd::ExitSignal,
+                ChannelMsg::Eof => saw_eof = true,
+                ChannelMsg::Close => {
+                    if matches!(end, ShellChannelEnd::TransportLost) {
+                        end = ShellChannelEnd::Close;
+                    }
+                    break;
                 }
-                ChannelMsg::Eof | ChannelMsg::Close => break,
                 _ => {}
             }
+            if saw_eof
+                && matches!(
+                    end,
+                    ShellChannelEnd::ExitStatus | ShellChannelEnd::ExitSignal
+                )
+            {
+                break;
+            }
         }
-        let _ = drop_tx.send(clean_exit);
+        let _ = read_tx.send(SshReadEvent::End(end)).await;
     });
 
     let sink = OutputSink::new(app_handle.clone(), session_id.to_string(), output.clone());
@@ -1315,22 +1351,16 @@ async fn connect_and_run(
     let mut transfer: Option<ActiveZmodem> = None;
     let mut download: Option<ActiveZmodemDownload> = None;
     let mut input_gate: Option<ZmodemInputGate> = None;
-    let mut pending_command = String::new();
-    let mut close_requested = false;
-    let mut channel_closed_without_status = false;
+    let mut channel_end = ShellChannelEnd::TransportLost;
     let outcome = 'connection: loop {
         if input_gate.as_ref().is_some_and(ZmodemInputGate::ready) {
             let mut gate = input_gate.take().expect("ready input gate exists");
-            while let Some(data) = gate.queued_input.pop_front() {
+            while let Some((data, interactive)) = gate.queued_input.pop_front() {
                 rearm_zmodem_probes_for_input(&data, &mut probe, &mut download_probe);
-                close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                 if writer.data_bytes(normalize_input(&data)).await.is_err() {
-                    break 'connection if close_requested {
-                        ConnOutcome::ShellExited
-                    } else {
-                        ConnOutcome::Dropped
-                    };
+                    break 'connection ConnOutcome::Dropped;
                 }
+                exit_intent.observe(&data, interactive);
             }
         }
         if transfer
@@ -1505,7 +1535,7 @@ async fn connect_and_run(
 
         tokio::select! {
             command = rx.recv() => match command {
-                Some(SessionCommand::Input(data)) => {
+                Some(SessionCommand::Input { data, interactive }) => {
                     if let Some(active) = transfer.as_mut() {
                         if active.awaiting_selection && data.contains('\u{3}') {
                             let detection_id = active.detection_id.clone();
@@ -1565,16 +1595,16 @@ async fn connect_and_run(
                                 break ConnOutcome::Dropped;
                             }
                             gate.release_at = Some(Instant::now() + ZMODEM_SHELL_SETTLE);
-                        } else if !gate.queue(data) {
+                        } else if !gate.queue(data, interactive) {
                             sink.push("\r\n输入过长，文件传输结束后待发送的内容已达到上限。\r\n");
                         }
                         continue;
                     }
                     rearm_zmodem_probes_for_input(&data, &mut probe, &mut download_probe);
-                    close_requested |= input_requests_clean_exit(&mut pending_command, &data);
                     if writer.data_bytes(normalize_input(&data)).await.is_err() {
-                        break if close_requested { ConnOutcome::ShellExited } else { ConnOutcome::Dropped };
+                        break ConnOutcome::Dropped;
                     }
+                    exit_intent.observe(&data, interactive);
                 }
                 Some(SessionCommand::ZmodemResponse { detection_id, paths }) => {
                     if let Some(active) = download.as_mut().filter(|active| {
@@ -1773,7 +1803,7 @@ async fn connect_and_run(
                         *size = new_size;
                     }
                 }
-                Some(SessionCommand::Close) | None => {
+                Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => {
                     if let Some(mut active) = transfer.take() {
                         if active.awaiting_selection {
                             emit_zmodem_status(
@@ -1837,7 +1867,6 @@ async fn connect_and_run(
                     let _ = writer.close().await;
                     break ConnOutcome::Closed;
                 }
-                Some(SessionCommand::CancelReconnect) => {}
             },
             event = read_rx.recv() => match event {
                 Some(SshReadEvent::ExtendedData(data)) => {
@@ -1992,21 +2021,12 @@ async fn connect_and_run(
                         }
                     }
                 }
-                None => {
-                    channel_closed_without_status = true;
+                Some(SshReadEvent::End(end)) => {
+                    channel_end = end;
                     break ConnOutcome::Dropped;
                 }
+                None => break ConnOutcome::Dropped,
             },
-            result = &mut drop_rx => {
-                break match result {
-                    Ok(true) => ConnOutcome::ShellExited,
-                    _ if close_requested => ConnOutcome::ShellExited,
-                    _ => {
-                        channel_closed_without_status = true;
-                        ConnOutcome::Dropped
-                    },
-                };
-            }
             _ = tokio::time::sleep(flush_wait) => {
                 sink.flush();
             }
@@ -2180,9 +2200,14 @@ async fn connect_and_run(
     read_task.abort();
     sink.flush();
     let transport_closed = transport.is_closed().await;
-    let outcome = classify_channel_end(outcome, channel_closed_without_status, transport_closed);
-    if matches!(&outcome, ConnOutcome::Dropped) && transport_closed {
-        transport.invalidate().await;
+    let outcome = match outcome {
+        ConnOutcome::Dropped => {
+            classify_channel_end(channel_end, exit_intent.is_recent(), transport_closed)
+        }
+        other => other,
+    };
+    if transport_closed {
+        transport.invalidate_terminal().await;
     }
     Ok(outcome)
 }
@@ -3107,12 +3132,15 @@ fn run_local_session(
     emit_status(&app_handle, &session_id, SessionStatus::Connected, None);
 
     let mut shell_exited = false;
+    let mut user_requested_exit = false;
+    let mut exit_intent = ShellExitIntent::default();
     let io_result = (|| -> AppResult<()> {
-        for data in pending_input {
+        for (data, interactive) in pending_input {
             writer
                 .write_all(data.as_bytes())
                 .and_then(|_| writer.flush())
                 .map_err(local_terminal_error)?;
+            exit_intent.observe(&data, interactive);
         }
 
         loop {
@@ -3126,19 +3154,21 @@ fn run_local_session(
                 Ok(Some(command)) => command,
                 Ok(None) => break,
                 Err(_) => {
-                    if child.try_wait().map_err(local_terminal_error)?.is_some() {
+                    if let Some(status) = child.try_wait().map_err(local_terminal_error)? {
                         shell_exited = true;
+                        user_requested_exit = status.signal().is_none() && exit_intent.is_recent();
                         break;
                     }
                     continue;
                 }
             };
             match command {
-                SessionCommand::Input(data) => {
+                SessionCommand::Input { data, interactive } => {
                     writer
                         .write_all(data.as_bytes())
                         .and_then(|_| writer.flush())
                         .map_err(local_terminal_error)?;
+                    exit_intent.observe(&data, interactive);
                 }
                 SessionCommand::ZmodemResponse { .. }
                 | SessionCommand::ZmodemConflictResponse { .. }
@@ -3148,12 +3178,10 @@ fn run_local_session(
                         .resize(pty_size(&size))
                         .map_err(local_terminal_error)?;
                 }
-                SessionCommand::Close => {
+                SessionCommand::Close | SessionCommand::CancelReconnect => {
                     emit_status(&app_handle, &session_id, SessionStatus::Disconnecting, None);
                     break;
                 }
-                // Local sessions never reconnect, so this is a no-op.
-                SessionCommand::CancelReconnect => {}
             }
         }
         Ok(())
@@ -3172,13 +3200,13 @@ fn run_local_session(
     drop(reader_thread);
     flushing.store(false, Ordering::Relaxed);
     let _ = flusher_thread.join();
-    // Drain anything the reader buffered after the last tick, so the status
-    // event below cannot overtake it.
-    sink.flush();
+    // Drain the old PTY before reporting its final status. A reader retained
+    // by a detached job must not write into a replacement shell's history.
+    sink.finish();
     emit_status(
         &app_handle,
         &session_id,
-        if shell_exited {
+        if user_requested_exit {
             SessionStatus::Exited
         } else {
             SessionStatus::Disconnected
@@ -3227,7 +3255,7 @@ fn terminate_local_processes(
 fn wait_for_initial_local_resize(
     mut size: TerminalSize,
     rx: &mut mpsc::Receiver<SessionCommand>,
-) -> Option<(TerminalSize, Vec<String>)> {
+) -> Option<(TerminalSize, Vec<(String, bool)>)> {
     let started = Instant::now();
     let mut pending_input = Vec::new();
 
@@ -3237,12 +3265,13 @@ fn wait_for_initial_local_resize(
                 size = next_size;
                 break;
             }
-            Ok(SessionCommand::Input(data)) => pending_input.push(data),
+            Ok(SessionCommand::Input { data, interactive }) => {
+                pending_input.push((data, interactive))
+            }
             Ok(SessionCommand::ZmodemResponse { .. })
             | Ok(SessionCommand::ZmodemConflictResponse { .. })
             | Ok(SessionCommand::CancelZmodem { .. }) => {}
-            Ok(SessionCommand::Close) => return None,
-            Ok(SessionCommand::CancelReconnect) => {}
+            Ok(SessionCommand::Close | SessionCommand::CancelReconnect) => return None,
             Err(mpsc::error::TryRecvError::Disconnected) => return None,
             Err(mpsc::error::TryRecvError::Empty)
                 if started.elapsed() >= LOCAL_INITIAL_RESIZE_WAIT =>
@@ -3597,6 +3626,7 @@ fn remaining_otp_attempts(failed_attempts: usize) -> Option<usize> {
 struct PendingOutput {
     text: String,
     last_flush: Option<Instant>,
+    finished: bool,
 }
 
 impl PendingOutput {
@@ -3605,6 +3635,9 @@ impl PendingOutput {
     /// window has elapsed (which includes the first chunk after an idle gap, so
     /// interactive echo is never held back).
     fn push(&mut self, text: &str) -> bool {
+        if self.finished {
+            return false;
+        }
         self.text.push_str(text);
         self.text.len() >= OUTPUT_FLUSH_BYTES
             || self
@@ -3677,12 +3710,20 @@ impl OutputSink {
 
     /// Emit everything buffered so far as a single event.
     fn flush(&self) {
-        let Some(text) = self
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut pending| pending.take())
-        else {
+        if let Ok(mut pending) = self.pending.lock() {
+            self.emit_pending(&mut pending);
+        }
+    }
+
+    fn finish(&self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.finished = true;
+            self.emit_pending(&mut pending);
+        }
+    }
+
+    fn emit_pending(&self, pending: &mut PendingOutput) {
+        let Some(text) = pending.take() else {
             return;
         };
         push_session_output(&self.output, &text);
@@ -3861,6 +3902,30 @@ fn normalize_input(data: &str) -> Vec<u8> {
     data.as_bytes().to_vec()
 }
 
+#[derive(Default)]
+struct ShellExitIntent {
+    pending_command: String,
+    requested_at: Option<Instant>,
+}
+
+impl ShellExitIntent {
+    fn observe(&mut self, data: &str, interactive: bool) {
+        if !interactive {
+            *self = Self::default();
+            return;
+        }
+        self.requested_at =
+            input_requests_clean_exit(&mut self.pending_command, data).then(Instant::now);
+    }
+
+    fn is_recent(&self) -> bool {
+        // A nested shell can accept exit and return to its parent. Do not
+        // carry that intent forward to a later, unrelated channel close.
+        self.requested_at
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(5))
+    }
+}
+
 /// Detect an intentional interactive-shell exit before the SSH channel closes.
 /// PTY shells are not required to send `ExitStatus` (some servers only send
 /// EOF/Close), so relying on the channel message alone can incorrectly enter
@@ -3961,11 +4026,12 @@ fn terminal_modes() -> &'static [(Pty, u32)] {
 }
 
 fn create_session_id() -> String {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
-    format!("session-{millis}")
+        .map_or(0, |duration| duration.as_millis());
+    format!("session-{millis}-{id}")
 }
 
 pub fn ssh_error(error: impl std::fmt::Display) -> AppError {
@@ -3983,7 +4049,11 @@ fn local_terminal_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("local_terminal_error", error.to_string())
 }
 
-fn queue_session_input(handle: &mut SessionHandle, data: String) -> AppResult<()> {
+fn queue_session_input(
+    handle: &mut SessionHandle,
+    data: String,
+    interactive: bool,
+) -> AppResult<()> {
     if *handle.closed.borrow() {
         return Err(AppError::new(
             "session_closed",
@@ -3992,7 +4062,7 @@ fn queue_session_input(handle: &mut SessionHandle, data: String) -> AppResult<()
     }
     handle
         .tx
-        .try_send(SessionCommand::Input(data))
+        .try_send(SessionCommand::Input { data, interactive })
         .map_err(|_| AppError::new("session_send_error", "无法向终端发送输入，请稍后重试。"))?;
     handle.input_revision = handle.input_revision.wrapping_add(1);
     Ok(())
@@ -4012,7 +4082,7 @@ fn queue_approved_input(
             "确认期间终端已有新输入或输出，未发送内容。请重新读取终端并确认。",
         ));
     }
-    queue_session_input(handle, data)?;
+    queue_session_input(handle, data, false)?;
     // Announce input while holding the output lock, so resulting PTY output
     // cannot overtake the observer event in the UI's command/asset trackers.
     on_queued();
@@ -4056,6 +4126,7 @@ mod tests {
                 title: "JumpServer".into(),
                 tx,
                 closed,
+                closing: false,
                 output: Arc::new(Mutex::new("Welcome to JumpServer\nOpt> ".into())),
                 output_changed: Arc::new(tokio::sync::Notify::new()),
                 input_revision: 0,
@@ -4090,6 +4161,66 @@ mod tests {
     }
 
     #[test]
+    fn finished_terminal_keeps_its_id_and_scrollback_for_manual_restart() {
+        let (mut handle, _rx, closed) = interactive_test_session();
+        handle.status = crate::models::terminal::SessionStatus::Exited;
+        let old_worker = handle.closed.clone();
+        let old_output = handle.output.clone();
+        let sessions = Mutex::new(std::collections::HashMap::from([("pty".into(), handle)]));
+        super::finish_session_worker(&sessions, "pty", closed);
+
+        let mut sessions = sessions.lock().unwrap();
+        let retained = &sessions["pty"];
+        assert!(matches!(
+            retained.status,
+            crate::models::terminal::SessionStatus::Exited
+        ));
+        assert!(*old_worker.borrow());
+        let old_input = input_snapshot(retained);
+
+        let (replacement, _rx, _closed) = interactive_test_session();
+        let restart = Some(("pty", &old_worker));
+        let output =
+            super::register_session_worker(&mut sessions, "pty", restart, replacement).unwrap();
+        assert!(Arc::ptr_eq(&output, &old_output));
+        assert_eq!(sessions.len(), 1);
+        assert_ne!(
+            input_snapshot(&sessions["pty"]).input_revision,
+            old_input.input_revision
+        );
+
+        let (duplicate, _rx, _closed) = interactive_test_session();
+        assert!(super::register_session_worker(&mut sessions, "pty", restart, duplicate).is_err());
+    }
+
+    #[test]
+    fn closing_terminal_cannot_be_restarted_and_private_worker_is_removed() {
+        let (mut closing, _rx, closed) = interactive_test_session();
+        closing.closing = true;
+        let old_worker = closing.closed.clone();
+        let (private, _private_rx, private_closed) = background_test_session();
+        let sessions = Mutex::new(std::collections::HashMap::from([
+            ("closing".into(), closing),
+            ("private".into(), private),
+        ]));
+        super::finish_session_worker(&sessions, "closing", closed);
+        super::finish_session_worker(&sessions, "private", private_closed);
+
+        let mut sessions = sessions.lock().unwrap();
+        assert!(!sessions.contains_key("private"));
+        let (replacement, _rx, _closed) = interactive_test_session();
+        assert!(
+            super::register_session_worker(
+                &mut sessions,
+                "closing",
+                Some(("closing", &old_worker)),
+                replacement
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn background_session_is_private_and_reports_real_status() {
         let (mut handle, _rx, _closed) = background_test_session();
         assert!(handle.hidden());
@@ -4117,7 +4248,7 @@ mod tests {
             let snapshot = input_snapshot(&handle);
             queue_approved_input(&mut handle, &snapshot, format!("{input}\r"), || {}).unwrap();
             assert!(
-                matches!(rx.try_recv().unwrap(), SessionCommand::Input(data) if data == format!("{input}\r"))
+                matches!(rx.try_recv().unwrap(), SessionCommand::Input { data, interactive: false } if data == format!("{input}\r"))
             );
             *handle.output.lock().unwrap() = output.into();
         }
@@ -4138,9 +4269,9 @@ mod tests {
         assert!(handle.ai_access("chat-a", true).is_err());
         assert!(handle.begin_background_close("chat-a").is_err());
         assert!(rx.try_recv().is_err());
-        queue_session_input(&mut handle, "manual\r".into()).unwrap();
+        queue_session_input(&mut handle, "manual\r".into(), true).unwrap();
         assert!(
-            matches!(rx.try_recv().unwrap(), SessionCommand::Input(data) if data == "manual\r")
+            matches!(rx.try_recv().unwrap(), SessionCommand::Input { data, interactive: true } if data == "manual\r")
         );
     }
 
@@ -4200,7 +4331,10 @@ mod tests {
             let snapshot = input_snapshot(&handle);
             queue_approved_input(&mut handle, &snapshot, format!("{input}\r"), || {}).unwrap();
             match rx.try_recv().unwrap() {
-                SessionCommand::Input(data) => assert_eq!(data, format!("{input}\r")),
+                SessionCommand::Input {
+                    data,
+                    interactive: false,
+                } => assert_eq!(data, format!("{input}\r")),
                 _ => panic!("selection must use PTY input"),
             }
             handle.output.lock().unwrap().push_str(output);
@@ -4225,7 +4359,7 @@ mod tests {
         );
         assert!(rx.try_recv().is_err());
         let snapshot = input_snapshot(&handle);
-        queue_session_input(&mut handle, "manual input".into()).unwrap();
+        queue_session_input(&mut handle, "manual input".into(), true).unwrap();
         let _ = rx.try_recv().unwrap();
         assert_eq!(
             queue_approved_input(&mut handle, &snapshot, "10.20.30.40\r".into(), || {})
@@ -4277,19 +4411,48 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_channel_closing_does_not_drop_other_sessions_on_live_transport() {
+    fn only_a_requested_shell_exit_can_close_the_terminal() {
+        use super::ShellChannelEnd::*;
+
+        for end in [ExitStatus, ExitSignal, Close, TransportLost] {
+            assert!(matches!(
+                classify_channel_end(end, false, false),
+                ConnOutcome::Dropped
+            ));
+        }
         assert!(matches!(
-            classify_channel_end(ConnOutcome::Dropped, true, false),
+            classify_channel_end(ExitStatus, true, false),
             ConnOutcome::ShellExited
         ));
         assert!(matches!(
-            classify_channel_end(ConnOutcome::Dropped, true, true),
+            classify_channel_end(Close, true, false),
+            ConnOutcome::ShellExited
+        ));
+        assert!(matches!(
+            classify_channel_end(Close, true, true),
             ConnOutcome::Dropped
         ));
         assert!(matches!(
-            classify_channel_end(ConnOutcome::Dropped, false, false),
+            classify_channel_end(ExitSignal, true, false),
             ConnOutcome::Dropped
         ));
+        assert!(matches!(
+            classify_channel_end(TransportLost, true, true),
+            ConnOutcome::Dropped
+        ));
+    }
+
+    #[test]
+    fn exit_intent_does_not_survive_later_input_or_an_unrelated_close() {
+        let mut intent = super::ShellExitIntent::default();
+        intent.observe("exit\r", false);
+        assert!(!intent.is_recent());
+        intent.observe("exit\r", true);
+        assert!(intent.is_recent());
+        intent.observe("pwd\r", true);
+        assert!(!intent.is_recent());
+        intent.requested_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(6));
+        assert!(!intent.is_recent());
     }
 
     #[cfg(unix)]
@@ -4356,7 +4519,7 @@ mod tests {
         filter.finish_download_transfer();
         let mut gate = ZmodemInputGate::new(ZmodemFinishKind::Download);
         for key in ["s", "z", "\r"] {
-            assert!(gate.queue(key.to_string()));
+            assert!(gate.queue(key.to_string(), true));
         }
 
         let first = filter.feed(b"\r\x8aO");
@@ -4374,7 +4537,13 @@ mod tests {
         gate.observe_output(&prompt, &filter);
         assert_eq!(prompt, b"user@host:~$ ");
         assert!(!gate.ready());
-        assert_eq!(gate.queued_input.into_iter().collect::<String>(), "sz\r");
+        assert_eq!(
+            gate.queued_input
+                .into_iter()
+                .map(|(data, _)| data)
+                .collect::<String>(),
+            "sz\r"
+        );
     }
 
     #[test]
@@ -4382,7 +4551,7 @@ mod tests {
         let mut filter = ZmodemFinishFilter::default();
         filter.finish_transfer();
         let mut gate = ZmodemInputGate::new(ZmodemFinishKind::Upload);
-        assert!(gate.queue("s".to_string()));
+        assert!(gate.queue("s".to_string(), true));
         let trailer = filter.feed(b"\r\x8a\x11");
         gate.observe_output(&trailer, &filter);
         assert!(!gate.ready());

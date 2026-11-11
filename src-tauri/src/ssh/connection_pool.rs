@@ -339,11 +339,11 @@ impl SshConnectionPool {
 
         if should_connect {
             self.inner.auth_prompts.begin_profile_attempt(&profile.id);
-            let mut pending = PendingGrantConnection {
+            let mut pending = PendingConnection {
                 pool: self.clone(),
                 key: key.clone(),
                 entry: entry.clone(),
-                armed: crate::jumpserver::is_target(&profile.id),
+                armed: true,
             };
             let result = self.connect_entry(key, entry, profile, owner).await;
             pending.armed = false;
@@ -402,7 +402,6 @@ impl SshConnectionPool {
         match result {
             Ok(handle) => {
                 *entry.handle.lock().await = Some(handle);
-                entry.transport_closed.store(false, Ordering::Release);
                 entry.set_state(EntryState::Ready).await;
                 self.emit_state(&key, ConnectionState::Ready, None);
                 Ok(self.lease(key, entry, owner))
@@ -437,6 +436,7 @@ impl SshConnectionPool {
             entry.remote_forwards.clone(),
         );
         let mut handle = connect_ssh_with_client(config, profile, client).await?;
+        entry.transport_closed.store(false, Ordering::Release);
         self.inner.diagnostics.record_transport_opened();
         if let Err(error) = authenticate(&mut handle, profile, &self.inner.auth_prompts).await {
             let _ = handle
@@ -468,7 +468,6 @@ impl SshConnectionPool {
                 {
                     Ok(handle) => {
                         *entry.handle.lock().await = Some(handle);
-                        entry.transport_closed.store(false, Ordering::Release);
                         entry.reconnect_started.store(false, Ordering::Release);
                         entry.set_state(EntryState::Ready).await;
                         pool.emit_state(&key, ConnectionState::Ready, None);
@@ -574,7 +573,7 @@ impl PoolEntry {
             ready: Notify::new(),
             leases: AtomicUsize::new(0),
             channels: AtomicUsize::new(0),
-            transport_closed: AtomicBool::new(false),
+            transport_closed: AtomicBool::new(true),
             reconnect_started: AtomicBool::new(false),
             last_released: StdMutex::new(Instant::now()),
             remote_forwards: Arc::new(Mutex::new(HashMap::new())),
@@ -791,6 +790,17 @@ impl ConnectionLease {
     /// channel owners keep their own failure handling, while the next acquire
     /// creates a fresh authenticated transport instead of reusing this one.
     pub async fn invalidate(&self) {
+        self.invalidate_with_recovery(true).await;
+    }
+
+    /// A terminal disconnect does not start a new login. Registered remote
+    /// forwards still need recovery because they have no local accept loop.
+    pub async fn invalidate_terminal(&self) {
+        let recover = !self.entry.remote_forwards.lock().await.is_empty();
+        self.invalidate_with_recovery(recover).await;
+    }
+
+    async fn invalidate_with_recovery(&self, recover: bool) {
         if self
             .entry
             .reconnect_started
@@ -800,13 +810,20 @@ impl ConnectionLease {
             return;
         }
 
-        if crate::jumpserver::is_target(&self.entry.profile.id) {
+        let grant_expired = crate::jumpserver::is_target(&self.entry.profile.id);
+        if grant_expired || !recover {
             // A consumed one-time grant must never be reauthenticated by the pool.
-            self.entry
-                .set_state(EntryState::Failed(PoolFailure::from_error(&AppError::new(
+            let error = if grant_expired {
+                AppError::new(
                     "jumpserver_grant_expired",
                     "JumpServer 连接已中断，需要重新授权。",
-                ))))
+                )
+            } else {
+                AppError::new("ssh_transport_unavailable", "SSH 连接已断开。")
+            };
+            self.pool.remove_if_same(&self.key, &self.entry).await;
+            self.entry
+                .set_state(EntryState::Failed(PoolFailure::from_error(&error)))
                 .await;
             if let Some(handle) = self.entry.handle.lock().await.take() {
                 let _ = handle
@@ -814,7 +831,6 @@ impl ConnectionLease {
                     .await;
             }
             self.entry.record_transport_closed(&self.diagnostics);
-            self.pool.remove_if_same(&self.key, &self.entry).await;
             return;
         }
         self.entry.set_state(EntryState::Reconnecting).await;
@@ -836,13 +852,13 @@ impl ConnectionLease {
 
 // Cancellation can happen during TOFU, authentication or a socket handshake.
 // Such an attempt has no lease yet, so ConnectionLease::drop cannot clean it.
-struct PendingGrantConnection {
+struct PendingConnection {
     pool: SshConnectionPool,
     key: ConnectionKey,
     entry: Arc<PoolEntry>,
     armed: bool,
 }
-impl Drop for PendingGrantConnection {
+impl Drop for PendingConnection {
     fn drop(&mut self) {
         if !self.armed {
             return;
@@ -851,13 +867,13 @@ impl Drop for PendingGrantConnection {
         let key = self.key.clone();
         let entry = self.entry.clone();
         tauri::async_runtime::spawn(async move {
+            pool.remove_if_same(&key, &entry).await;
             entry
                 .set_state(EntryState::Failed(PoolFailure::from_error(&AppError::new(
-                    "jumpserver_cancelled",
-                    "资产连接已取消。",
+                    "ssh_connection_cancelled",
+                    "SSH 连接已取消。",
                 ))))
                 .await;
-            pool.remove_if_same(&key, &entry).await;
             if let Some(handle) = entry.handle.lock().await.take() {
                 let _ = handle
                     .disconnect(Disconnect::ByApplication, "", "English")

@@ -14,6 +14,8 @@ use crate::{
     storage::artifactory_repository::{ArtifactoryProfile, SaveArtifactoryProfileRequest},
 };
 
+pub mod transfers;
+
 fn trusted(app: &AppHandle, webview: &Webview) -> AppResult<()> {
     browser::trusted(webview)?;
     if app.state::<AppState>().app_lock.status()?.locked {
@@ -223,6 +225,88 @@ pub async fn artifactory_item_info(
     Ok(info)
 }
 
+fn validate_property(key: &str, values: &[String]) -> AppResult<()> {
+    if key.trim().is_empty()
+        || key.len() > 255
+        || key.chars().any(char::is_control)
+        || values.is_empty()
+        || values.iter().any(|value| {
+            value.is_empty() || value.len() > 2400 || value.chars().any(char::is_control)
+        })
+    {
+        return Err(AppError::new(
+            "artifactory_property",
+            "属性名称或值无效；名称最多 255 字节，单个值最多 2400 字节。",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn artifactory_set_property(
+    app: AppHandle,
+    webview: Webview,
+    profile_id: String,
+    repo: String,
+    path: String,
+    key: String,
+    values: Vec<String>,
+) -> AppResult<()> {
+    trusted(&app, &webview)?;
+    if path.is_empty() {
+        return Err(AppError::new("artifactory_path", "请选择文件或目录。"));
+    }
+    validate_property(&key, &values)?;
+    let parts = item_segments(&repo, &path)?;
+    let mut segments = vec!["api", "metadata"];
+    segments.extend(parts.iter().map(String::as_str));
+    let props = serde_json::Map::from_iter([(key, serde_json::json!(values))]);
+    let response = request(&app, &profile_id, Method::PATCH, &segments)
+        .await?
+        .query(&[("recursiveProperties", "0")])
+        .json(&serde_json::json!({ "props": props }))
+        .send()
+        .await
+        .map_err(network_error)?;
+    checked(response).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn artifactory_delete_property(
+    app: AppHandle,
+    webview: Webview,
+    profile_id: String,
+    repo: String,
+    path: String,
+    key: String,
+) -> AppResult<()> {
+    trusted(&app, &webview)?;
+    if path.is_empty()
+        || key.trim().is_empty()
+        || key.len() > 255
+        || key.chars().any(char::is_control)
+    {
+        return Err(AppError::new(
+            "artifactory_property",
+            "属性名称或路径无效。",
+        ));
+    }
+    let parts = item_segments(&repo, &path)?;
+    let mut segments = vec!["api", "metadata"];
+    segments.extend(parts.iter().map(String::as_str));
+    let props = serde_json::Map::from_iter([(key, serde_json::Value::Null)]);
+    let response = request(&app, &profile_id, Method::PATCH, &segments)
+        .await?
+        .query(&[("recursiveProperties", "0")])
+        .json(&serde_json::json!({ "props": props }))
+        .send()
+        .await
+        .map_err(network_error)?;
+    checked(response).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn artifactory_upload(
     app: AppHandle,
@@ -332,5 +416,11 @@ mod tests {
         assert!(item_segments("repo/other", "file").is_err());
         let url = endpoint("https://example.jfrog.io", &["artifactory", "a b"]).unwrap();
         assert!(url.as_str().contains("a%20b"));
+    }
+
+    #[test]
+    fn property_values_validate_control_characters() {
+        assert!(validate_property("status", &["ready".to_string()]).is_ok());
+        assert!(validate_property("status", &["bad\nvalue".to_string()]).is_err());
     }
 }

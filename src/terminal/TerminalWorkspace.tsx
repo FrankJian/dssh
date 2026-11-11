@@ -33,6 +33,7 @@ interface TerminalWorkspaceProps {
    */
   onResize: (sessionId: string, size: { cols: number; rows: number }) => Promise<void> | void;
   onStartLocalSession: () => void;
+  onTerminalKey: (sessionId: string, event: KeyboardEvent) => boolean;
   onWrite: (sessionId: string, data: string) => Promise<void> | void;
   subscribeOutput: (sessionId: string, listener: TerminalOutputListener) => () => void;
 }
@@ -57,6 +58,7 @@ export function TerminalWorkspace({
   onFontSizeChange,
   onResize,
   onStartLocalSession,
+  onTerminalKey,
   onWrite,
   subscribeOutput,
 }: TerminalWorkspaceProps) {
@@ -89,6 +91,7 @@ export function TerminalWorkspace({
                 hasWallpaper={hasWallpaper}
                 isLocalShell={activeSession.kind === "local"}
                 rightClick={rightClick}
+                onKey={(event) => onTerminalKey(activeSession.id, event)}
                 onData={handleData}
                 onFontSizeChange={onFontSizeChange}
                 onResize={handleResize}

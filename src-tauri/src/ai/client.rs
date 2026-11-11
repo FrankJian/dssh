@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use genai::adapter::AdapterKind;
 use genai::chat::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponse, ContentPart, MessageContent,
@@ -9,6 +11,10 @@ use crate::{
     error::{AppError, AppResult},
     models::ai::{AiProtocol, AiProviderConfig},
 };
+
+const MODEL_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(300);
+const MODEL_REQUEST_BUDGET: Duration = Duration::from_secs(600);
+const MAX_MODEL_ATTEMPTS: u32 = 3;
 
 /// Resolve the endpoint, credentials and protocol explicitly for every request.
 pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
@@ -37,7 +43,7 @@ pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
         },
     );
 
-    let http_client = build_reqwest_client(&provider.proxy_url)?;
+    let http_client = build_http_client(&provider.proxy_url, None)?;
 
     let native = if provider.kind == AiProtocol::Anthropic {
         Some(super::anthropic::AnthropicClient {
@@ -74,58 +80,79 @@ impl AiClient {
         request: ChatRequest,
         options: Option<&ChatOptions>,
     ) -> AppResult<ChatResponse> {
-        let started = std::time::Instant::now();
-        for attempt in 1..=3 {
-            let outcome = self.exec_once(model, request.clone(), options).await;
-            match outcome {
-                Ok(response)
-                    if response
+        self.exec_chat_with_limits(
+            model,
+            request,
+            options,
+            MODEL_ATTEMPT_TIMEOUT,
+            MODEL_REQUEST_BUDGET,
+        )
+        .await
+    }
+
+    async fn exec_chat_with_limits(
+        &self,
+        model: &str,
+        request: ChatRequest,
+        options: Option<&ChatOptions>,
+        attempt_timeout: Duration,
+        request_budget: Duration,
+    ) -> AppResult<ChatResponse> {
+        let started = tokio::time::Instant::now();
+        let deadline = started + request_budget;
+        let mut timeout_retried = false;
+        for attempt in 1..=MAX_MODEL_ATTEMPTS {
+            let attempt_deadline = tokio::time::Instant::now() + attempt_timeout;
+            let outcome = tokio::time::timeout_at(
+                attempt_deadline.min(deadline),
+                self.exec_once(model, request.clone(), options),
+            )
+            .await;
+            let mut error = match outcome {
+                Ok(Ok(response)) => {
+                    if let Some(body) = response
                         .captured_raw_body
                         .as_ref()
-                        .is_some_and(|body| body.get("error").is_some()) =>
-                {
-                    let error = super::failure::http(
-                        200,
-                        &reqwest::header::HeaderMap::new(),
-                        &response.captured_raw_body.as_ref().unwrap().to_string(),
-                    );
-                    return Err(super::failure::describe(
-                        error,
-                        &self.provider,
-                        &request,
-                        options,
-                        started.elapsed().as_millis(),
-                        attempt,
-                    ));
-                }
-                Ok(response) if !response.content.is_empty() => return Ok(response),
-                Ok(_) => {
-                    return Err(super::failure::describe(
+                        .filter(|body| body.get("error").is_some())
+                    {
+                        super::failure::http(
+                            200,
+                            &reqwest::header::HeaderMap::new(),
+                            &body.to_string(),
+                        )
+                    } else if response.content.is_empty() {
                         super::failure::protocol(
                             "服务未返回文本或工具调用，可能已耗尽推理输出预算。",
-                        ),
-                        &self.provider,
-                        &request,
-                        options,
-                        started.elapsed().as_millis(),
-                        attempt,
-                    ));
+                        )
+                    } else {
+                        return Ok(response);
+                    }
                 }
-                Err(error) if attempt < 3 && super::failure::retryable(&error) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * u64::from(attempt)))
-                        .await;
-                }
-                Err(error) => {
-                    return Err(super::failure::describe(
-                        error,
-                        &self.provider,
-                        &request,
-                        options,
-                        started.elapsed().as_millis(),
-                        attempt,
-                    ));
+                Ok(Err(error)) => error,
+                Err(_) => super::failure::deadline_timeout(attempt_deadline >= deadline),
+            };
+            if attempt < MAX_MODEL_ATTEMPTS
+                && let Some(retry) = super::failure::retry_delay(&error, attempt, timeout_retried)
+                && tokio::time::Instant::now() + retry.delay < deadline
+            {
+                tokio::time::sleep(retry.delay).await;
+                if tokio::time::Instant::now() < deadline {
+                    timeout_retried |= retry.timeout;
+                    continue;
                 }
             }
+            if let Some(details) = error.details.as_mut() {
+                details["attemptTimeoutMs"] = serde_json::json!(attempt_timeout.as_millis());
+                details["requestBudgetMs"] = serde_json::json!(request_budget.as_millis());
+            }
+            return Err(super::failure::describe(
+                error,
+                &self.provider,
+                &request,
+                options,
+                started.elapsed().as_millis(),
+                attempt,
+            ));
         }
         unreachable!("bounded attempts always return")
     }
@@ -180,10 +207,16 @@ pub fn adapter_kind(protocol: AiProtocol) -> AdapterKind {
 }
 
 pub fn build_reqwest_client(proxy_url: &str) -> AppResult<reqwest::Client> {
+    build_http_client(proxy_url, Some(Duration::from_secs(180)))
+}
+
+fn build_http_client(proxy_url: &str, timeout: Option<Duration>) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(180));
+        .connect_timeout(Duration::from_secs(15));
+    if let Some(timeout) = timeout {
+        builder = builder.timeout(timeout);
+    }
     let trimmed = proxy_url.trim();
     if !trimmed.is_empty() {
         let proxy = reqwest::Proxy::all(trimmed)
@@ -269,6 +302,60 @@ mod tests {
     use genai::chat::{ChatOptions, ChatRequest, Tool, ToolResponse};
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn a_stalled_model_request_can_recover_without_leaving_the_total_budget() {
+        for recover in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                // The first connection stays open without sending a response.
+                let (_stalled, _) = listener.accept().await.unwrap();
+                if recover {
+                    let (mut retry, _) = listener.accept().await.unwrap();
+                    let mut buffer = [0; 4096];
+                    assert_ne!(retry.read(&mut buffer).await.unwrap(), 0);
+                    let body = r#"{"model":"test","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}]}"#;
+                    retry.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                } else {
+                    // A short total budget must not start another attempt.
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(350), listener.accept())
+                            .await
+                            .is_err()
+                    );
+                }
+            });
+            let provider: AiProviderConfig = serde_json::from_value(json!({
+                "id":"test", "label":"Test", "presetId":"custom", "baseUrl":format!("http://{address}/v1/"),
+                "model":"test", "kind":"openai-completions"
+            })).unwrap();
+            let client = build_client(&provider).unwrap();
+            let result = client
+                .exec_chat_with_limits(
+                    "test",
+                    ChatRequest::from_user("hello"),
+                    None,
+                    Duration::from_millis(200),
+                    if recover {
+                        Duration::from_secs(3)
+                    } else {
+                        Duration::from_millis(100)
+                    },
+                )
+                .await;
+            if recover {
+                assert_eq!(result.unwrap().first_text(), Some("recovered"));
+            } else {
+                let details = result.unwrap_err().details.unwrap();
+                assert_eq!(details["attempts"], 1);
+                assert_eq!(details["errorType"], "timeout");
+                assert_eq!(details["requestBudgetMs"], 100);
+                assert_eq!(details["cause"], "已达到本次模型请求的总等待上限。");
+            }
+            server.await.unwrap();
+        }
+    }
 
     #[test]
     fn endpoint_normalization_preserves_gateway_prefixes() {

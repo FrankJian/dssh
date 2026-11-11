@@ -1,4 +1,6 @@
 //! Model failures retain transport evidence, never full prompts or response dumps.
+use std::time::Duration;
+
 use super::diagnostics::{Redactor, network_error, safe_url, status_hint};
 use crate::{
     error::AppError,
@@ -111,10 +113,71 @@ pub fn protocol(cause: impl Into<String>) -> AppError {
     result
 }
 
-pub fn retryable(error: &AppError) -> bool {
-    error.details.as_ref().is_some_and(|details| {
-        matches!(details["httpStatus"].as_u64(), Some(502 | 503 | 504 | 529))
-    })
+pub fn deadline_timeout(total_budget: bool) -> AppError {
+    let mut result = AppError::new("ai_request_error", "等待模型服务响应超时。");
+    result.details = Some(json!({
+        "errorType": "timeout",
+        "cause": if total_budget { "已达到本次模型请求的总等待上限。" } else { "服务未在单次请求时限内返回完整响应。" }
+    }));
+    result
+}
+
+pub struct Retry {
+    pub delay: Duration,
+    pub timeout: bool,
+}
+
+pub fn retry_delay(error: &AppError, attempt: u32, timeout_retried: bool) -> Option<Retry> {
+    let details = error.details.as_ref()?;
+    let status = details["httpStatus"].as_u64();
+    let timeout = details["errorType"] == "timeout" || status == Some(408);
+    if timeout && timeout_retried {
+        return None;
+    }
+
+    let retry_after = details["responseHeaders"].get("retry-after").map(|value| {
+        // Wait only for short delta-seconds hints. An unsupported date or longer
+        // cooldown should surface the provider error rather than retry too soon.
+        value
+            .as_str()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| *seconds <= 30)
+            .map(Duration::from_secs)
+    });
+    if status == Some(429) {
+        let response = &details["responseError"];
+        let quota_exhausted = ["code", "type", "message"].iter().any(|field| {
+            let value = response[*field]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            [
+                "insufficient_quota",
+                "quota_exceeded",
+                "billing",
+                "insufficient_balance",
+                "exceeded your current quota",
+                "余额不足",
+                "额度用尽",
+            ]
+            .iter()
+            .any(|marker| value.contains(marker))
+        });
+        if quota_exhausted || retry_after.is_none() {
+            return None;
+        }
+    } else if !timeout && !matches!(status, Some(502 | 503 | 504 | 529)) {
+        return None;
+    }
+
+    let backoff = Duration::from_secs(u64::from(attempt));
+    let delay = match retry_after {
+        Some(hint) => backoff.max(hint?),
+        None => backoff,
+    };
+    Some(Retry { delay, timeout })
 }
 
 pub fn describe(
@@ -191,6 +254,39 @@ mod tests {
     use crate::ai::client::build_client;
     use genai::chat::{ChatOptions, ChatRequest};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn retries_respect_busy_hints_and_do_not_replay_permanent_failures() {
+        for (status, hint, code, expected) in [
+            (503, None, "", Some(2)),
+            (503, Some("5"), "", Some(5)),
+            (503, Some("60"), "", None),
+            (429, Some("4"), "rate_limit_exceeded", Some(4)),
+            (429, Some("4"), "insufficient_quota", None),
+            (429, None, "rate_limit_exceeded", None),
+            (429, Some("Wed, 11 Nov 2026 08:00:00 GMT"), "", None),
+            (401, Some("4"), "", None),
+            (400, None, "", None),
+        ] {
+            let mut headers = HeaderMap::new();
+            if let Some(hint) = hint {
+                headers.insert("retry-after", hint.parse().unwrap());
+            }
+            let error = http(
+                status,
+                &headers,
+                &json!({"error":{"code":code}}).to_string(),
+            );
+            assert_eq!(
+                retry_delay(&error, 2, false).map(|retry| retry.delay.as_secs()),
+                expected
+            );
+        }
+        for error in [deadline_timeout(false), http(408, &HeaderMap::new(), "")] {
+            assert!(retry_delay(&error, 1, false).is_some_and(|retry| retry.timeout));
+            assert!(retry_delay(&error, 2, true).is_none());
+        }
+    }
 
     #[test]
     fn long_echoed_header_is_redacted_before_diagnostic_truncation() {

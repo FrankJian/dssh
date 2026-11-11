@@ -21,6 +21,7 @@ import {
   onTerminalTransferConflict,
   onTerminalTransferStatus,
   readSshSessionOutput,
+  reconnectSshSession,
   respondZmodemPrompt,
   respondZmodemConflict,
   resizeSshSession,
@@ -43,8 +44,11 @@ const RECONNECT_ON_INPUT_STATUSES = new Set<TerminalSession["status"]>([
   "failed",
 ]);
 
-function shouldReconnectOnInput(session: TerminalSession | undefined): boolean {
-  return session?.kind === "ssh" && RECONNECT_ON_INPUT_STATUSES.has(session.status);
+// Leave the previous PTY's alternate screen and disable its mouse/focus reporting.
+const OFFLINE_TERMINAL_MODES = "\x1b[?1049l\x1b[?1000;1002;1003;1004;1006l";
+
+function reconnectHint(session: TerminalSession): string {
+  return session.kind === "ssh" ? "按任意键重新连接。" : "按任意键重新打开本地终端。";
 }
 
 /**
@@ -97,6 +101,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   const [commandActivity, setCommandActivity] = useState<ReadonlySet<string>>(() => new Set());
   const [targetAddresses, setTargetAddresses] = useState<Readonly<Record<string, string | null>>>({});
   const pendingZmodemPromptsRef = useRef(new Set<string>());
+  const terminalSizesRef = useRef(new Map<string, TerminalSize>());
   const manualReconnectsRef = useRef(new Set<string>());
   const activityTrackersRef = useRef(new Map<string, TerminalCommandActivityTracker>());
   const targetTrackersRef = useRef(new Map<string, TerminalTargetTracker>());
@@ -191,8 +196,8 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   }, []);
 
   // Terminal instances outlive the components that show them, so nothing else
-  // tears them down. Closing, reconnecting under a new id and detaching to
-  // another window all surface here as a session leaving the list.
+  // tears them down. Closing and detaching to another window both surface
+  // here as a session leaving the list.
   useEffect(() => {
     pruneTerminals(sessions.map((session) => session.id));
   }, [sessions]);
@@ -264,7 +269,13 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
         setTargetAddresses((current) => ({ ...hydratedAddresses, ...current }));
 
         if (loadedSessions.length > 0) {
-          setSessions(loadedSessions);
+          const currentSessions = loadedSessions.map(withLatestStatus);
+          for (const session of currentSessions) {
+            if (RECONNECT_ON_INPUT_STATUSES.has(session.status)) {
+              pushOutput(session.id, `${OFFLINE_TERMINAL_MODES}\r\n${reconnectHint(session)}\r\n`);
+            }
+          }
+          setSessions(currentSessions);
           setActiveSessionId(loadedSessions[0]?.id ?? null);
           return;
         }
@@ -286,7 +297,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     return () => {
       mounted = false;
     };
-  }, [targetTrackerForSession]);
+  }, [pushOutput, targetTrackerForSession, withLatestStatus]);
 
   useEffect(() => {
     const inputPromise = onTerminalInputObserved((event) => {
@@ -319,15 +330,19 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
         updateCommandActivity(event.sessionId, "idle");
         setTerminalConflicts((current) => current.filter((item) => item.sessionId !== event.sessionId));
       }
-      if (event.message) {
-        // Reconnect notices read as yellow, connected as green, failures as red.
+      const offline = RECONNECT_ON_INPUT_STATUSES.has(event.status);
+      if (offline) pushOutput(event.sessionId, OFFLINE_TERMINAL_MODES);
+      const session = sessionsRef.current.find((item) => item.id === event.sessionId);
+      const message = event.message ?? (event.status === "reconnecting" && session
+        ? session.kind === "ssh" ? "正在重新连接…" : "正在重新打开本地终端…"
+        : undefined);
+      if (message) {
         const color =
           event.status === "reconnecting" ? "33" : event.status === "connected" ? "32" : "31";
-        pushOutput(event.sessionId, `\r\n\x1b[${color}m${event.message}\x1b[0m\r\n`);
+        pushOutput(event.sessionId, `\r\n\x1b[${color}m${message}\x1b[0m\r\n`);
       }
-      const session = sessionsRef.current.find((item) => item.id === event.sessionId);
-      if (session && shouldReconnectOnInput({ ...session, status: event.status })) {
-        pushOutput(event.sessionId, "\r\n按任意键重新连接。\r\n");
+      if (session && offline) {
+        pushOutput(event.sessionId, `\r\n${reconnectHint(session)}\r\n`);
       }
     });
 
@@ -419,65 +434,30 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     setActiveSessionId(session.id);
   }, [targetTrackerForSession, trackerForSession, updateCommandActivity, withLatestStatus]);
 
-  const reconnectSession = useCallback(
-    async (sessionId: string) => {
-      if (manualReconnectsRef.current.has(sessionId)) {
-        return;
-      }
-      const target = buffersRef.current;
-      const existing = sessionsRef.current.find((session) => session.id === sessionId);
-      if (!existing) {
-        return;
-      }
+  const reconnectSession = useCallback(async (sessionId: string) => {
+    if (manualReconnectsRef.current.has(sessionId)) return;
+    manualReconnectsRef.current.add(sessionId);
+    try {
+      await reconnectSshSession(sessionId, terminalSizesRef.current.get(sessionId) ?? initialSize);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "终端重连失败，请重试。", "error");
+    } finally {
+      manualReconnectsRef.current.delete(sessionId);
+    }
+  }, []);
 
-      manualReconnectsRef.current.add(sessionId);
-      try {
-        const freshSession =
-          existing.kind === "ssh"
-            ? await startSshSession({ profileId: existing.profileId, size: initialSize })
-            : await startLocalSessionCommand({ size: initialSize });
-        const fresh = withLatestStatus(freshSession);
-
-        try {
-          await closeSshSession(sessionId);
-        } catch (error) {
-          // Do not hide a failed teardown behind a replacement terminal.
-          await closeSshSession(fresh.id).catch(() => undefined);
-          throw error;
-        }
-
-        target.delete(sessionId);
-        listenersRef.current.delete(sessionId);
-        activityTrackersRef.current.delete(sessionId);
-        targetTrackersRef.current.delete(sessionId);
-        setTargetAddresses((current) => {
-          if (!(sessionId in current)) return current;
-          const next = { ...current };
-          delete next[sessionId];
-          return next;
-        });
-        latestSessionStatusesRef.current.delete(sessionId);
-        setCommandActivity((current) => {
-          if (!current.has(sessionId)) return current;
-          const next = new Set(current);
-          next.delete(sessionId);
-          return next;
-        });
-        sessionsRef.current = sessionsRef.current.map((session) =>
-          session.id === sessionId ? fresh : session,
-        );
-        setSessions((currentSessions) =>
-          currentSessions.map((session) => (session.id === sessionId ? fresh : session)),
-        );
-        setActiveSessionId((currentActiveId) =>
-          currentActiveId === sessionId ? fresh.id : currentActiveId,
-        );
-      } finally {
-        manualReconnectsRef.current.delete(sessionId);
+  const handleTerminalKey = useCallback((sessionId: string, event: KeyboardEvent) => {
+    const status = latestSessionStatusesRef.current.get(sessionId)
+      ?? sessionsRef.current.find((session) => session.id === sessionId)?.status;
+    if (status && RECONNECT_ON_INPUT_STATUSES.has(status)) {
+      // Modifier keys can be the start of a workspace shortcut.
+      if (!event.repeat && !["Alt", "Control", "Meta", "Shift"].includes(event.key)) {
+        void reconnectSession(sessionId);
       }
-    },
-    [withLatestStatus],
-  );
+      return true;
+    }
+    return status === "exited" || status === "reconnecting" || manualReconnectsRef.current.has(sessionId);
+  }, [reconnectSession]);
 
   const cancelReconnect = useCallback((sessionId: string) => {
     void cancelReconnectCommand(sessionId).catch(() => {
@@ -523,24 +503,23 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   const writeToSession = useCallback(async (sessionId: string, data: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     if (!session) {
-      // The terminal view can emit one last input event while React swaps the
-      // disconnected session for its freshly connected replacement.
       return;
     }
-    if (shouldReconnectOnInput(session)) {
-      await reconnectSession(sessionId);
-      return;
-    }
+    const status = latestSessionStatusesRef.current.get(sessionId) ?? session.status;
+    if (RECONNECT_ON_INPUT_STATUSES.has(status) || status === "reconnecting"
+      || status === "exited" || status === "disconnecting" || manualReconnectsRef.current.has(sessionId)) return;
     updateCommandActivity(sessionId, trackerForSession(sessionId).observeInput(data));
     targetTrackerForSession(sessionId).observeInput(data);
     await writeSshSession({ data, sessionId });
-  }, [reconnectSession, targetTrackerForSession, trackerForSession, updateCommandActivity]);
+  }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const resizeSession = useCallback(async (sessionId: string, size: TerminalSize) => {
+    terminalSizesRef.current.set(sessionId, size);
     await resizeSshSession({ sessionId, size });
   }, []);
 
   const forgetSession = useCallback((sessionId: string) => {
+    terminalSizesRef.current.delete(sessionId);
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);
     activityTrackersRef.current.delete(sessionId);
@@ -591,6 +570,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     getBacklog,
     isSessionsLoaded,
     reconnectSession,
+    handleTerminalKey,
     resizeSession,
     sessions,
     terminalTransfers,
