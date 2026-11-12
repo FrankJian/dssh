@@ -3,7 +3,7 @@ import type { SshProfile } from "../models";
 import type { RdpConnectionProfile } from "../models/rdp";
 import type { SmbConnectionProfile } from "../models/smb";
 import type { IconName } from "../ui/Icon";
-import { isWindows } from "../platform.ts";
+import { supportsSmb } from "../models/smb.ts";
 
 /**
  * The connection-type catalogue is intentionally independent from SshProfile.
@@ -43,7 +43,7 @@ export interface ConnectionTypeOption {
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
   { available: true, description: "堡垒机授权资产目录与终端", icon: "stackedHexagon", id: "jumpserver", label: "JumpServer" },
   { available: true, description: "Windows 远程桌面（独立窗口）", icon: "monitor", id: "rdp", label: "RDP" },
-  { available: isWindows, description: "Windows 网络共享盘符映射", icon: "folder", id: "smb", label: "网络共享 (SMB)" },
+  { available: supportsSmb, description: "Windows 盘符映射与 macOS Finder 挂载", icon: "folder", id: "smb", label: "网络共享 (SMB)" },
   {
     available: true,
     description: "远程终端、文件管理与端口转发",

@@ -1,4 +1,5 @@
 import { connectionTypeForProfile, connectionTypeLabel, isJumpServerProfile, isSmbProfile, type ConnectionProfile } from "../ssh/connectionTypes.ts";
+import { smbConnectionAddress } from "../models/smb.ts";
 import type { PaletteItem } from "./CommandPalette";
 import { buildConnectionFolders, type ConnectionFolderNode } from "../ssh/connectionFolders.ts";
 
@@ -36,11 +37,11 @@ export function connectionActionPaletteItems(profiles: ConnectionProfile[], acti
   return profiles.flatMap((profile): PaletteItem[] => {
     const type = connectionTypeForProfile(profile);
     const label = connectionTypeLabel(type);
-    const address = isJumpServerProfile(profile) ? profile.coreUrl : isSmbProfile(profile) ? `${profile.sharePath} → ${profile.driveLetter}:` : `${profile.username}@${profile.host}:${profile.port}`;
-    const keywords = `${type} ${connectionSearchKeywords(profile)}`;
+    const address = isJumpServerProfile(profile) ? profile.coreUrl : isSmbProfile(profile) ? smbConnectionAddress(profile) : `${profile.username}@${profile.host}:${profile.port}`;
+    const keywords = `${type} ${connectionSearchKeywords(profile)} ${isSmbProfile(profile) ? profile.sharePath : ""}`;
     const openId = type === "ssh" ? `conn:${profile.id}` : `${type}:${profile.id}`;
     return [
-      { id: openId, label: `${type === "jumpserver" ? "打开资产" : type === "rdp" ? "远程桌面" : type === "sftp" ? "打开 SFTP" : type === "smb" ? "映射网络共享" : "连接 SSH"}：${profile.name}`,
+      { id: openId, label: `${type === "jumpserver" ? "打开资产" : type === "rdp" ? "远程桌面" : type === "sftp" ? "打开 SFTP" : type === "smb" ? "打开网络共享" : "连接 SSH"}：${profile.name}`,
         hint: address, icon: type === "jumpserver" ? "stackedHexagon" : type === "rdp" ? "monitor" : type === "sftp" || type === "smb" ? "folder" : "ssh",
         keywords: `${keywords} connect open 打开 连接`, run: () => actions.onOpen(profile) },
       { id: type === "ssh" ? `conn:edit:${profile.id}` : `${type}:edit:${profile.id}`, label: `编辑 ${label} 配置：${profile.name}`,

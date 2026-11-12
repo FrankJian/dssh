@@ -1,3 +1,7 @@
+import { isMacOS, isWindows } from "../platform.ts";
+
+export const supportsSmb = isMacOS || isWindows;
+
 export interface SmbProfile {
   id: string;
   name: string;
@@ -20,4 +24,7 @@ export type SmbConnectionProfile = SmbProfile & {
 
 export function smbConnectionProfile(profile: SmbProfile): SmbConnectionProfile {
   return { ...profile, protocol: "smb", host: profile.sharePath.split("\\")[2] ?? "", port: 445, username: "" };
+}
+export function smbConnectionAddress(profile: SmbProfile): string {
+  return isWindows ? `${profile.sharePath} → ${profile.driveLetter}:` : profile.sharePath;
 }

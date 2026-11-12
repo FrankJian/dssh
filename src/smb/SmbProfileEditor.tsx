@@ -1,3 +1,4 @@
+import { isMacOS } from "../platform";
 import { useState, type FormEvent } from "react";
 import type { SmbProfile } from "../models/smb";
 import { saveSmbProfile } from "../services/smbService";
@@ -44,11 +45,11 @@ export function SmbProfileEditor({ profile, clone, initialTags, initialFolder, a
         <button className="icon-button" type="button" aria-label="关闭编辑器" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>
       <form className="rdp-editor__form" onSubmit={submit}>
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
-        <p className="profile-form__hint">Windows 使用当前登录身份连接 SMB 共享。映射后会在文件资源管理器打开盘符；如需其他账户，请先在 Windows 凭据管理器配置。</p>
+        <p className="profile-form__hint">{isMacOS ? "Finder 会在需要时提示登录。连接后，可在 Finder 边栏推出共享卷。" : "Windows 使用当前登录身份连接 SMB 共享。映射后会在文件资源管理器打开盘符；如需其他账户，请先在 Windows 凭据管理器配置。"}</p>
         <ConnectionFolderField value={draft.folder} disabled={busy} onChange={(value) => field("folder", value)} />
         <label className="field"><span>名称</span><input autoFocus required maxLength={160} value={draft.name} onChange={(e) => field("name", e.target.value)} /></label>
-        <label className="field"><span>共享路径</span><input required spellCheck={false} placeholder={"\\\\server\\share"} value={draft.sharePath} onChange={(e) => field("sharePath", e.target.value)} /></label>
-        <label className="field"><span>映射盘符</span><input required maxLength={2} spellCheck={false} placeholder="Z:" value={draft.driveLetter} onChange={(e) => field("driveLetter", e.target.value)} /></label>
+        <label className="field"><span>共享路径</span><input required spellCheck={false} placeholder={isMacOS ? "smb://server/share" : "\\\\server\\share"} value={draft.sharePath} onChange={(e) => field("sharePath", e.target.value)} /></label>
+        {!isMacOS ? <label className="field"><span>映射盘符</span><input required maxLength={2} spellCheck={false} placeholder="Z:" value={draft.driveLetter} onChange={(e) => field("driveLetter", e.target.value)} /></label> : null}
         <TagInput value={draft.tags} suggestions={allTags} onChange={(tags) => field("tags", tags)} />
         <label className="field"><span>说明</span><textarea maxLength={4096} value={draft.description} onChange={(e) => field("description", e.target.value)} /></label>
         <footer className="rdp-editor__actions"><Button disabled={busy} onClick={onClose}>取消</Button>

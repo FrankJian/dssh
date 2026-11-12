@@ -12,7 +12,7 @@ export function SmbDeleteDialog({ profile, onClose, onDelete }: { profile: SmbPr
       onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
       <header className="profile-editor__topbar"><h2>删除网络共享配置</h2></header>
       <div className="rdp-editor__form">
-        <p>删除「{profile.name}」？已建立的 Windows 盘符映射不会自动断开。</p>
+        <p>删除「{profile.name}」？已连接的共享会保持挂载。</p>
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
         <footer className="rdp-editor__actions"><Button autoFocus disabled={busy} onClick={onClose}>取消</Button>
           <Button disabled={busy} onClick={async () => { setBusy(true); try { await onDelete(); } catch (e) { setError(e instanceof Error ? e.message : "删除失败。"); } finally { setBusy(false); } }}>{busy ? "正在删除…" : "删除连接"}</Button></footer>

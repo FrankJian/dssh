@@ -1,3 +1,4 @@
+import { smbConnectionAddress } from "../models/smb";
 import { ConnectionAddress } from "../ssh/ConnectionAddress";
 import { connectionTypeForProfile, connectionTypeLabel, isJumpServerProfile, isRdpProfile, isSmbProfile, type ConnectionProfile } from "../ssh/connectionTypes";
 import { profileIconName } from "../ssh/profileIcons";
@@ -41,7 +42,7 @@ export function EmptyTerminal({
             <ul className="terminal-empty__recent-list">
               {recentProfiles.map((profile) => {
                 const host = profile.host.includes(":") && !profile.host.startsWith("[") ? `[${profile.host}]` : profile.host;
-                const address = isJumpServerProfile(profile) ? profile.coreUrl : isSmbProfile(profile) ? `${profile.sharePath} → ${profile.driveLetter}:` : `${profile.username}@${host}:${profile.port}`;
+                const address = isJumpServerProfile(profile) ? profile.coreUrl : isSmbProfile(profile) ? smbConnectionAddress(profile) : `${profile.username}@${host}:${profile.port}`;
                 return (
                   <li key={profile.id}>
                     <button

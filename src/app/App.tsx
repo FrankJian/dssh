@@ -17,7 +17,7 @@ import { RdpConnectDialog } from "../rdp/RdpConnectDialog";
 import { RdpSessionList } from "../rdp/RdpSessionList";
 import type { RdpProfile } from "../models/rdp";
 import type { SmbProfile } from "../models/smb";
-import { smbConnectionProfile } from "../models/smb";
+import { smbConnectionProfile, supportsSmb } from "../models/smb";
 import { SmbProfileEditor } from "../smb/SmbProfileEditor";
 import { SmbDeleteDialog } from "../smb/SmbDeleteDialog";
 import { listSmbProfiles, saveSmbProfile, deleteSmbProfile, mapSmbProfile, unmapSmbProfile } from "../services/smbService";
@@ -91,7 +91,7 @@ import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
 import { ToastHost, toast } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
-import { isMacOS, isWindows } from "../platform";
+import { isMacOS } from "../platform";
 import {
   ActivityBar,
   type ActivityId,
@@ -486,7 +486,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   function connectManagedProfile(profile: ConnectionProfile) {
     if (isJumpServerProfile(profile)) { setJumpServerOpen(profile.id); recordUse(profile.id); setActiveActivity("connections"); }
     else if (isRdpProfile(profile)) openRdp(profile);
-    else if (isSmbProfile(profile)) void mapSmbProfile(profile.id).then(() => { recordUse(profile.id); toast(`${profile.driveLetter}: 已映射`, "success"); }).catch((e: Error) => toast(e.message, "error"));
+    else if (isSmbProfile(profile)) void mapSmbProfile(profile.id).then(() => { recordUse(profile.id); toast(isMacOS ? "已将连接请求交给 Finder。" : `${profile.driveLetter}: 已映射`, "success"); }).catch((e: Error) => toast(e.message, "error"));
     else if (profile.connectionType === "sftp") handleOpenSftpForProfile(profile); else handleConnectProfile(profile);
   }
   function editManagedProfile(profile: ConnectionProfile) {
@@ -1972,7 +1972,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
       { id: "act:new-rdp", label: "新建 RDP 远程桌面", hint: "连接", icon: "monitor", keywords: "windows remote desktop 远程桌面", run: () => setRdpEditor({ profile: null }) },
-      ...(isWindows ? [{ id: "act:new-smb", label: "新建网络共享映射", hint: "连接", icon: "folder" as const,
+      ...(supportsSmb ? [{ id: "act:new-smb", label: "新建网络共享", hint: "连接", icon: "folder" as const,
         keywords: "smb unc network drive 共享盘 映射盘符", run: () => setSmbEditor({ profile: null }) }] : []),
       ...rdp.sessions.filter((s) => s.status === "connected").map((session): PaletteItem => ({ id: `rdp-focus:${session.id}`, label: `打开桌面窗口 · ${session.title}`, hint: "活动会话", icon: "monitor", keywords: "rdp focus desktop", run: () => rdpAction(focusRdpSession(session.id)) })),
       { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },

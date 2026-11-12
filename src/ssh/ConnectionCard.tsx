@@ -1,3 +1,5 @@
+import { smbConnectionAddress } from "../models/smb";
+import { isMacOS } from "../platform";
 import { ConnectionAddress } from "./ConnectionAddress";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
@@ -21,9 +23,9 @@ export function ConnectionCard({
   const jumpserver = isJumpServerProfile(profile);
   const type = connectionTypeForProfile(profile);
   const typeLabel = connectionTypeLabel(type);
-  const actionLabel = jumpserver ? "打开资产" : type === "sftp" ? "打开 SFTP" : type === "smb" ? "映射并打开" : "连接";
+  const actionLabel = jumpserver ? "打开资产" : type === "sftp" ? "打开 SFTP" : type === "smb" ? (isMacOS ? "在 Finder 中打开" : "映射并打开") : "连接";
   const visibleTagCount = variant === "grid" ? 2 : 4;
-  const address = jumpserver ? profile.coreUrl : isSmbProfile(profile) ? `${profile.sharePath} → ${profile.driveLetter}:` : `${profile.username}@${profile.host}:${profile.port}`;
+  const address = jumpserver ? profile.coreUrl : isSmbProfile(profile) ? smbConnectionAddress(profile) : `${profile.username}@${profile.host}:${profile.port}`;
   const details = <>
     <ConnectionAddress address={address} />
     {profile.folder ? <span className="conn-card__folder" title={profile.folder}>

@@ -1,3 +1,4 @@
+import { isWindows } from "../platform";
 import type { ConnectionGroupRequest } from "../app/connectionPalette";
 import { RenameFolderDialog } from "./RenameFolderDialog";
 import { ConnectionFolderTree } from "./ConnectionFolderTree";
@@ -208,7 +209,7 @@ export function SessionManager({
         return true;
       }
       const haystack =
-        `${profile.name} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.folder ?? ""} ${profile.description ?? ""}`.toLowerCase();
+        `${profile.name} ${isSmbProfile(profile) ? profile.sharePath : ""} ${profile.username}@${profile.host}:${profile.port} ${profile.tags.join(" ")} ${profile.folder ?? ""} ${profile.description ?? ""}`.toLowerCase();
       return haystack.includes(normalizedQuery);
     });
   }, [profiles, normalizedQuery, isSearching, activeTypeFilter, activeScope, recentSet]);
@@ -288,7 +289,7 @@ export function SessionManager({
             variant={cardVariant}
             onConnect={() => onConnect(profile)}
             onOpenSftp={!isRdpProfile(profile) && !isJumpServerProfile(profile) && !isSmbProfile(profile) ? () => onOpenSftp(profile) : undefined}
-            onDisconnect={isSmbProfile(profile) ? () => onDisconnectSmb(profile) : undefined}
+            onDisconnect={isWindows && isSmbProfile(profile) ? () => onDisconnectSmb(profile) : undefined}
             onEdit={() => onEdit(profile)}
             onClone={() => onClone(profile)}
             onDelete={() => onDelete(profile)}

@@ -28,6 +28,8 @@ pub fn save_smb_profile(
 ) -> AppResult<SmbProfile> {
     trusted(&app, &webview)?;
     profile.normalize_and_validate()?;
+    #[cfg(target_os = "macos")]
+    crate::models::smb::finder_share_url(&profile.share_path)?;
     let repo = &app.state::<AppState>().profiles;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -80,14 +82,37 @@ pub async fn unmap_smb_profile(app: AppHandle, webview: Webview, id: String) -> 
         .map_err(|_| AppError::new("smb_task", "断开网络共享任务异常。"))?
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn map_share(profile: &SmbProfile) -> AppResult<()> {
+    let url = crate::models::smb::finder_share_url(&profile.share_path)?;
+    let status = std::process::Command::new("/usr/bin/open")
+        .args(["-b", "com.apple.finder", url.as_str()])
+        .status()
+        .map_err(|_| AppError::new("smb_finder", "无法打开 Finder。"))?;
+    if !status.success() {
+        return Err(AppError::new(
+            "smb_finder",
+            "无法在 Finder 中打开网络共享。",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn map_share(_: &SmbProfile) -> AppResult<()> {
     Err(AppError::new(
         "smb_unsupported",
-        "盘符映射仅在 Windows 上可用。",
+        "网络共享连接仅在 Windows 和 macOS 上可用。",
     ))
 }
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn unmap_share(_: &SmbProfile) -> AppResult<()> {
+    Err(AppError::new(
+        "smb_finder",
+        "请在 Finder 中推出共享卷以断开连接。",
+    ))
+}
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn unmap_share(_: &SmbProfile) -> AppResult<()> {
     Err(AppError::new(
         "smb_unsupported",
