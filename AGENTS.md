@@ -32,9 +32,10 @@
 - Treat backend error payloads as user-facing errors: use the project `AppError` conventions and normalize Tauri rejections in the frontend service layer.
 
 ## UI conventions
-- Visual identity is the **Graphite Glass** theme: cold graphite surfaces and fog-white text carry hierarchy; restrained ice blue is reserved for focus, selected state, links, and primary actions. All colors, spacing, radii, and metrics are semantic CSS variables in `src/theme/global.css` (dark default + light). Components reference tokens only — never literal colors. Glass classes may only be used on stable chrome and overlays; terminal, Monaco, and scroll-heavy file content stay unblurred. The terminal palette lives in `terminal/terminalTheme.ts`.
+- The current implementation uses **Graphite Glass**. Future page redesigns follow [`features/interface-redesign.md`](features/interface-redesign.md): softer, consistently rounded geometry, more refined backgrounds, restrained glass, and a future whole-app palette choice independent of light/dark appearance and terminal schemes. Do not treat the current cold graphite / ice-blue values or small radii as permanent redesign constraints.
+- All colors, spacing, radii, and metrics use semantic CSS variables in `src/theme/global.css`; components reference tokens only, never literal colors. Glass belongs on stable chrome and overlays; terminal, Monaco, and scroll-heavy file content stay unblurred. The terminal palette lives in `terminal/terminalTheme.ts`.
 - Terminal selection colors are kept close to the terminal background on purpose: xterm's WebGL renderer bakes the cell background into the glyph texture, so a high-contrast selection visibly changes how the text is antialiased. Don't "brighten" them without re-checking that.
-- Follow `.cursor/rules/design.mdc`: compact native IDE-style UI, minimal motion, no card/marketing styling.
+- Follow `.cursor/rules/design.mdc`: efficient desktop workflow, coherent rounded layout, restrained motion, and clear content hierarchy.
 - Use outlined icons through the existing `Icon` component (add new glyphs there); icon names should describe the glyph, not the feature that happens to use it.
 - Keep controls accessible: meaningful labels, keyboard-safe interactions, visible disabled states, and confirmations for irreversible actions.
 

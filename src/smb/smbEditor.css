@@ -1,0 +1,118 @@
+.smb-editor {
+  display: flex;
+  width: min(var(--smb-editor-width), 100%);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.smb-editor__header {
+  position: static;
+  height: var(--toolbar-height);
+  flex: 0 0 auto;
+  padding-inline: var(--space-5) var(--space-2);
+}
+
+.smb-editor__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.smb-editor__form {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.smb-editor__body {
+  display: grid;
+  min-height: 0;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+.smb-editor__endpoint {
+  display: flex;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.smb-editor__endpoint > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.smb-editor__endpoint > :nth-child(2) {
+  width: var(--smb-drive-width);
+}
+
+.smb-editor .smb-editor__path,
+.smb-editor .smb-editor__drive {
+  font-family: var(--font-mono);
+}
+
+.smb-editor__credentials {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+
+.smb-editor__credentials > svg {
+  flex: 0 0 auto;
+}
+
+.smb-editor__details {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.smb-editor__disclosure {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.smb-editor__disclosure:hover {
+  background: var(--bg-hover);
+}
+
+.smb-editor__disclosure:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.smb-editor__disclosure > :last-child {
+  margin-inline-start: auto;
+}
+
+.smb-editor__metadata:not([hidden]) {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+}
+
+.smb-editor__footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-modal-footer);
+}

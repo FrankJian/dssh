@@ -1,5 +1,7 @@
 # Graphite Glass（冷黑玻璃）主题改造任务
 
+> 本文记录上一轮主题任务与验收，不作为后续页面圆角、布局或应用整体配色的限制；新方向见 [`interface-redesign.md`](interface-redesign.md)。
+
 > 对应规格：[`graphite-glass-theme.md`](graphite-glass-theme.md)  
 > 状态：实现已完成，待统一人工验收  
 > 标记说明：`[x]` 表示代码、文档或小型自动化检查已完成；视觉、性能和跨平台人工验收保留为 `[ ]`。  

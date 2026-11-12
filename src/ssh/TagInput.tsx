@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Icon } from "../ui/Icon";
 
 interface TagInputProps {
+  inputId?: string;
+  placeholder?: string;
   value: string[];
   suggestions: string[];
   onChange: (tags: string[]) => void;
 }
 
-export function TagInput({ value, suggestions, onChange }: TagInputProps) {
+export function TagInput({ inputId, placeholder, value, suggestions, onChange }: TagInputProps) {
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +87,8 @@ export function TagInput({ value, suggestions, onChange }: TagInputProps) {
         <input
           aria-label="连接标签"
           className="tag-input__field"
+          id={inputId}
+          placeholder={value.length === 0 ? placeholder : undefined}
           onChange={(event) => {
             setInputValue(event.currentTarget.value);
             setIsOpen(true);

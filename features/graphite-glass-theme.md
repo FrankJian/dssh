@@ -2,6 +2,7 @@
 
 > 状态：已实现，待统一人工验收  
 > 类型：视觉主题与 CSS 材质重构  
+> 本文记录上一轮 Graphite Glass 实施范围与色值；后续页面重设计以 [`interface-redesign.md`](interface-redesign.md) 为准。
 > 参考图：仅提取冷黑配色、克制的蓝灰高亮和半透明层次，不复制其排版、终端壁纸、品牌或功能布局。  
 > 配套任务：[`graphite-glass-theme-tasks.md`](graphite-glass-theme-tasks.md)
 

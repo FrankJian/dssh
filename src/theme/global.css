@@ -142,6 +142,8 @@
   --sftp-toolbar-icon-size: 16px;
   --sftp-toolbar-button-size: 28px;
   --rdp-editor-width: 620px;
+  --smb-editor-width: 480px;
+  --smb-drive-width: 80px;
   --rdp-text-size: 12px;
   --rdp-caption-size: 11px;
   --rdp-disabled-opacity: 0.45;
