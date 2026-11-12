@@ -11,10 +11,12 @@ import {
   type LocalRoot,
 } from "../services/sftpService";
 import { Icon } from "../ui/Icon";
+import { FileEntryIcon } from "./FileEntryIcon";
 import { SelectMenu } from "../ui/SelectMenu";
 
 interface LocalFileTreeProps {
   activeFilePath: string | null;
+  initialRootPath?: string;
   onClose: () => void;
   onFileRemoved?: (path: string) => void;
   onFileRenamed?: (oldPath: string, newPath: string) => void;
@@ -39,31 +41,18 @@ function pathName(path: string): string {
   return trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1) || path;
 }
 
-function fileIcon(entry: LocalFileEntry) {
-  const extension = entry.name.split(".").pop()?.toLowerCase();
-  if (["js", "ts", "tsx", "jsx", "rs", "py", "go", "java", "c", "h", "cpp"].includes(extension ?? "")) {
-    return "fileCode" as const;
-  }
-  if (["md", "txt", "log", "yaml", "yml", "json", "toml", "xml"].includes(extension ?? "")) {
-    return "fileText" as const;
-  }
-  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(extension ?? "")) {
-    return "fileImage" as const;
-  }
-  return "file" as const;
-}
-
 /** Local counterpart of RemoteFileTree. It intentionally has no transfer or
  * drag/drop actions: the local terminal only needs browsing and editing. */
 export function LocalFileTree({
   activeFilePath,
+  initialRootPath,
   onClose,
   onFileRemoved,
   onFileRenamed,
   onOpenFile,
 }: LocalFileTreeProps) {
   const [rootPath, setRootPath] = useState("");
-  const [pathInput, setPathInput] = useState("");
+  const [pathInput, setPathInput] = useState(initialRootPath ?? "");
   const [roots, setRoots] = useState<LocalRoot[]>([]);
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [rootError, setRootError] = useState<string | null>(null);
@@ -75,7 +64,7 @@ export function LocalFileTree({
     setRootError(null);
     setDirectories({});
     try {
-      const target = requestedPath?.trim() || (await sftpLocalHome());
+      const target = requestedPath?.trim() ? requestedPath : await sftpLocalHome();
       const listing = await sftpLocalList(target);
       setRootPath(listing.path);
       setPathInput(listing.path);
@@ -89,9 +78,12 @@ export function LocalFileTree({
   }, []);
 
   useEffect(() => {
-    void loadRoot();
+    void loadRoot(initialRootPath);
+  }, [initialRootPath, loadRoot]);
+
+  useEffect(() => {
     void sftpLocalRoots().then(setRoots).catch(() => setRoots([]));
-  }, [loadRoot]);
+  }, []);
 
   useEffect(() => {
     if (!contextMenu) {
@@ -300,7 +292,7 @@ export function LocalFileTree({
             <span className="remote-file-tree__chevron" data-expanded={Boolean(childState?.expanded)}>
               {entry.isDir ? <Icon name="chevron-right" height="14" width="14" /> : null}
             </span>
-            <Icon name={entry.isDir ? "folder" : fileIcon(entry)} height="15" width="15" />
+            <FileEntryIcon name={entry.name} directory={entry.isDir} expanded={childState?.expanded} symlink={entry.isSymlink} />
             <span className="remote-file-tree__name">{entry.name}</span>
             {childState?.loading ? <span className="remote-file-tree__loading">读取中…</span> : null}
           </button>
@@ -334,6 +326,7 @@ export function LocalFileTree({
           ) : null}
           <input
             aria-label="本地根路径"
+            autoFocus={Boolean(initialRootPath)}
             onChange={(event) => setPathInput(event.currentTarget.value)}
             placeholder="输入本地根路径"
             value={pathInput}
@@ -374,7 +367,7 @@ export function LocalFileTree({
               <span className="remote-file-tree__chevron" data-expanded={Boolean(directories[rootPath]?.expanded)}>
                 <Icon name="chevron-right" height="14" width="14" />
               </span>
-              <Icon name="folder" height="15" width="15" />
+              <FileEntryIcon directory expanded={directories[rootPath]?.expanded} />
               <span className="remote-file-tree__name">{pathName(rootPath)}</span>
             </button>
             {renderDirectory(rootPath, 1)}

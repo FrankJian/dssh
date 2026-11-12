@@ -58,7 +58,7 @@ impl ProfileRepository {
                 });
             }
         }
-        for table in ["rdp_profiles", "jumpserver_profiles"] {
+        for table in ["rdp_profiles", "jumpserver_profiles", "smb_profiles"] {
             let mut statement = tx.prepare(&format!("SELECT id, profile_json FROM {table}"))?;
             for row in statement.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

@@ -1,5 +1,5 @@
 import { ConnectionAddress } from "./ConnectionAddress";
-import { profileIconName } from "./profileIcons";
+import { profileIconName, sftpConnectionIconName } from "./profileIcons";
 import { isJumpServerSource } from "../models/jumpserver";
 import { useMemo, useState, type ReactNode } from "react";
 import type { SshProfile, TerminalSession } from "../models";
@@ -7,8 +7,10 @@ import type { SessionStatus } from "../models/terminal";
 import { Icon } from "../ui/Icon";
 import { SectionHeader } from "../ui/SectionHeader";
 import { paneSessionIds, type PaneLayout } from "../terminal/usePaneLayout";
+import type { SftpTab } from "../app/useWorkspace";
+import { isOpenSshTerminal } from "../app/sftpTerminal";
 
-/** A live host in the active-session tree: a group of terminals sharing a target. */
+/** Terminal sessions and open SFTP tabs sharing a target. */
 export interface SessionNode {
   /** profileId for ssh nodes, "local" for the local-terminals group. */
   key: string;
@@ -17,7 +19,8 @@ export interface SessionNode {
   subtitle: string;
   profile: SshProfile | null;
   sessions: TerminalSession[];
-  status: SessionStatus;
+  sftpTabs: SftpTab[];
+  status: SessionStatus | null;
 }
 
 const LOCAL_KEY = "local";
@@ -32,21 +35,24 @@ function aggregateStatus(sessions: TerminalSession[]): SessionStatus {
   return sessions[0]?.status ?? "disconnected";
 }
 
-/** Group active terminal sessions into host nodes, preserving first-seen order. */
-function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): SessionNode[] {
-  const order: string[] = [];
-  const byKey = new Map<string, TerminalSession[]>();
-  for (const session of sessions) {
-    const key = session.kind === "ssh" ? session.profileId : LOCAL_KEY;
-    if (!byKey.has(key)) {
-      byKey.set(key, []);
-      order.push(key);
+function buildNodes(sessions: TerminalSession[], profiles: SshProfile[], sftpTabs: SftpTab[]): SessionNode[] {
+  const byKey = new Map<string, { sessions: TerminalSession[]; sftpTabs: SftpTab[] }>();
+  function groupFor(key: string) {
+    let group = byKey.get(key);
+    if (!group) {
+      group = { sessions: [], sftpTabs: [] };
+      byKey.set(key, group);
     }
-    byKey.get(key)!.push(session);
+    return group;
+  }
+  for (const session of sessions) {
+    groupFor(session.kind === "ssh" ? session.profileId : LOCAL_KEY).sessions.push(session);
+  }
+  for (const tab of sftpTabs) {
+    groupFor(tab.profileId).sftpTabs.push(tab);
   }
 
-  return order.map((key) => {
-    const nodeSessions = byKey.get(key)!;
+  return Array.from(byKey, ([key, group]) => {
     if (key === LOCAL_KEY) {
       return {
         key,
@@ -54,19 +60,19 @@ function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): Sessio
         title: "本地终端",
         subtitle: "",
         profile: null,
-        sessions: nodeSessions,
-        status: aggregateStatus(nodeSessions),
+        ...group,
+        status: aggregateStatus(group.sessions),
       };
     }
     const profile = profiles.find((p) => p.id === key) ?? null;
     return {
       key,
       kind: "ssh",
-      title: profile?.name ?? nodeSessions[0]?.title ?? "SSH",
+      title: profile?.name ?? group.sessions[0]?.title ?? group.sftpTabs[0]?.title ?? "SSH",
       subtitle: profile ? `${profile.username}@${profile.host}:${profile.port}` : isJumpServerSource(key) ? "经 KoKo · SSH 终端" : "",
       profile,
-      sessions: nodeSessions,
-      status: aggregateStatus(nodeSessions),
+      ...group,
+      status: group.sessions.length ? aggregateStatus(group.sessions) : null,
     };
   });
 }
@@ -74,15 +80,19 @@ function buildNodes(sessions: TerminalSession[], profiles: SshProfile[]): Sessio
 interface SessionTreeProps {
   remoteDesktops?: ReactNode;
   sessions: TerminalSession[];
+  sftpTabs: SftpTab[];
   terminalNames: Record<string, string>;
   paneNames: Record<string, string>;
   paneLayouts: PaneLayout[];
   activeSessionId: string | null;
-  isSftpActive: boolean;
+  activeSftpId: string | null;
   profiles: SshProfile[];
   onFocusTerminal: (sessionId: string) => void;
   onNewTerminal: (node: SessionNode) => void;
   onOpenSftp: (profile: SshProfile) => void;
+  onOpenSshTerminal: (profile: SshProfile) => void;
+  onFocusSftp: (tabId: string) => void;
+  onCloseSftp: (tabId: string) => void;
   onOpenForward: (node: SessionNode) => void;
   onOpenFileList: (node: SessionNode) => void;
   onCloseSession: (sessionId: string) => void;
@@ -97,15 +107,19 @@ interface SessionTreeProps {
 export function SessionTree({
   remoteDesktops,
   sessions,
+  sftpTabs,
   terminalNames,
   paneNames,
   paneLayouts,
   activeSessionId,
-  isSftpActive,
+  activeSftpId,
   profiles,
   onFocusTerminal,
   onNewTerminal,
   onOpenSftp,
+  onOpenSshTerminal,
+  onFocusSftp,
+  onCloseSftp,
   onOpenForward,
   onOpenFileList,
   onCloseSession,
@@ -115,8 +129,8 @@ export function SessionTree({
   onDisconnectNode,
   onOpenConnections,
 }: SessionTreeProps) {
-  const nodes = buildNodes(sessions, profiles);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const nodes = buildNodes(sessions, profiles, sftpTabs);
+  const [expandedNodes, setExpandedNodes] = useState(new Map<string, boolean>());
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
@@ -129,13 +143,8 @@ export function SessionTree({
     return result;
   }, [paneLayouts]);
 
-  function toggleNode(key: string) {
-    setExpandedNodes((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  function toggleNode(key: string, expand: boolean) {
+    setExpandedNodes((current) => new Map(current).set(key, expand));
   }
 
   function beginRename(session: TerminalSession, index: number) {
@@ -172,29 +181,40 @@ export function SessionTree({
         <div className="session-tree" role="tree" aria-label="活动会话">
           <div className="session-tree__section-head"><span className="session-tree__eyebrow">活动会话</span><span className="session-tree__section-count">{nodes.length}</span></div>
           {nodes.map((node) => {
-            const collapsed = !expandedNodes.has(node.key);
+            const hasSftp = node.sftpTabs.length > 0;
+            const hasTerminals = node.sessions.length > 0;
+            const sshShortcutProfile = hasSftp && !node.sessions.some(isOpenSshTerminal) ? node.profile : null;
+            const collapsed = !(expandedNodes.get(node.key) ?? hasSftp);
             const terminalWindows = node.sessions.filter((session) => {
               const layout = paneLayoutBySession.get(session.id);
               return !layout || layout.tabSessionId === session.id;
             });
             return (
               <div className="session-node session-node--terminal" key={node.key}
-                data-active={!isSftpActive && node.sessions.some(session => session.id === activeSessionId)}>
+                data-active={activeSftpId
+                  ? node.sftpTabs.some(tab => tab.id === activeSftpId)
+                  : node.sessions.some(session => session.id === activeSessionId)}>
                 <div className="session-node__row">
                   <button
                     className="session-node__disclosure"
                     aria-expanded={!collapsed}
-                    onClick={() => toggleNode(node.key)}
+                    onClick={() => toggleNode(node.key, collapsed)}
                     type="button"
                   >
                     <span className="session-node__host-icon">
-                      <Icon name={node.kind === "local" ? "terminalTool" : node.profile ? profileIconName(node.profile.icon) : "ssh"} height="18" width="18" />
-                      <span className="session-node__status" data-status={node.status} role="img" aria-label={STATUS_LABELS[node.status]} title={STATUS_LABELS[node.status]} />
+                      <Icon
+                        className={hasSftp && !hasTerminals ? "sftp-connection-icon" : undefined}
+                        name={node.kind === "local" ? "terminalTool" : hasTerminals ? profileIconName(node.profile?.icon) : sftpConnectionIconName(node.profile?.icon)}
+                        height="18"
+                        width="18"
+                      />
+                      {node.status ? <span className="session-node__status" data-status={node.status} role="img" aria-label={STATUS_LABELS[node.status]} title={STATUS_LABELS[node.status]} /> : null}
                     </span>
                     <span className="session-node__label">
                       <span className="session-node__heading">
                         <span className="session-node__title" title={node.title}>{node.title}</span>
-                        <span className="session-node__count" title={`${terminalWindows.length} 个终端窗口`} aria-label={`${terminalWindows.length} 个终端窗口`}>{terminalWindows.length}</span>
+                        {hasTerminals ? <span className="session-node__count" title={`${terminalWindows.length} 个终端窗口`} aria-label={`${terminalWindows.length} 个终端窗口`}>{terminalWindows.length}</span> : null}
+                        {hasSftp ? <span className="session-node__count" title={`${node.sftpTabs.length} 个 SFTP 标签`}>SFTP</span> : null}
                       </span>
                       {node.subtitle ? (
                         <ConnectionAddress address={node.subtitle} focusable={false} />
@@ -208,26 +228,36 @@ export function SessionTree({
 
                 {collapsed ? null : (
                   <div className="session-node__children">
-                    <div className="session-node__tools" role="group" aria-label={`${node.title} 的快捷操作`}>
-                      <button
+                    {hasTerminals || sshShortcutProfile ? <div className="session-node__tools" role="group" aria-label={`${node.title} 的快捷操作`}>
+                      {sshShortcutProfile ? (
+                        <button
+                          className="session-child"
+                          onClick={() => onOpenSshTerminal(sshShortcutProfile)}
+                          type="button"
+                        >
+                          <Icon name="terminalTool" height="15" width="15" />
+                          <span>打开 SSH 终端</span>
+                        </button>
+                      ) : null}
+                      {hasTerminals ? <button
                         className="session-child"
                         onClick={() => onNewTerminal(node)}
                         type="button"
                       >
                         <Icon name="plus" height="15" width="15" />
                         <span>新建终端</span>
-                      </button>
-                      {node.kind === "ssh" && node.profile ? (
+                      </button> : null}
+                      {node.kind === "ssh" && node.profile && !hasSftp ? (
                         <button
                           className="session-child"
                           onClick={() => onOpenSftp(node.profile!)}
                           type="button"
                         >
-                          <Icon name="folder" height="15" width="15" />
+                          <Icon name="serverFolder" height="16" width="16" />
                           <span>SFTP</span>
                         </button>
                       ) : null}
-                      {node.kind === "ssh" && node.profile ? (
+                      {hasTerminals && node.kind === "ssh" && node.profile ? (
                         <button
                           className="session-child"
                           onClick={() => onOpenForward(node)}
@@ -237,7 +267,7 @@ export function SessionTree({
                           <span>端口转发</span>
                         </button>
                       ) : null}
-                      {node.kind === "local" || (node.kind === "ssh" && node.profile) ? (
+                      {hasTerminals && (node.kind === "local" || (node.kind === "ssh" && node.profile)) ? (
                       <button
                         className="session-child"
                         onClick={() => onOpenFileList(node)}
@@ -248,13 +278,36 @@ export function SessionTree({
                       </button>
                       ) : null}
 
-                    </div>
-                    <div className="session-node__terminal-heading"><span>终端窗口</span><span>{terminalWindows.length}</span></div>
+                    </div> : null}
+                    {node.sftpTabs.map((tab) => (
+                      <div className={`session-terminal${tab.id === activeSftpId ? " is-active" : ""}`} key={tab.id}>
+                        <button
+                          aria-current={tab.id === activeSftpId ? "page" : undefined}
+                          className="session-terminal__open"
+                          onClick={() => onFocusSftp(tab.id)}
+                          title={`SFTP · ${tab.title}`}
+                          type="button"
+                        >
+                          <Icon name="serverFolder" height="16" width="16" />
+                          <span className="session-terminal__name">SFTP · {tab.title}</span>
+                        </button>
+                        <button
+                          aria-label={`关闭 SFTP · ${tab.title}`}
+                          className="session-terminal__close"
+                          onClick={() => onCloseSftp(tab.id)}
+                          title="关闭 SFTP"
+                          type="button"
+                        >
+                          <Icon name="close" height="13" width="13" />
+                        </button>
+                      </div>
+                    ))}
+                    {hasTerminals ? <div className="session-node__terminal-heading"><span>终端窗口</span><span>{terminalWindows.length}</span></div> : null}
 
                     {terminalWindows.map((session, index) => {
                       const layout = paneLayoutBySession.get(session.id);
                       const paneIds = layout ? paneSessionIds(layout) : [];
-                      const active = !isSftpActive && (session.id === activeSessionId || paneIds.includes(activeSessionId ?? ""));
+                      const active = !activeSftpId && (session.id === activeSessionId || paneIds.includes(activeSessionId ?? ""));
                       const terminalName = terminalNames[session.id] ?? `终端 ${index + 1}`;
                       const isRenaming = renamingSessionId === session.id;
                       return (
@@ -323,7 +376,7 @@ export function SessionTree({
                               {paneIds.map((paneId, paneIndex) => {
                                 const pane = node.sessions.find((item) => item.id === paneId);
                                 if (!pane) return null;
-                                const paneActive = !isSftpActive && paneId === activeSessionId;
+                                const paneActive = !activeSftpId && paneId === activeSessionId;
                                 const paneName = paneNames[paneId] ?? `Pane ${paneIndex + 1}`;
                                 const isRenamingPane = renamingPaneId === paneId;
                                 return (
@@ -394,14 +447,14 @@ export function SessionTree({
                       );
                     })}
 
-                    <button
+                    {hasTerminals ? <button
                       className="session-child session-child--danger"
                       onClick={() => onDisconnectNode(node)}
                       type="button"
                     >
                       <Icon name="unplug" height="15" width="15" />
                       <span>关闭会话</span>
-                    </button>
+                    </button> : null}
                   </div>
                 )}
               </div>

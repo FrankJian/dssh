@@ -412,11 +412,12 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   const startSession = useCallback(async (
     profile: Pick<SshProfile, "id">,
     size: TerminalSize = initialSize,
-    options?: { activate?: boolean },
+    options?: { activate?: boolean; waitForInitialResize?: boolean },
   ) => {
     const startedSession = await startSshSession({
       profileId: profile.id,
       size,
+      waitForInitialResize: options?.waitForInitialResize,
     });
     const session = withLatestStatus(startedSession);
     setSessions((currentSessions) => [...currentSessions, session]);

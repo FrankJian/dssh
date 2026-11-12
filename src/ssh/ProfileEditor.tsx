@@ -32,6 +32,7 @@ interface ProfileEditorProps {
   onClose: () => void;
   onSubmit: (draft: ProfileDraft) => Promise<void>;
   onCreateRdp?: (folder: string) => void;
+  onCreateSmb?: (folder: string) => void;
   onCreateJumpServer?: (folder: string) => void;
 }
 
@@ -45,7 +46,7 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
   { label: "HTTP 代理", value: "http" },
 ];
 
-export function ProfileEditor({ allTags, initialTags, initialFolder, initialConnectionType = "ssh", mode, onClose, onSubmit, profile, onCreateRdp, onCreateJumpServer }: ProfileEditorProps) {
+export function ProfileEditor({ allTags, initialTags, initialFolder, initialConnectionType = "ssh", mode, onClose, onSubmit, profile, onCreateRdp, onCreateSmb, onCreateJumpServer }: ProfileEditorProps) {
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), connectionType: initialConnectionType, tags: [...(initialTags ?? [])], folder: initialFolder ?? "" },
   );
@@ -147,7 +148,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
                 <span>连接类型</span>
                 <SelectMenu
                   ariaLabel="连接类型"
-                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(draft.folder); else if (value === "jumpserver") onCreateJumpServer?.(draft.folder); else if (value === "ssh" || value === "sftp") { setConnectionType(value); updateDraft("connectionType", value); } }}
+                  onChange={(value) => { if (value === "rdp") onCreateRdp?.(draft.folder); else if (value === "smb") onCreateSmb?.(draft.folder); else if (value === "jumpserver") onCreateJumpServer?.(draft.folder); else if (value === "ssh" || value === "sftp") { setConnectionType(value); updateDraft("connectionType", value); } }}
                   options={CONNECTION_TYPE_OPTIONS.map((option) => ({
                     disabled: !option.available,
                     label: option.available ? option.label : `${option.label}（即将支持）`,

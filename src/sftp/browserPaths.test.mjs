@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   addressText,
+  directoryBreadcrumbs,
+  directorySuggestionQuery,
   fileNameKey,
   isLocalRoot,
   isRemoteRoot,
@@ -15,6 +17,31 @@ import {
 } from "./browserPaths.ts";
 const windows = { windows: true, home: "C:\\Users\\Demo User" };
 const posix = { windows: false, home: "/Users/demo" };
+
+test("directory completion separates the typed name from POSIX, drive and UNC parents", () => {
+  assert.deepEqual(directorySuggestionQuery("/home/user/pr", false, false), { directory: "/home/user", prefix: "pr" });
+  assert.deepEqual(directorySuggestionQuery("/home/user", false, true), { directory: "/home/user", prefix: "" });
+  assert.deepEqual(directorySuggestionQuery("/home/user/a\\b/", false, false), { directory: "/home/user/a\\b/", prefix: "" });
+  assert.deepEqual(directorySuggestionQuery("C:/Users/De", true, false), { directory: "C:\\Users", prefix: "De" });
+  assert.deepEqual(directorySuggestionQuery("\\\\server\\share\\Pro", true, false), { directory: "\\\\server\\share\\", prefix: "Pro" });
+});
+
+test("breadcrumbs preserve clickable drive, UNC and literal POSIX paths", () => {
+  assert.deepEqual(directoryBreadcrumbs("C:\\Users\\My Work", true).items, [
+    { path: "C:\\", label: "C:\\" },
+    { path: "C:\\Users", label: "Users" },
+    { path: "C:\\Users\\My Work", label: "My Work" },
+  ]);
+  assert.equal(directoryBreadcrumbs("\\\\server\\share\\files", true).items[0].path, "\\\\server\\share\\");
+  assert.deepEqual(directoryBreadcrumbs("/team/asset/one/a\\b ", false), {
+    items: [
+      { path: "/team/asset", label: "asset" },
+      { path: "/team/asset/one", label: "one" },
+      { path: "/team/asset/one/a\\b ", label: "a\\b " },
+    ],
+    truncated: true,
+  });
+});
 
 test("drive roots, forward slashes and UNC share roots do not escape their volume", () => {
   for (const path of [

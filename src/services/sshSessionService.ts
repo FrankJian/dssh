@@ -5,6 +5,7 @@ import { invokeCommand } from "./tauri";
 export interface StartSshSessionRequest {
   profileId: string;
   size: TerminalSize;
+  waitForInitialResize?: boolean;
 }
 
 export interface StartLocalSessionRequest {

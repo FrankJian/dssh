@@ -24,9 +24,11 @@ import {
   type SftpEntry,
 } from "../services/sftpService";
 import { Icon } from "../ui/Icon";
+import { FileEntryIcon } from "./FileEntryIcon";
 
 interface RemoteFileTreeProps {
   activeFilePath: string | null;
+  initialRootPath?: string;
   onFileRemoved: (path: string) => void;
   onFileRenamed: (oldPath: string, newPath: string) => void;
   onOpenFile: (entry: SftpEntry) => void;
@@ -99,20 +101,6 @@ function pathName(path: string): string {
   return trimmed.slice(trimmed.lastIndexOf("/") + 1) || "/";
 }
 
-function fileIcon(entry: SftpEntry) {
-  const extension = entry.name.split(".").pop()?.toLowerCase();
-  if (["js", "ts", "tsx", "jsx", "rs", "py", "go", "java", "c", "h", "cpp"].includes(extension ?? "")) {
-    return "fileCode" as const;
-  }
-  if (["md", "txt", "log", "yaml", "yml", "json", "toml", "xml"].includes(extension ?? "")) {
-    return "fileText" as const;
-  }
-  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(extension ?? "")) {
-    return "fileImage" as const;
-  }
-  return "file" as const;
-}
-
 function localBaseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
@@ -160,6 +148,7 @@ function validEntryName(name: string): boolean {
  */
 export function RemoteFileTree({
   activeFilePath,
+  initialRootPath,
   onFileRemoved,
   onFileRenamed,
   onOpenFile,
@@ -167,7 +156,7 @@ export function RemoteFileTree({
   onClose,
 }: RemoteFileTreeProps) {
   const [rootPath, setRootPath] = useState("");
-  const [pathInput, setPathInput] = useState("");
+  const [pathInput, setPathInput] = useState(initialRootPath ?? "");
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [rootError, setRootError] = useState<string | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
@@ -208,12 +197,11 @@ export function RemoteFileTree({
   const loadRoot = useCallback(
     async (requestedPath?: string) => {
       const loadId = ++rootLoadIdRef.current;
-      const rawPath = requestedPath?.trim();
       setRootError(null);
       setActionError(null);
       setDirectories({});
       try {
-        const target = rawPath || (await sftpHome(profileId));
+        const target = requestedPath?.trim() ? requestedPath : await sftpHome(profileId);
         const listing = await sftpList(profileId, target);
         if (loadId !== rootLoadIdRef.current) {
           return;
@@ -240,8 +228,8 @@ export function RemoteFileTree({
   );
 
   useEffect(() => {
-    void loadRoot();
-  }, [loadRoot]);
+    void loadRoot(initialRootPath);
+  }, [initialRootPath, loadRoot]);
 
   useEffect(() => {
     if (!actionError) {
@@ -967,7 +955,7 @@ export function RemoteFileTree({
               type="button"
             >
               <span className="remote-file-tree__indent" />
-              <Icon name={fileIcon(entry)} height="15" width="15" />
+              <FileEntryIcon name={entry.name} symlink={entry.isSymlink} />
               <span className="remote-file-tree__name" title={entry.name}>{entry.name}</span>
             </button>
             <button
@@ -1011,7 +999,7 @@ export function RemoteFileTree({
               <span className="remote-file-tree__chevron" data-expanded={expanded}>
                 <Icon name="chevron-right" height="14" width="14" />
               </span>
-              <Icon name="folder" height="15" width="15" />
+              <FileEntryIcon directory expanded={expanded} symlink={entry.isSymlink} />
               <span className="remote-file-tree__name">{entry.name}</span>
               {state?.loading ? <span className="remote-file-tree__loading">…</span> : null}
             </button>
@@ -1074,6 +1062,7 @@ export function RemoteFileTree({
           <Icon name="folder" height="15" width="15" />
           <input
             aria-label="文件列表根目录"
+            autoFocus={Boolean(initialRootPath)}
             onChange={(event) => setPathInput(event.currentTarget.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -1219,7 +1208,7 @@ export function RemoteFileTree({
               <span className="remote-file-tree__chevron" data-expanded={root.expanded}>
                 <Icon name="chevron-right" height="14" width="14" />
               </span>
-              <Icon name="folder" height="15" width="15" />
+              <FileEntryIcon directory expanded={root.expanded} />
               <span className="remote-file-tree__name">{pathName(rootPath)}</span>
             </button>
             {root.expanded ? renderEntries(root.entries, 1) : null}

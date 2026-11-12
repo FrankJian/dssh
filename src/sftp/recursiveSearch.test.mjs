@@ -77,6 +77,46 @@ test("an unreadable directory reports partial results while sibling search conti
   assert.equal(result.error, "Permission denied");
   assert.equal(result.entries[0].path, "/root/app/config.json");
 });
+
+test("search depth bounds directory reads without dropping matches at the boundary", async () => {
+  const children = new Map([
+    ["/root/app", [file("/root/app/config.json"), file("/root/app/deep", true)]],
+    ["/root/app/deep", [file("/root/app/deep/config.json")]],
+  ]);
+  for (const maxDepth of [0, 1, 2, null]) {
+    const calls = [];
+    const result = await recursiveFileSearch(options({
+      maxDepth,
+      rootEntries: [file("/root/config.json"), file("/root/app", true)],
+      list: async (path) => {
+        calls.push(path);
+        return children.get(path) ?? [];
+      },
+    }));
+    const visited = maxDepth ?? 2;
+    assert.deepEqual(calls, [...children.keys()].slice(0, visited));
+    assert.equal(result.entries.length, visited + 1);
+    assert.equal(result.limited, false);
+  }
+});
+
+test("search overlaps at most four directory reads and keeps breadth-first results", async () => {
+  const rootEntries = Array.from({ length: 9 }, (_, i) => file(`/root/dir-${i}`, true));
+  let active = 0;
+  let peak = 0;
+  const result = await recursiveFileSearch(options({
+    rootEntries,
+    list: async (path) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, path.endsWith("-0") ? 10 : 0));
+      active -= 1;
+      return [file(`${path}/config.json`)];
+    },
+  }));
+  assert.equal(peak, 4);
+  assert.deepEqual(result.entries.map((entry) => entry.path), rootEntries.map((entry) => `${entry.path}/config.json`));
+});
 test("cancellation during a listing ignores its response and stops further requests", async () => {
   const controller = new AbortController();
   const calls = [];

@@ -15,6 +15,7 @@ import {
   connectionTypeLabel,
   isRdpProfile,
   isJumpServerProfile,
+  isSmbProfile,
   type ConnectionType,
   type ConnectionProfile,
 } from "./connectionTypes";
@@ -51,7 +52,7 @@ function loadSort(): SortKey {
 
 function loadTypeFilter(): ConnectionTypeFilter {
   const raw = localStorage.getItem(TYPE_FILTER_KEY);
-  return raw === "ssh" || raw === "telnet" || raw === "sftp" || raw === "rdp" || raw === "jumpserver" ? raw : "all";
+  return raw === "ssh" || raw === "telnet" || raw === "sftp" || raw === "rdp" || raw === "jumpserver" || raw === "smb" ? raw : "all";
 }
 
 interface SessionManagerProps {
@@ -68,6 +69,8 @@ interface SessionManagerProps {
   onCreate: (initialTags?: string[], initialFolder?: string) => void;
   onCreateSftp: (initialTags?: string[], initialFolder?: string) => void;
   onCreateRdp: (initialTags?: string[], initialFolder?: string) => void;
+  onCreateSmb: (initialTags?: string[], initialFolder?: string) => void;
+  onDisconnectSmb: (profile: ConnectionProfile) => void;
   onCreateJumpServer: (initialFolder?: string) => void;
   onEdit: (profile: ConnectionProfile) => void;
   onClone: (profile: ConnectionProfile) => void;
@@ -90,6 +93,8 @@ export function SessionManager({
   onCreate,
   onCreateSftp,
   onCreateRdp,
+  onCreateSmb,
+  onDisconnectSmb,
   onCreateJumpServer,
   onEdit,
   onClone,
@@ -270,7 +275,7 @@ export function SessionManager({
   function createConnection() {
     const folder = activeScope.startsWith("folder:") ? activeScope.slice(7) : "";
     if (activeTypeFilter === "jumpserver") { onCreateJumpServer(folder); return; }
-    (activeTypeFilter === "rdp" ? onCreateRdp : activeTypeFilter === "sftp" ? onCreateSftp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : [], folder);
+    (activeTypeFilter === "rdp" ? onCreateRdp : activeTypeFilter === "smb" ? onCreateSmb : activeTypeFilter === "sftp" ? onCreateSftp : onCreate)(activeScope.startsWith("tag:") ? [activeScope.slice(4)] : [], folder);
   }
 
   function renderCards(list: ConnectionProfile[]) {
@@ -282,7 +287,8 @@ export function SessionManager({
             profile={profile}
             variant={cardVariant}
             onConnect={() => onConnect(profile)}
-            onOpenSftp={!isRdpProfile(profile) && !isJumpServerProfile(profile) ? () => onOpenSftp(profile) : undefined}
+            onOpenSftp={!isRdpProfile(profile) && !isJumpServerProfile(profile) && !isSmbProfile(profile) ? () => onOpenSftp(profile) : undefined}
+            onDisconnect={isSmbProfile(profile) ? () => onDisconnectSmb(profile) : undefined}
             onEdit={() => onEdit(profile)}
             onClone={() => onClone(profile)}
             onDelete={() => onDelete(profile)}

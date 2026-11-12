@@ -45,6 +45,8 @@ pub struct StartLocalSessionRequest {
 pub struct StartSshSessionRequest {
     pub profile_id: String,
     pub size: TerminalSize,
+    #[serde(default)]
+    pub wait_for_initial_resize: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

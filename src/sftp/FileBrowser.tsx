@@ -14,6 +14,7 @@ import {
   sftpDownload,
   sftpDownloadTree,
   sftpCancelOperation,
+  sftpCopyRemote,
   sftpCreateDir,
   sftpHome,
   sftpRename,
@@ -50,14 +51,17 @@ import {
   resolveRemoteAddress,
 } from "./browserPaths";
 import { Icon } from "../ui/Icon";
+import { IconButton } from "../ui/IconButton";
 import { SftpDialog } from "./SftpDialog";
-import { topLevelSelection } from "./recursiveSearch";
+import { topLevelSelection, type FileSearchScope } from "./recursiveSearch";
 import { useRecursiveFileSearch } from "./useRecursiveFileSearch";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { nativeUploadEntries } from "./nativeFileDrop";
 import { useFilePaneDrag } from "./useFilePaneDrag";
 import { FilePane } from "./FilePane";
 import { RemoteFileEditor } from "./RemoteFileEditor";
+import { LocalFileTree } from "./LocalFileTree";
+import { RemoteFileTree } from "./RemoteFileTree";
 import type { EditorOptions } from "../settings/settings";
 import {
   formatSize,
@@ -89,8 +93,10 @@ interface FileBrowserProps {
   onOpenSshTerminal?: () => void;
 }
 
+type TransferDirection = "download" | "upload" | "copy";
+
 interface TransferState {
-  direction: "download" | "upload";
+  direction: TransferDirection;
   name: string;
   transferred: number;
   total: number | null;
@@ -208,7 +214,9 @@ export function FileBrowser({
   });
   const [editorSide, setEditorSide] = useState<BrowserSide>("remote");
   const [editorVisible, setEditorVisible] = useState(false);
+  const [fileList, setFileList] = useState<{ side: BrowserSide; path: string } | null>(null);
   const [conflict, setConflict] = useState<{
+    allowOverwrite: boolean;
     names: string[];
     resolve: (choice: "overwrite" | "skip" | "cancel") => void;
   } | null>(null);
@@ -222,12 +230,15 @@ export function FileBrowser({
   >([]);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const initialPathsRef = useRef({
-    local: initialLocalPath,
     remote: initialRemotePath,
   });
   const [remotePath, setRemotePath] = useState(initialRemotePath ?? "");
   const [remoteInput, setRemoteInput] = useState(initialRemotePath ?? "");
   const [remoteEntries, setRemoteEntries] = useState<SftpEntry[]>([]);
+  const [rightRemote, setRightRemote] = useState(false);
+  const rightDirectories = useRef({ local: initialLocalPath, remote: undefined as string | undefined });
+  const rightFileSystem = rightRemote ? "remote" : "local";
+  const isServerPane = (side: BrowserSide) => side === "remote" || rightRemote;
   const [localPath, setLocalPath] = useState(initialLocalPath ?? "");
   const [localInput, setLocalInput] = useState(initialLocalPath ?? "");
   const inputsRef = useRef({ remote: remoteInput, local: localInput });
@@ -240,9 +251,9 @@ export function FileBrowser({
   const [selectedLocalPaths, setSelectedLocalPaths] = useState<Set<string>>(
     new Set(),
   );
-  const [recursive, setRecursive] = useState<Record<BrowserSide, boolean>>({
-    remote: false,
-    local: false,
+  const [searchOptions, setSearchOptions] = useState<Record<BrowserSide, { scope: FileSearchScope; depth: number }>>({
+    remote: { scope: "directory", depth: 3 },
+    local: { scope: "directory", depth: 3 },
   });
   const [remoteSearch, setRemoteSearch] = useState("");
   const [localSearch, setLocalSearch] = useState("");
@@ -348,7 +359,9 @@ export function FileBrowser({
       setLoadingLocal(true);
       setError(null);
       try {
-        const listing = await sftpLocalList(path);
+        const listing = rightRemote && profileId
+          ? await sftpList(profileId, path)
+          : await sftpLocalList(path);
         if (request !== requests.current.local) return;
         setHistory((current) => ({
           ...current,
@@ -365,7 +378,8 @@ export function FileBrowser({
         setSelectedLocalPaths(new Set());
         setLocalAnchor(null);
         setLocalSearch("");
-        if (tabId) onTabPathsChange?.(tabId, { localPath: listing.path });
+        rightDirectories.current[rightFileSystem] = listing.path;
+        if (tabId && !rightRemote) onTabPathsChange?.(tabId, { localPath: listing.path });
       } catch (reason) {
         if (request === requests.current.local) {
           setLocalInput((current) =>
@@ -376,14 +390,14 @@ export function FileBrowser({
             ),
           );
           setError(
-            reason instanceof Error ? reason.message : "读取本机目录失败。",
+            reason instanceof Error ? reason.message : "读取右侧目录失败。",
           );
         }
       } finally {
         if (request === requests.current.local) setLoadingLocal(false);
       }
     },
-    [onTabPathsChange, tabId],
+    [onTabPathsChange, profileId, rightFileSystem, rightRemote, tabId],
   );
 
   useEffect(() => {
@@ -414,10 +428,10 @@ export function FileBrowser({
 
   useEffect(() => {
     let cancelled = false;
-    const restoredPath = initialPathsRef.current.local;
+    const restoredPath = rightDirectories.current[rightFileSystem];
     void Promise.all([
-      restoredPath ? Promise.resolve(restoredPath) : sftpLocalHome(),
-      sftpLocalRoots(),
+      restoredPath ?? (rightRemote && profileId ? sftpHome(profileId) : sftpLocalHome()),
+      rightRemote ? [] : sftpLocalRoots(),
     ])
       .then(([home, roots]) => {
         if (cancelled) return;
@@ -425,15 +439,17 @@ export function FileBrowser({
         void loadLocal(home);
       })
       .catch((reason: unknown) => {
-        if (!cancelled)
+        if (!cancelled) {
+          setLoadingLocal(false);
           setError(
-            reason instanceof Error ? reason.message : "读取本机主目录失败。",
+            reason instanceof Error ? reason.message : "读取右侧主目录失败。",
           );
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [loadLocal]);
+  }, [loadLocal, profileId, rightFileSystem, rightRemote]);
 
   useEffect(() => {
     const unlisten = onSftpTransferProgress((progress) => {
@@ -464,8 +480,10 @@ export function FileBrowser({
     [profileId],
   );
   const listLocalSearch = useCallback(
-    async (path: string) => (await sftpLocalList(path)).entries,
-    [],
+    async (path: string) => rightRemote && profileId
+      ? (await sftpList(profileId, path)).entries
+      : (await sftpLocalList(path)).entries,
+    [profileId, rightRemote],
   );
   const remoteResults = useRecursiveFileSearch({
     root: remotePath,
@@ -473,16 +491,18 @@ export function FileBrowser({
     side: "remote",
     query: remoteSearch,
     showHidden,
-    enabled: recursive.remote && Boolean(profileId) && !loadingRemote,
+    enabled: searchOptions.remote.scope !== "directory" && Boolean(profileId) && !loadingRemote,
+    maxDepth: searchOptions.remote.scope === "depth" ? searchOptions.remote.depth : null,
     list: listRemoteSearch,
   });
   const localResults = useRecursiveFileSearch({
     root: localPath,
     rootEntries: localEntries,
-    side: "local",
+    side: rightFileSystem,
     query: localSearch,
     showHidden,
-    enabled: recursive.local && !loadingLocal,
+    enabled: searchOptions.local.scope !== "directory" && !loadingLocal,
+    maxDepth: searchOptions.local.scope === "depth" ? searchOptions.local.depth : null,
     list: listLocalSearch,
   });
   const remoteCandidates = remoteResults.active
@@ -590,7 +610,7 @@ export function FileBrowser({
       return;
     const selected = side === "remote" ? selectedRemote : selectedLocal;
     const entries =
-      kind === "delete" ? topLevelSelection(selected, side) : selected;
+      kind === "delete" ? topLevelSelection(selected, isServerPane(side) ? "remote" : "local") : selected;
     if (kind !== "file" && !entries.length) return;
     if (
       kind !== "file" &&
@@ -614,6 +634,7 @@ export function FileBrowser({
   async function applyAction() {
     if (!action || actionBusy) return;
     const { side, kind, entries } = action;
+    const server = isServerPane(side);
     const name = actionName.trim();
     if (kind !== "delete" && !validDirectoryName(name)) {
       setActionError("请输入有效名称，不能包含路径分隔符。");
@@ -622,7 +643,7 @@ export function FileBrowser({
     const currentPath = side === "remote" ? remotePath : localPath;
     const parent =
       kind === "rename"
-        ? side === "remote"
+        ? server
           ? remoteParent(entries[0].path)
           : localParent(entries[0].path)
         : currentPath;
@@ -646,10 +667,10 @@ export function FileBrowser({
     setActionBusy(true);
     setActionError(null);
     try {
-      if (side === "remote" && !profileId) throw new Error("请先连接服务器。");
+      if (server && !profileId) throw new Error("请先连接服务器。");
       if (kind === "delete") {
         for (const entry of entries) {
-          if (side === "remote")
+          if (server)
             await sftpDeleteRecursive(profileId!, entry.path);
           else await sftpLocalDelete(entry.path);
           setAction((current) =>
@@ -664,11 +685,11 @@ export function FileBrowser({
           );
         }
       } else if (kind === "rename") {
-        if (side === "remote")
+        if (server)
           await sftpRename(profileId!, entries[0].path, name);
         else await sftpLocalRename(entries[0].path, joinLocal(parent, name));
       } else {
-        if (side === "remote") await sftpCreateFile(profileId!, parent, name);
+        if (server) await sftpCreateFile(profileId!, parent, name);
         else await sftpLocalCreateFile(parent, name);
       }
       setAction(null);
@@ -698,10 +719,38 @@ export function FileBrowser({
     setEditorVisible(true);
   }
 
+  function updateEditorPath(side: BrowserSide, oldPath: string, newPath?: string) {
+    setEditors((current) => {
+      const editor = current[side];
+      if (!editor.paths.includes(oldPath)) return current;
+      const paths = newPath
+        ? [...new Set(editor.paths.map((path) => path === oldPath ? newPath : path))]
+        : editor.paths.filter((path) => path !== oldPath);
+      return {
+        ...current,
+        [side]: {
+          paths,
+          active: editor.active === oldPath ? newPath ?? paths[paths.length - 1] ?? null : editor.active,
+        },
+      };
+    });
+  }
+
+  function closeFileList(side: BrowserSide) {
+    setFileList(null);
+    setEditorVisible(false);
+    if (side === "remote") void loadRemote(remotePath);
+    else void loadLocal(localPath);
+    requestAnimationFrame(() => {
+      browserRef.current?.querySelector<HTMLElement>(`[data-sftp-drop-side="${side}"]`)?.focus();
+    });
+  }
+
   async function resolveConflicts(
     entries: PaneEntry[],
     destination: PaneEntry[],
     caseInsensitive = false,
+    allowOverwrite = true,
   ) {
     const names = new Set(
       destination.map((entry) => fileNameKey(entry.name, caseInsensitive)),
@@ -712,7 +761,7 @@ export function FileBrowser({
     if (!conflicts.length) return entries;
     const choice = await new Promise<"overwrite" | "skip" | "cancel">(
       (resolve) =>
-        setConflict({ names: conflicts.map((entry) => entry.name), resolve }),
+        setConflict({ names: conflicts.map((entry) => entry.name), resolve, allowOverwrite }),
     );
     setConflict(null);
     return choice === "cancel"
@@ -760,14 +809,13 @@ export function FileBrowser({
     setActionError(null);
     setIsCreatingDirectory(true);
     try {
-      if (side === "remote") {
+      if (isServerPane(side)) {
         if (!profileId) return;
         await sftpCreateDir(profileId, parentPath, name);
-        await loadRemote(parentPath);
       } else {
         await sftpLocalCreateDir(parentPath, name);
-        await loadLocal(parentPath);
       }
+      await (side === "remote" ? loadRemote(parentPath) : loadLocal(parentPath));
       setCreateDirectorySide(null);
       setDirectoryName("");
     } catch (reason) {
@@ -780,7 +828,7 @@ export function FileBrowser({
   }
 
   async function runBatch(
-    direction: "download" | "upload",
+    direction: TransferDirection,
     entries: PaneEntry[],
     countEntryFiles: (entries: PaneEntry[]) => Promise<number[]>,
     transferOne: (entry: PaneEntry, operationId: string) => Promise<void>,
@@ -850,10 +898,15 @@ export function FileBrowser({
             ),
           );
         } catch (reason) {
-          if (cancelRequestedRef.current) break;
-          failed += 1;
+          operationIdRef.current = null;
+          if (direction === "copy") fileProgressRef.current.completedByOperation.delete(operationId);
           const message =
             reason instanceof Error ? reason.message : "传输失败。";
+          if (cancelRequestedRef.current) {
+            if (direction === "copy" && message !== "传输已取消。") firstError = message;
+            break;
+          }
+          failed += 1;
           firstError ??= message;
           setQueue((current) =>
             current.map((item) =>
@@ -914,14 +967,18 @@ export function FileBrowser({
     direction: "upload" | "download",
     source: PaneEntry[] | (() => Promise<PaneEntry[]>),
     chooseDirectory = false,
+    external = false,
   ) {
+    const remoteCopy = rightRemote && !external && !chooseDirectory;
+    const sourceRemote = direction === "download" || remoteCopy;
+    const destinationRemote = direction === "upload" || remoteCopy;
     if (
       !profileId ||
       (Array.isArray(source) && !source.length) ||
-      !remotePath ||
-      (direction === "download" && (!localPath || loadingLocal)) ||
+      (!chooseDirectory && (!remotePath || loadingRemote)) ||
+      ((remoteCopy || (direction === "download" && !chooseDirectory)) &&
+        (!localPath || loadingLocal)) ||
       isTransferring ||
-      loadingRemote ||
       actionBusy ||
       transferLock.current
     )
@@ -934,14 +991,14 @@ export function FileBrowser({
     try {
       const entries = topLevelSelection(
         typeof source === "function" ? await source() : source,
-        direction === "upload" ? "local" : "remote",
+        sourceRemote ? "remote" : "local",
       );
       if (!entries.length) return;
       const names = new Set<string>();
       for (const entry of entries) {
         const key = fileNameKey(
           entry.name,
-          direction === "download" && isWindows,
+          !destinationRemote && isWindows,
         );
         if (names.has(key))
           throw new Error(
@@ -951,7 +1008,7 @@ export function FileBrowser({
       }
       if (direction === "download" && chooseDirectory) {
         const picked = await open({
-          defaultPath: localPath,
+          defaultPath: rightDirectories.current.local,
           directory: true,
           multiple: false,
           title: "选择下载目录",
@@ -962,29 +1019,41 @@ export function FileBrowser({
       }
       // Re-read the destination before checking collisions, including folders
       // created outside this window since its last refresh.
-      const destination =
-        direction === "upload"
-          ? await sftpList(profileId, remoteDestination)
-          : await sftpLocalList(localDestination);
+      const destinationPath = direction === "upload" ? remoteDestination : localDestination;
+      const destination = destinationRemote
+        ? await sftpList(profileId, destinationPath)
+        : await sftpLocalList(destinationPath);
+      if (remoteCopy && entries.some((entry) => entry.isSymlink)) {
+        throw new Error("双栏复制不支持符号链接。");
+      }
       const approved = await resolveConflicts(
         entries,
         destination.entries,
-        direction === "download" && isWindows,
+        !destinationRemote && isWindows,
+        !remoteCopy,
       );
       if (!approved.length) return;
       setIsPreparingTransfer(false);
       await runBatch(
-        direction,
+        remoteCopy ? "copy" : direction,
         approved,
         (items) =>
           countFiles(items, async (path) => {
             if (cancelRequestedRef.current) throw new Error("传输已取消。");
-            return direction === "upload"
-              ? (await sftpLocalList(path)).entries
-              : (await sftpList(profileId, path)).entries;
+            return sourceRemote
+              ? (await sftpList(profileId, path)).entries
+              : (await sftpLocalList(path)).entries;
           }),
-        (entry, operationId) =>
-          direction === "upload"
+        (entry, operationId) => {
+          if (remoteCopy) {
+            return sftpCopyRemote(
+              profileId,
+              entry.path,
+              joinRemote(destination.path, entry.name),
+              operationId,
+            );
+          }
+          return direction === "upload"
             ? entry.isDir && !entry.isSymlink
               ? sftpUploadDir(
                   profileId,
@@ -1010,7 +1079,8 @@ export function FileBrowser({
                   entry.path,
                   joinLocalChild(destination.path, entry.name),
                   operationId,
-                ),
+                );
+        },
         // Background completion must not move the user's current pane.
         async () => {
           if (direction === "upload") {
@@ -1020,6 +1090,7 @@ export function FileBrowser({
             )
               await loadRemote(destination.path);
           } else if (
+            (!chooseDirectory || !rightRemote) &&
             currentPaths.current.local === destination.path &&
             requests.current.local === directoryVersions.local
           )
@@ -1038,8 +1109,8 @@ export function FileBrowser({
   function uploadSelected() {
     return transferEntries("upload", selectedLocal);
   }
-  function downloadSelected(chooseDirectory = false) {
-    return transferEntries("download", selectedRemote, chooseDirectory);
+  function downloadSelected() {
+    return transferEntries("download", selectedRemote);
   }
 
   const paneDrag = useFilePaneDrag({
@@ -1054,7 +1125,7 @@ export function FileBrowser({
       loadingLocal ||
       actionBusy ||
       isCreatingDirectory ||
-      Boolean(action || conflict || createDirectorySide) ||
+      Boolean(action || conflict || createDirectorySide || fileList) ||
       (editorVisible && editors[editorSide].paths.length > 0),
     onSelect: (side, paths) =>
       (side === "remote" ? setSelectedRemotePaths : setSelectedLocalPaths)(
@@ -1082,15 +1153,26 @@ export function FileBrowser({
       loadingRemote ||
       actionBusy ||
       isCreatingDirectory ||
-      Boolean(action || conflict || createDirectorySide) ||
+      Boolean(action || conflict || createDirectorySide || fileList) ||
       (editorVisible && editors[editorSide].paths.length > 0),
     onDrop: (paths) => {
-      void transferEntries("upload", () =>
-        nativeUploadEntries(paths, sftpLocalList),
-      );
+      void transferEntries("upload", () => nativeUploadEntries(paths, sftpLocalList), false, true);
     },
     onError: setError,
   });
+
+  const resolveLocalPath = useCallback(async (input: string, current: string) => {
+    const home = localAddressNeedsHome(input) ? await sftpLocalHome() : undefined;
+    return resolveLocalAddress(input, current, { windows: isWindows, home });
+  }, []);
+
+  const resolveRemotePath = useCallback(async (input: string, current: string) => {
+    const value = addressText(input);
+    const home = profileId && (value === "~" || value.startsWith("~/"))
+      ? await sftpHome(profileId)
+      : undefined;
+    return resolveRemoteAddress(input, current, home);
+  }, [profileId]);
 
   async function navigateAddress(side: BrowserSide) {
     const input = inputsRef.current[side];
@@ -1099,25 +1181,9 @@ export function FileBrowser({
     const stillCurrent = () =>
       inputsRef.current[side] === input && requests.current[side] === version;
     try {
-      const value = addressText(input);
-      if (!value) return;
-      let resolved: string;
-      if (side === "local") {
-        const home = localAddressNeedsHome(input)
-          ? await sftpLocalHome()
-          : undefined;
-        resolved = resolveLocalAddress(input, current, {
-          windows: isWindows,
-          home,
-        });
-      } else {
-        if (!profileId) return;
-        const home =
-          value === "~" || value.startsWith("~/")
-            ? await sftpHome(profileId)
-            : undefined;
-        resolved = resolveRemoteAddress(input, current, home);
-      }
+      if (input === current || !addressText(input)) return;
+      const resolve = isServerPane(side) ? resolveRemotePath : resolveLocalPath;
+      const resolved = await resolve(input, current);
       if (stillCurrent())
         await (side === "local" ? loadLocal(resolved) : loadRemote(resolved));
     } catch (reason) {
@@ -1129,16 +1195,48 @@ export function FileBrowser({
     }
   }
 
+  function toggleRightFileSystem() {
+    if (transferLock.current || actionBusy || action || createDirectorySide) return;
+    if (editors.local.paths.length) {
+      setError("请先关闭右栏打开的文件，再切换文件来源。");
+      return;
+    }
+    ++requests.current.local;
+    setLoadingLocal(true);
+    setLocalPath("");
+    setLocalInput("");
+    setLocalEntries([]);
+    setSelectedLocalPaths(new Set());
+    setLocalAnchor(null);
+    setLocalSearch("");
+    setHistory((current) => ({ ...current, local: { paths: [], index: -1 } }));
+    setRightRemote((current) => !current);
+  }
+
   function pane(side: BrowserSide) {
     const remote = side === "remote";
+    const server = isServerPane(side);
     const load = remote ? loadRemote : loadLocal;
     const path = remote ? remotePath : localPath;
     const selection = remote ? selectedRemote : selectedLocal;
     return (
       <FilePane
         side={side}
-        connectionName={remote ? remoteName : undefined}
-        connectionAddress={remote ? remoteEndpoint : undefined}
+        fileSystem={server ? "remote" : "local"}
+        connectionName={server ? remoteName : undefined}
+        connectionAddress={server ? remoteEndpoint : undefined}
+        sourceAction={!remote && profileId ? (
+          <IconButton
+            active={rightRemote}
+            aria-pressed={rightRemote}
+            disabled={isTransferring || isPreparingTransfer || actionBusy || isCreatingDirectory}
+            label={rightRemote ? "右栏切换到本机" : "右栏切换到服务器或 JumpServer 资产"}
+            onClick={toggleRightFileSystem}
+          >
+            <Icon name={rightRemote ? "monitor" : "server"} />
+          </IconButton>
+        ) : undefined}
+        transferLabel={rightRemote ? "复制到另一栏" : undefined}
         entries={remote ? visibleRemoteEntries : visibleLocalEntries}
         totalCount={
           remote
@@ -1149,13 +1247,17 @@ export function FileBrowser({
               ? localResults.scanned
               : localEntries.length
         }
-        recursive={recursive[side]}
+        searchScope={searchOptions[side].scope}
+        searchDepth={searchOptions[side].depth}
         searchState={remote ? remoteResults : localResults}
-        onRecursive={() =>
-          setRecursive((current) => ({ ...current, [side]: !current[side] }))
+        onSearchScope={(scope) =>
+          setSearchOptions((current) => ({ ...current, [side]: { ...current[side], scope } }))
+        }
+        onSearchDepth={(depth) =>
+          setSearchOptions((current) => ({ ...current, [side]: { ...current[side], depth } }))
         }
         onReveal={(entry) =>
-          void load(remote ? remoteParent(entry.path) : localParent(entry.path))
+          void load(server ? remoteParent(entry.path) : localParent(entry.path))
         }
         isLoading={remote ? loadingRemote : loadingLocal}
         disabled={actionBusy || isCreatingDirectory}
@@ -1164,18 +1266,21 @@ export function FileBrowser({
         currentPath={path}
         search={remote ? remoteSearch : localSearch}
         selectedPaths={remote ? selectedRemotePaths : selectedLocalPaths}
-        roots={remote ? undefined : localRoots}
+        roots={server ? undefined : localRoots}
         history={history[side]}
         showHidden={showHidden}
         sort={sort[side]}
         onHistory={(index) => void load(history[side].paths[index], index)}
         onNavigate={(next) => void load(next)}
         onPathSubmit={() => void navigateAddress(side)}
-        atRoot={remote ? isRemoteRoot(path) : isLocalRoot(path)}
+        resolvePath={server ? resolveRemotePath : resolveLocalPath}
+        listDirectories={server ? listRemoteSearch : listLocalSearch}
+        windowsPaths={!server && isWindows}
+        atRoot={server ? isRemoteRoot(path) : isLocalRoot(path)}
         onRefresh={() => void load(path)}
-        onUp={() => void load(remote ? remoteParent(path) : localParent(path))}
+        onUp={() => void load(server ? remoteParent(path) : localParent(path))}
         onHome={() => {
-          void (remote && profileId ? sftpHome(profileId) : sftpLocalHome())
+          void (server && profileId ? sftpHome(profileId) : sftpLocalHome())
             .then((home) => load(home))
             .catch((reason: unknown) =>
               setError(
@@ -1186,13 +1291,18 @@ export function FileBrowser({
         onSelect={remote ? selectRemote : selectLocal}
         onSelection={remote ? setSelectedRemotePaths : setSelectedLocalPaths}
         onEnter={(entry) => enterEntry(side, entry)}
+        onOpenFileList={(path) => {
+          setEditorVisible(false);
+          setFileList({ side, path });
+        }}
         onCreate={(file) =>
           file ? beginAction(side, "file") : beginCreateDirectory(side)
         }
         onRename={() => beginAction(side, "rename")}
         onDelete={() => beginAction(side, "delete")}
+        transferDisabled={!remotePath || !localPath || loadingRemote || loadingLocal}
         onTransfer={() => void (remote ? downloadSelected() : uploadSelected())}
-        onDownloadAs={remote ? () => void downloadSelected(true) : undefined}
+        onDownloadAs={server ? () => void transferEntries("download", selection, true) : undefined}
         onCopy={() => {
           void navigator.clipboard
             .writeText(selection.map((entry) => entry.path).join("\n"))
@@ -1234,45 +1344,9 @@ export function FileBrowser({
     >
       <div
         className="sftp-dual-browser__files"
-        inert={editorVisible && editors[editorSide].paths.length > 0}
+        inert={Boolean(fileList) || (editorVisible && editors[editorSide].paths.length > 0)}
       >
         {pane("remote")}
-        <div className="sftp-dual-browser__transfer" aria-label="文件传输操作">
-          <button
-            aria-label="上传所选本机项目到服务器"
-            className="sftp-dual-browser__transfer-button"
-            disabled={
-              selectedLocal.length === 0 ||
-              isTransferring ||
-              isPreparingTransfer ||
-              loadingRemote ||
-              loadingLocal ||
-              actionBusy
-            }
-            onClick={() => void uploadSelected()}
-            title="上传到服务器"
-            type="button"
-          >
-            <Icon name="arrowLeft" height="18" width="18" />
-          </button>
-          <button
-            aria-label="下载所选服务器项目到本机"
-            className="sftp-dual-browser__transfer-button"
-            disabled={
-              selectedRemote.length === 0 ||
-              isTransferring ||
-              isPreparingTransfer ||
-              loadingRemote ||
-              loadingLocal ||
-              actionBusy
-            }
-            onClick={() => void downloadSelected()}
-            title="下载到本机"
-            type="button"
-          >
-            <Icon name="arrowRight" height="18" width="18" />
-          </button>
-        </div>
         {pane("local")}
         {error ? (
           <p role="alert" className="sftp-dual-browser__error">
@@ -1292,7 +1366,7 @@ export function FileBrowser({
             onClick={() => setQueueExpanded((current) => !current)}
             aria-expanded={queueExpanded}
           >
-            <Icon name="chevron-down" width="14" height="14" />
+            <Icon name={queueExpanded ? "chevron-down" : "chevron-right"} width="14" height="14" />
             传输列表
             {queue.length
               ? ` (${queue.filter((item) => item.status === "done").length}/${queue.length})`
@@ -1301,7 +1375,9 @@ export function FileBrowser({
           <span>
             {isTransferring
               ? "传输中 · 可以继续浏览目录"
-              : "拖拽文件到另一侧即可传输"}
+              : rightRemote
+                ? "打开两侧目标目录，拖拽即可复制"
+                : "拖拽文件到另一侧即可传输"}
           </span>
           {(["remote", "local"] as const).map((side) =>
             editors[side].paths.length ? (
@@ -1314,11 +1390,27 @@ export function FileBrowser({
                 }}
               >
                 <Icon name="edit" width="14" height="14" />
-                {side === "remote" ? "服务器" : "本机"}编辑 (
+                {isServerPane(side) ? "服务器" : "本机"}编辑 (
                 {editors[side].paths.length})
               </button>
             ) : null,
           )}
+          <div className="sftp-dual-browser__workspace-actions">
+            {onOpenSshTerminal ? (
+              <button type="button" onClick={onOpenSshTerminal} title="打开 SSH 终端" aria-label="打开 SSH 终端">
+                <Icon name="terminalTool" height="14" width="14" />
+                <span>打开 SSH 终端</span>
+              </button>
+            ) : null}
+            {onOpenInTerminal && remotePath ? (
+              <IconButton
+                label="在终端中打开服务器目录"
+                onClick={() => onOpenInTerminal(remotePath)}
+              >
+                <Icon name="folderOpen" height="14" width="14" />
+              </IconButton>
+            ) : null}
+          </div>
         </div>
         {queueExpanded ? (
           <div
@@ -1363,7 +1455,7 @@ export function FileBrowser({
         {transfer ? (
           <div className="sftp-dual-browser__progress">
             <span>
-              {transfer.direction === "upload" ? "上传" : "下载"}{" "}
+              {{ upload: "上传", download: "下载", copy: "复制" }[transfer.direction]}{" "}
               {transfer.name}
             </span>
             <span>
@@ -1400,60 +1492,57 @@ export function FileBrowser({
               : `已完成 ${transferSummary.completedFiles} / ${transferSummary.totalFiles} 个文件；成功 ${transferSummary.completed}，失败 ${transferSummary.failed} 项。`}
           </p>
         ) : null}
-        {onOpenSshTerminal ? <button className="sftp-dual-browser__terminal" type="button" onClick={onOpenSshTerminal}><Icon name="terminalTool" height="14" width="14"/><span>打开 SSH 终端</span></button> : null}
-        {onOpenInTerminal && remotePath ? (
-          <button
-            className="sftp-dual-browser__terminal"
-            onClick={() => onOpenInTerminal(remotePath)}
-            type="button"
-          >
-            <Icon name="terminalTool" height="14" width="14" />
-            <span>在终端中打开服务器目录</span>
-          </button>
-        ) : null}
+
       </div>
-      {(["remote", "local"] as const).map((side) =>
-        editors[side].paths.length ? (
+      {(["remote", "local"] as const).map((side) => {
+        const treePath = fileList?.side === side ? fileList.path : undefined;
+        const editor = editors[side];
+        const showEditor = editorVisible && editorSide === side && editor.paths.length > 0;
+        if (!treePath && !editor.paths.length) return null;
+        const treeProps = treePath ? {
+          activeFilePath: showEditor ? editor.active : null,
+          initialRootPath: treePath,
+          onClose: () => closeFileList(side),
+          onFileRemoved: (path: string) => updateEditorPath(side, path),
+          onFileRenamed: (oldPath: string, newPath: string) => updateEditorPath(side, oldPath, newPath),
+          onOpenFile: (entry: PaneEntry) => enterEntry(side, entry),
+        } : null;
+        return (
           <div
             key={side}
             className="sftp-dual-browser__editor"
-            hidden={!editorVisible || editorSide !== side}
+            hidden={!treePath && !showEditor}
           >
-            <RemoteFileEditor
-              profileId={profileId ?? "local"}
-              fileSystem={side}
-              editorOptions={editorOptions}
-              activePath={editors[side].active}
-              filePaths={editors[side].paths}
-              backLabel="返回文件列表"
-              onCloseFile={(path) =>
-                setEditors((current) => {
-                  const paths = current[side].paths.filter(
-                    (item) => item !== path,
-                  );
-                  return {
-                    ...current,
-                    [side]: {
-                      paths,
-                      active:
-                        current[side].active === path
-                          ? (paths[paths.length - 1] ?? null)
-                          : current[side].active,
-                    },
-                  };
-                })
-              }
-              onSelectFile={(path) =>
-                setEditors((current) => ({
-                  ...current,
-                  [side]: { ...current[side], active: path },
-                }))
-              }
-              onShowTerminal={() => setEditorVisible(false)}
-            />
+            {treeProps && (
+              <div className="sftp-dual-browser__file-tree" data-with-editor={showEditor}>
+                {isServerPane(side) && profileId
+                  ? <RemoteFileTree {...treeProps} profileId={profileId} />
+                  : <LocalFileTree {...treeProps} />}
+              </div>
+            )}
+            {editor.paths.length > 0 && (
+              <div className="sftp-dual-browser__editor-content" hidden={!showEditor}>
+                <RemoteFileEditor
+                  profileId={profileId ?? "local"}
+                  fileSystem={isServerPane(side) ? "remote" : "local"}
+                  editorOptions={editorOptions}
+                  activePath={editor.active}
+                  filePaths={editor.paths}
+                  backLabel={treePath ? "返回文件列表" : "返回双栏"}
+                  onCloseFile={(path) => updateEditorPath(side, path)}
+                  onSelectFile={(path) =>
+                    setEditors((current) => ({
+                      ...current,
+                      [side]: { ...current[side], active: path },
+                    }))
+                  }
+                  onShowTerminal={() => setEditorVisible(false)}
+                />
+              </div>
+            )}
           </div>
-        ) : null,
-      )}
+        );
+      })}
       {paneDrag.preview
         ? createPortal(
             <div
@@ -1478,7 +1567,9 @@ export function FileBrowser({
                   : ""}
               </span>
               <small>
-                {paneDrag.preview.target === "remote"
+                {paneDrag.preview.target && rightRemote
+                  ? "松开复制"
+                  : paneDrag.preview.target === "remote"
                   ? "松开上传"
                   : paneDrag.preview.target === "local"
                     ? "松开下载"
@@ -1499,9 +1590,9 @@ export function FileBrowser({
             <h2 id="sftp-conflict-title">
               目标目录存在 {conflict.names.length} 个同名项目
             </h2>
-            <p>
+            {conflict.allowOverwrite ? <p>
               覆盖会替换同名文件，目录会合并；目录内同名文件也会覆盖。此操作不可撤销。
-            </p>
+            </p> : null}
             <p>{conflict.names.join("、")}</p>
             <div className="sftp-create-directory__actions">
               <button
@@ -1514,12 +1605,12 @@ export function FileBrowser({
               <button type="button" onClick={() => conflict.resolve("skip")}>
                 跳过同名项目
               </button>
-              <button
+              {conflict.allowOverwrite ? <button
                 type="button"
                 onClick={() => conflict.resolve("overwrite")}
               >
                 覆盖并继续
-              </button>
+              </button> : null}
             </div>
           </div>
         </SftpDialog>
@@ -1547,9 +1638,9 @@ export function FileBrowser({
                   : "新建文件"}
             </h2>
             <p>
-              {action.side === "remote" ? "服务器" : "本机"} ·{" "}
+              {isServerPane(action.side) ? "服务器" : "本机"} ·{" "}
               {action.kind === "rename" && action.entries[0]
-                ? action.side === "remote"
+                ? isServerPane(action.side)
                   ? remoteParent(action.entries[0].path)
                   : localParent(action.entries[0].path)
                 : action.side === "remote"
@@ -1619,7 +1710,7 @@ export function FileBrowser({
             }}
           >
             <h2 id="sftp-create-directory-title">
-              新建{createDirectorySide === "remote" ? "服务器" : "本机"}目录
+              新建{isServerPane(createDirectorySide) ? "服务器" : "本机"}目录
             </h2>
             <p>{createDirectorySide === "remote" ? remotePath : localPath}</p>
             <label>

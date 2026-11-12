@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectionTypeForProfile, isJumpServerProfile, isRdpProfile, jumpServerConnectionProfile } from "./connectionTypes.ts";
+import { connectionTypeForProfile, isJumpServerProfile, isRdpProfile, isSmbProfile, jumpServerConnectionProfile } from "./connectionTypes.ts";
+import { smbConnectionProfile } from "../models/smb.ts";
 
 test("JumpServer platforms remain separate from SSH and RDP profiles in the shared library", () => {
   const p = jumpServerConnectionProfile({ id: "jumpserver:test", name: "Production", coreUrl: "https://jms.example:8443/", keyId: "test-key", orgId: "org-a", hasCredential: true });
@@ -26,4 +27,13 @@ test("password profile identity survives the display adapter used by Edit", () =
   assert.equal(p.username, "alice");
   assert.equal(p.authKind, "password");
   assert.equal(p.sshProfileId, "saved-ssh");
+});
+
+test("SMB shared drive profiles use their own type and UNC address", () => {
+  const p = smbConnectionProfile({ id: "smb:test", name: "Team", folder: "", sharePath: "\\\\server\\share", driveLetter: "Z", favorite: false, tags: [], description: "", createdAt: "", updatedAt: "" });
+  assert.equal(connectionTypeForProfile(p), "smb");
+  assert.equal(isSmbProfile(p), true);
+  assert.equal(p.host, "server");
+  assert.equal(p.port, 445);
+  assert.equal(isRdpProfile(p), false);
 });

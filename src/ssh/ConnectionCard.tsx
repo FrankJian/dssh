@@ -1,28 +1,29 @@
 import { ConnectionAddress } from "./ConnectionAddress";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
-import { connectionTypeLabel, connectionTypeForProfile, isRdpProfile, isJumpServerProfile, type ConnectionProfile } from "./connectionTypes";
-import { profileIconName } from "./profileIcons";
+import { connectionTypeLabel, connectionTypeForProfile, isRdpProfile, isJumpServerProfile, isSmbProfile, type ConnectionProfile } from "./connectionTypes";
+import { profileIconName, sftpConnectionIconName } from "./profileIcons";
 
 interface ConnectionCardProps {
   profile: ConnectionProfile;
   variant: "grid" | "list";
   onConnect: () => void;
   onOpenSftp?: () => void;
+  onDisconnect?: () => void;
   onEdit: () => void;
   onClone: () => void;
   onDelete: () => void;
 }
 
 export function ConnectionCard({
-  profile, variant, onConnect, onOpenSftp, onEdit, onClone, onDelete,
+  profile, variant, onConnect, onOpenSftp, onDisconnect, onEdit, onClone, onDelete,
 }: ConnectionCardProps) {
   const jumpserver = isJumpServerProfile(profile);
   const type = connectionTypeForProfile(profile);
   const typeLabel = connectionTypeLabel(type);
-  const actionLabel = jumpserver ? "打开资产" : type === "sftp" ? "打开 SFTP" : "连接";
+  const actionLabel = jumpserver ? "打开资产" : type === "sftp" ? "打开 SFTP" : type === "smb" ? "映射并打开" : "连接";
   const visibleTagCount = variant === "grid" ? 2 : 4;
-  const address = jumpserver ? profile.coreUrl : `${profile.username}@${profile.host}:${profile.port}`;
+  const address = jumpserver ? profile.coreUrl : isSmbProfile(profile) ? `${profile.sharePath} → ${profile.driveLetter}:` : `${profile.username}@${profile.host}:${profile.port}`;
   const details = <>
     <ConnectionAddress address={address} />
     {profile.folder ? <span className="conn-card__folder" title={profile.folder}>
@@ -38,7 +39,12 @@ export function ConnectionCard({
       onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onConnect(); }}>
       <div className="conn-card__head">
         <span className="conn-card__icon">
-          <Icon name={jumpserver ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : profileIconName(profile.icon)} height="18" width="18" />
+          <Icon
+            className={type === "sftp" ? "sftp-connection-icon" : undefined}
+            name={jumpserver ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : isSmbProfile(profile) ? "folder" : type === "sftp" ? sftpConnectionIconName(profile.icon) : profileIconName(profile.icon)}
+            height="18"
+            width="18"
+          />
         </span>
         <div className="conn-card__title">
           <div className="conn-card__name-row">
@@ -68,6 +74,7 @@ export function ConnectionCard({
         </button>
         <div className="conn-card__tools" role="group" aria-label="连接操作">
           {onOpenSftp ? <IconButton label="打开 SFTP" onClick={onOpenSftp}><Icon name="folder" height="16" width="16" /></IconButton> : null}
+          {onDisconnect ? <IconButton label="断开盘符映射" onClick={onDisconnect}><Icon name="close" height="16" width="16" /></IconButton> : null}
           <IconButton label="编辑" onClick={onEdit}><Icon name="edit" height="16" width="16" /></IconButton>
           <IconButton label="克隆" onClick={onClone}><Icon name="copy" height="16" width="16" /></IconButton>
           <IconButton className="conn-card__delete" label="删除" onClick={onDelete}><Icon name="trash" height="16" width="16" /></IconButton>

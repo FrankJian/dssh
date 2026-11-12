@@ -3,7 +3,7 @@ import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
 import { ArtifactoryWorkspace } from "../artifactory/ArtifactoryWorkspace";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
 import { renameConnectionFolder } from "../services/sshProfileService";
-import { findSftpTerminal } from "./sftpTerminal";
+import { findSftpTerminal, isOpenSshTerminal } from "./sftpTerminal";
 import { JumpServerWorkspace } from "../jumpserver/JumpServerWorkspace";
 import { isJumpServerSource, type JumpServerProfile } from "../models/jumpserver";
 import { useJumpServerProfiles } from "../jumpserver/useJumpServerProfiles";
@@ -16,7 +16,12 @@ import { RdpProfileEditor } from "../rdp/RdpProfileEditor";
 import { RdpConnectDialog } from "../rdp/RdpConnectDialog";
 import { RdpSessionList } from "../rdp/RdpSessionList";
 import type { RdpProfile } from "../models/rdp";
-import { isRdpProfile, isJumpServerProfile, jumpServerConnectionProfile, type ConnectionProfile } from "../ssh/connectionTypes";
+import type { SmbProfile } from "../models/smb";
+import { smbConnectionProfile } from "../models/smb";
+import { SmbProfileEditor } from "../smb/SmbProfileEditor";
+import { SmbDeleteDialog } from "../smb/SmbDeleteDialog";
+import { listSmbProfiles, saveSmbProfile, deleteSmbProfile, mapSmbProfile, unmapSmbProfile } from "../services/smbService";
+import { isRdpProfile, isJumpServerProfile, isSmbProfile, jumpServerConnectionProfile, type ConnectionProfile } from "../ssh/connectionTypes";
 import { startRdpSession, closeRdpSession, focusRdpSession, saveRdpProfile, deleteRdpProfile } from "../services/rdpService";
 import { RdpDeleteDialog } from "../rdp/RdpDeleteDialog";
 import "../rdp/rdp.css";
@@ -61,7 +66,7 @@ import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
 import { RemoteFileTree } from "../sftp/RemoteFileTree";
 import { LocalFileTree } from "../sftp/LocalFileTree";
 import { ProfileEditor } from "../ssh/ProfileEditor";
-import { profileIconName } from "../ssh/profileIcons";
+import { profileIconName, sftpConnectionIconName } from "../ssh/profileIcons";
 import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
@@ -86,7 +91,7 @@ import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
 import { ToastHost, toast } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
-import { isMacOS } from "../platform";
+import { isMacOS, isWindows } from "../platform";
 import {
   ActivityBar,
   type ActivityId,
@@ -230,6 +235,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [rdpEditor, setRdpEditor] = useState<{ profile: RdpProfile | null; initialTags?: string[]; initialFolder?: string; clone?: boolean } | null>(null);
   const [rdpConnectTarget, setRdpConnectTarget] = useState<RdpProfile | null>(null);
   const [rdpDeleteTarget, setRdpDeleteTarget] = useState<RdpProfile | null>(null);
+  const [smbProfiles, setSmbProfiles] = useState<SmbProfile[]>([]);
+  const [smbEditor, setSmbEditor] = useState<{ profile: SmbProfile | null; clone?: boolean; initialTags?: string[]; initialFolder?: string } | null>(null);
+  const [smbDeleteTarget, setSmbDeleteTarget] = useState<SmbProfile | null>(null);
   const [s3EditorState, setS3EditorState] = useState<S3EditorState | null>(null);
   const [sshProfileDeleteTarget, setSshProfileDeleteTarget] = useState<SshProfile | null>(null);
   const [s3ProfileDeleteTarget, setS3ProfileDeleteTarget] = useState<S3Profile | null>(null);
@@ -345,6 +353,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const { setThemeMode, themeMode } = useTheme();
   const appLock = useAppLock();
   const rdp = useRdp(appLock.status?.locked ?? true);
+  const reloadSmb = useCallback(async () => { if (!appLock.status?.locked) setSmbProfiles(await listSmbProfiles()); }, [appLock.status?.locked]);
+  useEffect(() => {
+    if (appLock.status?.locked) { setSmbProfiles([]); setSmbEditor(null); setSmbDeleteTarget(null); return; }
+    void reloadSmb().catch((error: Error) => toast(error.message, "error"));
+  }, [appLock.status?.locked, reloadSmb]);
   useEffect(() => {
     if (appLock.status?.locked) {
       setRdpConnectTarget(null); setRdpEditor(null); setRdpDeleteTarget(null);
@@ -472,11 +485,14 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
   function connectManagedProfile(profile: ConnectionProfile) {
     if (isJumpServerProfile(profile)) { setJumpServerOpen(profile.id); recordUse(profile.id); setActiveActivity("connections"); }
-    else if (isRdpProfile(profile)) openRdp(profile); else if (profile.connectionType === "sftp") handleOpenSftpForProfile(profile); else handleConnectProfile(profile);
+    else if (isRdpProfile(profile)) openRdp(profile);
+    else if (isSmbProfile(profile)) void mapSmbProfile(profile.id).then(() => { recordUse(profile.id); toast(`${profile.driveLetter}: 已映射`, "success"); }).catch((e: Error) => toast(e.message, "error"));
+    else if (profile.connectionType === "sftp") handleOpenSftpForProfile(profile); else handleConnectProfile(profile);
   }
   function editManagedProfile(profile: ConnectionProfile) {
     if (isJumpServerProfile(profile)) setJumpServerEditor({ profile });
     else if (isRdpProfile(profile)) setRdpEditor({ profile });
+    else if (isSmbProfile(profile)) setSmbEditor({ profile });
     else openEditProfile(profile);
   }
 
@@ -492,6 +508,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // A compact remote tree can be docked alongside one SSH terminal. It is a
   // workspace presentation state, not a separate tab or an additional shell.
   const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
+  const pendingSftpTerminalStarts = useRef(new Set<string>());
   const [openRemoteFilePaths, setOpenRemoteFilePaths] = useState<string[]>([]);
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
   const [terminalNames, setTerminalNames] = useState<Record<string, string>>(initialState.terminalNames);
@@ -656,6 +673,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const isConnections = activeActivity === "connections";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
+  const openSshProfileIds = new Set(sessions.filter(isOpenSshTerminal).map((session) => session.profileId));
   // Keep every attached SFTP tab mounted. Besides retaining its directory
   // state, this keeps an in-flight Tauri command and its progress listener
   // alive while the user temporarily switches to a terminal or another tab.
@@ -675,7 +693,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             initialLocalPath={tab.localPath}
             initialRemotePath={tab.remotePath}
             onTabPathsChange={updateSftpTabPaths}
-            onOpenSshTerminal={profile ? () => void handleOpenSftpTerminal(profile) : undefined}
+            onOpenSshTerminal={profile && !openSshProfileIds.has(tab.profileId)
+              ? () => void handleOpenSftpTerminal(profile)
+              : undefined}
             profileId={tab.profileId}
             remoteName={profile?.name.trim() || tab.title}
             remoteEndpoint={endpoint}
@@ -1057,7 +1077,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   async function handleConnectProfile(profile: SshProfile, size?: TerminalSize) {
     setSelectedProfileId(profile.id);
     try {
-      await startSession(profile, size);
+      await startSession(profile, size, { waitForInitialResize: size === undefined });
       recordUse(profile.id);
       showTerminalSurface();
     } catch (error) {
@@ -1196,19 +1216,27 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   async function handleOpenSftpTerminal(profile: SshProfile) {
-    const existing = findSftpTerminal(sessions, profile.id, activeSessionId);
+    const existing = findSftpTerminal(sessions, profile.id, activeSessionId, { includePending: true });
     if (existing) { handleFocusTerminal(existing.id); setActiveRemoteFilePath(null); return; }
-    await handleConnectProfile(profile);
+    const pending = pendingSftpTerminalStarts.current;
+    if (pending.has(profile.id)) return;
+    pending.add(profile.id);
+    try {
+      await handleConnectProfile(profile);
+    } finally {
+      pending.delete(profile.id);
+    }
   }
 
   async function handleRenameConnectionFolder(oldPath: string, newName: string) {
     await renameConnectionFolder(oldPath, newName);
-    await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload()]);
+    await Promise.all([reloadProfiles(), rdp.reload(), jumpservers.reload(), reloadSmb()]);
   }
   async function handleRenameConnectionTag(oldTag: string, newTag: string) {
     await renameTag(oldTag, newTag);
     await Promise.all(rdp.profiles.filter(p => p.tags.includes(oldTag)).map(p => saveRdpProfile({ ...p, tags: [...new Set(p.tags.map(t => t === oldTag ? newTag : t))] }, { action: "keep" })));
-    await rdp.reload();
+    await Promise.all(smbProfiles.filter(p => p.tags.includes(oldTag)).map(p => saveSmbProfile({ ...p, tags: [...new Set(p.tags.map(t => t === oldTag ? newTag : t))] })));
+    await Promise.all([rdp.reload(), reloadSmb()]);
   }
 
   function handleOpenForwardForNode(node: SessionNode) {
@@ -1427,7 +1455,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     ...sftpTabs.map((tab) => ({
       id: tab.id,
       kind: "sftp" as const,
-      icon: profileIconName(profiles.find((profile) => profile.id === tab.profileId)?.icon),
+      icon: sftpConnectionIconName(profiles.find((profile) => profile.id === tab.profileId)?.icon),
       title: `SFTP · ${tab.title}`,
       renameValue: tab.title,
       active: isSftpActive && tab.id === activeSftpId,
@@ -1461,8 +1489,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       setFileTreeSessionId(null); setActiveActivity("sessions"); focusBrowserTab(tab.id); return;
     }
     if (tab.kind === "sftp") {
-      setFileTreeSessionId(null);
-      focusSftpTab(tab.id);
+      handleFocusSftpTab(tab.id);
       return;
     }
     if (tab.id !== fileTreeSessionId) {
@@ -1481,6 +1508,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     } else {
       setActiveSessionId(tab.id);
     }
+  }
+
+  function handleFocusSftpTab(tabId: string) {
+    setFileTreeSessionId(null);
+    focusSftpTab(tabId);
   }
 
   async function handleDuplicateTab(tab: WorkspaceTabItem) {
@@ -1673,6 +1705,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const sidebarContent =
     sidebarCollapsed || isConnections || isArtifactory ? null : activeActivity === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
+          openSshProfileIds={openSshProfileIds}
           onOpen={handleOpenSftpForProfile} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
           onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
           onEdit={openEditProfile} onClone={profile => setEditorState({ mode: "create", profile })}
@@ -1701,15 +1734,19 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           remoteDesktops={rdp.sessions.length ? <RdpSessionList sessions={rdp.sessions} onFocus={(id) => rdpAction(focusRdpSession(id))}
             onClose={(id) => rdpAction(closeRdpSession(id))} onReconnect={reconnectRdp} onRemove={rdp.dismissSession} /> : null}
           sessions={visibleSessions}
+          sftpTabs={sftpTabs}
           terminalNames={Object.fromEntries(visibleSessions.map((session) => [session.id, terminalName(session)]))}
           paneNames={paneNames}
           paneLayouts={panes.layouts}
           activeSessionId={activeSessionId}
-          isSftpActive={isSftpActive}
+          activeSftpId={isSftpActive ? activeSftpId : null}
           profiles={profiles}
           onFocusTerminal={handleFocusTerminal}
           onNewTerminal={handleNewTerminalForNode}
           onOpenSftp={handleOpenSftpForProfile}
+          onOpenSshTerminal={(profile) => void handleOpenSftpTerminal(profile)}
+          onFocusSftp={handleFocusSftpTab}
+          onCloseSftp={closeSftpTab}
           onOpenForward={handleOpenForwardForNode}
           onOpenFileList={handleOpenFileListForNode}
           onCloseSession={handleClosePane}
@@ -1751,7 +1788,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
       : null;
   const isLocalFileTree = fileTreeSession?.kind === "local";
-  const managedProfiles: ConnectionProfile[] = [...profiles, ...rdp.profiles, ...jumpservers.profiles.map(jumpServerConnectionProfile)];
+  const managedProfiles: ConnectionProfile[] = [...profiles, ...rdp.profiles, ...smbProfiles.map(smbConnectionProfile), ...jumpservers.profiles.map(jumpServerConnectionProfile)];
   const recentProfiles = recentIds
     .map((id) => managedProfiles.find((profile) => profile.id === id))
     .filter((profile): profile is ConnectionProfile => Boolean(profile))
@@ -1812,13 +1849,16 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder })}
         onCreateSftp={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
         onCreateRdp={(initialTags, initialFolder) => setRdpEditor({ profile: null, initialTags, initialFolder })}
+        onCreateSmb={(initialTags, initialFolder) => setSmbEditor({ profile: null, initialTags, initialFolder })}
+        onDisconnectSmb={(profile) => { if (isSmbProfile(profile)) void unmapSmbProfile(profile.id).then(() => toast(`${profile.driveLetter}: 已断开`, "success")).catch((e: Error) => toast(e.message, "error")); }}
         onEdit={editManagedProfile}
         onClone={(profile) => {
           if (isJumpServerProfile(profile)) setJumpServerEditor({ profile, clone: true });
           else if (isRdpProfile(profile)) setRdpEditor({ profile, clone: true });
+          else if (isSmbProfile(profile)) setSmbEditor({ profile, clone: true });
           else setEditorState({ mode: "create", profile });
         }}
-        onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
+        onDelete={(profile) => { if (isJumpServerProfile(profile)) setJumpServerDelete(profile); else if (isRdpProfile(profile)) setRdpDeleteTarget(profile); else if (isSmbProfile(profile)) setSmbDeleteTarget(profile); else handleDeleteProfile(profile.id); }}
         onRenameFolder={handleRenameConnectionFolder}
         onRenameTag={handleRenameConnectionTag}
       />
@@ -1932,6 +1972,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   function buildPaletteItems(): PaletteItem[] {
     const items: PaletteItem[] = [
       { id: "act:new-rdp", label: "新建 RDP 远程桌面", hint: "连接", icon: "monitor", keywords: "windows remote desktop 远程桌面", run: () => setRdpEditor({ profile: null }) },
+      ...(isWindows ? [{ id: "act:new-smb", label: "新建网络共享映射", hint: "连接", icon: "folder" as const,
+        keywords: "smb unc network drive 共享盘 映射盘符", run: () => setSmbEditor({ profile: null }) }] : []),
       ...rdp.sessions.filter((s) => s.status === "connected").map((session): PaletteItem => ({ id: `rdp-focus:${session.id}`, label: `打开桌面窗口 · ${session.title}`, hint: "活动会话", icon: "monitor", keywords: "rdp focus desktop", run: () => rdpAction(focusRdpSession(session.id)) })),
       { id: "act:browser", label: "打开浏览器", hint: "工具", icon: "globe", keywords: "browser webview web 网页 浏览器", run: handleOpenBrowser },
       { id: "act:new-local", label: "新建本地终端", hint: "终端", icon: "terminalTool", keywords: "local shell", run: () => void handleStartLocalSession() },
@@ -2369,6 +2411,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           profile={editorState.profile}
           onCreateJumpServer={(folder) => { setJumpServerEditor({ profile: null, initialFolder: folder }); closeEditor(); }}
           onCreateRdp={(folder) => { setRdpEditor({ profile: null, initialTags: editorState.initialTags, initialFolder: folder }); closeEditor(); }}
+          onCreateSmb={(folder) => { setSmbEditor({ profile: null, initialTags: editorState.initialTags, initialFolder: folder }); closeEditor(); }}
         />
       ) : null}
       {jumpServerEditor ? <JumpServerProfileEditor profile={jumpServerEditor.profile}
@@ -2386,6 +2429,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         clone={rdpEditor.clone} initialFolder={rdpEditor.initialFolder}
         allTags={[...new Set([...allTags, ...rdp.profiles.flatMap((p) => p.tags)])]} engine={rdp.engine}
         onClose={() => setRdpEditor(null)} onSaved={rdp.reload} /> : null}
+      {smbEditor ? <SmbProfileEditor profile={smbEditor.profile} clone={smbEditor.clone} initialTags={smbEditor.initialTags}
+        initialFolder={smbEditor.initialFolder} allTags={allTags} onClose={() => setSmbEditor(null)} onSaved={reloadSmb} /> : null}
+      {smbDeleteTarget ? <SmbDeleteDialog profile={smbDeleteTarget} onClose={() => setSmbDeleteTarget(null)}
+        onDelete={async () => { await deleteSmbProfile(smbDeleteTarget.id); await reloadSmb(); setSmbDeleteTarget(null); }} /> : null}
       {rdpConnectTarget ? <RdpConnectDialog profile={rdpConnectTarget} onClose={() => setRdpConnectTarget(null)} onConnect={(password) => connectRdp(rdpConnectTarget, password)} /> : null}
       {rdpDeleteTarget ? <RdpDeleteDialog profile={rdpDeleteTarget} onClose={() => setRdpDeleteTarget(null)}
         onDelete={async () => { await deleteRdpProfile(rdpDeleteTarget.id); await rdp.reload(); setRdpDeleteTarget(null); }} /> : null}

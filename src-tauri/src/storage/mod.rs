@@ -2,6 +2,7 @@ use crate::config::DATABASE_FILE_NAME;
 
 pub mod profile_repository;
 pub mod rdp_repository;
+pub mod smb_repository;
 
 pub use profile_repository::ProfileRepository;
 

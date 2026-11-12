@@ -3,10 +3,12 @@ import { invokeCommand } from "./tauri";
 
 export const SFTP_TRANSFER_PROGRESS_EVENT = "sftp://transfer-progress";
 
+export type SftpTransferDirection = "delete" | "download" | "upload" | "copy";
+
 export interface SftpTransferProgress {
   operationId: string;
   profileId: string;
-  direction: "delete" | "download" | "upload";
+  direction: SftpTransferDirection;
   name: string;
   path: string;
   transferred: number;
@@ -29,7 +31,7 @@ export function onSftpDownloadProgress(handler: (progress: SftpTransferProgress)
   });
 }
 
-export function createSftpOperationId(direction: "delete" | "download" | "upload") {
+export function createSftpOperationId(direction: SftpTransferDirection) {
   const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `sftp-${direction}-${suffix}`;
 }
@@ -208,6 +210,15 @@ export function sftpUploadDir(
 
 export function sftpCreateDir(profileId: string, parentPath: string, name: string) {
   return invokeCommand<string>("sftp_create_dir", { name, parentPath, profileId });
+}
+
+export function sftpCopyRemote(
+  profileId: string,
+  source: string,
+  destination: string,
+  operationId: string,
+) {
+  return invokeCommand<void>("sftp_copy_remote", { profileId, source, destination, operationId });
 }
 
 export function sftpCreateFile(profileId: string, parentPath: string, name: string) {

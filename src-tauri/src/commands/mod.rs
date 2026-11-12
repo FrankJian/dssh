@@ -13,5 +13,6 @@ pub mod workspace;
 
 pub mod browser;
 pub mod rdp;
+pub mod smb;
 
 pub mod jumpserver;

@@ -26,13 +26,14 @@ interface Options {
   query: string;
   showHidden: boolean;
   enabled: boolean;
+  maxDepth: number | null;
   list: (path: string) => Promise<BrowserEntry[]>;
 }
 export function useRecursiveFileSearch(options: Options) {
-  const { root, rootEntries, side, query, showHidden, enabled, list } = options;
+  const { root, rootEntries, side, query, showHidden, enabled, maxDepth, list } = options;
   const controller = useRef<AbortController | null>(null);
   const [revision, setRevision] = useState(0);
-  const key = JSON.stringify([root, query, showHidden, enabled, revision]);
+  const key = JSON.stringify([root, side, query, showHidden, enabled, maxDepth, revision]);
   const [state, setState] = useState<
     SearchProgress & { key: string; status: RecursiveSearchStatus }
   >({ ...empty, key, status: "idle" });
@@ -47,7 +48,6 @@ export function useRecursiveFileSearch(options: Options) {
     setState({ ...empty, key, status: "pending" });
     const timer = window.setTimeout(() => {
       if (abort.signal.aborted) return;
-      let published = 0;
       setState({ ...empty, key, status: "searching" });
       void recursiveFileSearch({
         root,
@@ -55,11 +55,11 @@ export function useRecursiveFileSearch(options: Options) {
         side,
         query,
         showHidden,
+        maxDepth,
         list,
         signal: abort.signal,
         onProgress: (progress) => {
-          if (!abort.signal.aborted && Date.now() - published >= 80) {
-            published = Date.now();
+          if (!abort.signal.aborted) {
             setState({ ...progress, key, status: "searching" });
           }
         },
@@ -86,7 +86,7 @@ export function useRecursiveFileSearch(options: Options) {
       window.clearTimeout(timer);
       abort.abort();
     };
-  }, [active, root, rootEntries, side, query, showHidden, list, key]);
+  }, [active, root, rootEntries, side, query, showHidden, maxDepth, list, key]);
   function cancel() {
     controller.current?.abort();
     setState((current) => ({

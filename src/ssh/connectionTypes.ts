@@ -1,20 +1,25 @@
 import type { JumpServerProfile } from "../models/jumpserver";
 import type { SshProfile } from "../models";
 import type { RdpConnectionProfile } from "../models/rdp";
+import type { SmbConnectionProfile } from "../models/smb";
 import type { IconName } from "../ui/Icon";
+import { isWindows } from "../platform.ts";
 
 /**
  * The connection-type catalogue is intentionally independent from SshProfile.
  * SSH, RDP and JumpServer keep their own persisted DTOs and are aggregated only for display.
  * Future protocols can join without adding unrelated fields to SshProfile.
  */
-export type ConnectionType = "ssh" | "telnet" | "sftp" | "rdp" | "jumpserver";
+export type ConnectionType = "ssh" | "telnet" | "sftp" | "rdp" | "jumpserver" | "smb";
 export type JumpServerConnectionProfile = JumpServerProfile & {
   protocol: "jumpserver";
   host: string; port: number; username: string;
   favorite: false; tags: string[]; description: string;
 };
-export type ConnectionProfile = SshProfile | RdpConnectionProfile | JumpServerConnectionProfile;
+export type ConnectionProfile = SshProfile | RdpConnectionProfile | JumpServerConnectionProfile | SmbConnectionProfile;
+export function isSmbProfile(profile: ConnectionProfile): profile is SmbConnectionProfile {
+  return "protocol" in profile && profile.protocol === "smb";
+}
 export function isJumpServerProfile(profile: ConnectionProfile): profile is JumpServerConnectionProfile {
   return "protocol" in profile && profile.protocol === "jumpserver";
 }
@@ -38,6 +43,7 @@ export interface ConnectionTypeOption {
 export const CONNECTION_TYPE_OPTIONS: readonly ConnectionTypeOption[] = [
   { available: true, description: "堡垒机授权资产目录与终端", icon: "stackedHexagon", id: "jumpserver", label: "JumpServer" },
   { available: true, description: "Windows 远程桌面（独立窗口）", icon: "monitor", id: "rdp", label: "RDP" },
+  { available: isWindows, description: "Windows 网络共享盘符映射", icon: "folder", id: "smb", label: "网络共享 (SMB)" },
   {
     available: true,
     description: "远程终端、文件管理与端口转发",
@@ -76,7 +82,7 @@ export interface ConnectionTypeGroup {
 
 /** Connection cards use a discriminator; legacy SSH DTOs remain compatible. */
 export function connectionTypeForProfile(profile: ConnectionProfile): ConnectionType {
-  return isJumpServerProfile(profile) ? "jumpserver" : isRdpProfile(profile) ? "rdp" : profile.connectionType ?? "ssh";
+  return isJumpServerProfile(profile) ? "jumpserver" : isRdpProfile(profile) ? "rdp" : isSmbProfile(profile) ? "smb" : profile.connectionType ?? "ssh";
 }
 
 export function connectionTypeLabel(type: ConnectionType): string {

@@ -78,6 +78,39 @@ export function remoteParent(path: string): string {
 export function joinRemote(directory: string, name: string): string {
   return `${directory.replace(/\/+$/, "")}/${name}`;
 }
+
+export function directoryBreadcrumbs(path: string, local: boolean) {
+  const items: { path: string; label: string }[] = [];
+  const windows = local && isWindowsLocalPath(path);
+  const parentOf = local ? localParent : remoteParent;
+  const isRoot = local ? isLocalRoot : isRemoteRoot;
+  const separators = windows ? /[\\/]+/ : /\/+/;
+  let current = path;
+  while (current && items.length < 3) {
+    const root = isRoot(current);
+    const label = root ? current : current.split(separators).filter(Boolean).pop() || current;
+    items.unshift({ path: current, label });
+    const parent = parentOf(current);
+    if (root || parent === current || (!windows && !/^(\/|[a-z]:\/)/i.test(current))) {
+      current = "";
+    } else {
+      current = parent;
+    }
+  }
+  return { items, truncated: Boolean(current) };
+}
+
+export function directorySuggestionQuery(path: string, windows: boolean, showChildren: boolean) {
+  const value = windows ? path.replace(/\//g, "\\") : path;
+  const separator = windows ? "\\" : "/";
+  if (showChildren || value.endsWith(separator) || (windows ? isLocalRoot(value) : isRemoteRoot(value))) {
+    return { directory: value, prefix: "" };
+  }
+  return {
+    directory: windows ? localParent(value) : remoteParent(value),
+    prefix: value.slice(value.lastIndexOf(separator) + 1),
+  };
+}
 export function addressText(input: string): string {
   const value = input.trim();
   const result =

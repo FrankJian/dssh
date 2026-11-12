@@ -29,13 +29,18 @@ export type IconName =
   | "arrowIntoWindow"
   | "file"
   | "fileArchive"
+  | "fileBraces"
   | "fileCode"
   | "fileImage"
+  | "fileKey"
   | "fileMusic"
+  | "filePdf"
   | "fileSpreadsheet"
+  | "fileTerminal"
   | "fileText"
   | "fileVideo"
   | "folder"
+  | "folderOpen"
   | "tag"
   | "folderPlus"
   | "filePlus"
@@ -75,6 +80,7 @@ export type IconName =
   | "sun"
   | "system"
   | "server"
+  | "serverFolder"
   | "terminalTool"
   | "tree"
   | "toolbox"
@@ -97,7 +103,23 @@ const centeredViewBoxes: Partial<Record<IconName, string>> = {
   linux: "0 1 24 24",
 };
 
+const sheetDetails: Partial<Record<IconName, string>> = {
+  file: "",
+  fileText: "M8.5 12h7M8.5 16h5",
+  fileCode: "m10 12-2 2 2 2m4-4 2 2-2 2",
+  fileBraces: "M10.5 10.5H10a1 1 0 0 0-1 1v1.3l-1 1.2 1 1.2v1.3a1 1 0 0 0 1 1h.5m3-7h.5a1 1 0 0 1 1 1v1.3l1 1.2-1 1.2v1.3a1 1 0 0 1-1 1h-.5",
+  fileImage: "m8 17 3-3 2 2 2-2 2 3M9.5 11.5h.01",
+  fileArchive: "M11 7.5h2m-1 3h2m-3 3h2m-1 3h2",
+  fileMusic: "M10 16.8a1.4 1.4 0 1 0 2.8 0v-6l3.2 1.7",
+  fileVideo: "m10 11.5 5.5 3-5.5 3z",
+  fileSpreadsheet: "M8.5 11.5h7v6h-7zM8.5 14.5h7m-3.5-3v6",
+  fileTerminal: "m8.5 12 2.5 2.5L8.5 17m5 0h2.5",
+  fileKey: "M12.8 14a2 2 0 1 0-2.8-2.8 2 2 0 0 0 2.8 2.8Zm0 0 3 3m-1.5-1.5 1.2-1.2",
+  filePdf: "M8.5 16.7c2.6-1.1 4.9-4.6 4.6-6.1-.1-.5-.7-.4-.8.2-.4 2.7 2 5 3.8 5.4.6.1.8-.5.2-.7-1.6-.6-5.6.1-7.8 1.2",
+};
+
 export function Icon({ name, ...props }: IconProps) {
+  const sheetDetail = sheetDetails[name];
   return (
     <svg
       aria-hidden="true"
@@ -183,6 +205,13 @@ export function Icon({ name, ...props }: IconProps) {
           <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
         </>
       ) : null}
+      {name === "serverFolder" ? (
+        <>
+          <rect x="3" y="4" width="18" height="6" rx="1.5" />
+          <path d="M6.5 7h.01M10 7h7.5M3 13.5v4A1.5 1.5 0 0 0 4.5 19H6" />
+          <path fill="var(--icon-wash, none)" d="M9 14a1 1 0 0 1 1-1h3l1.4 1.5H20a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1z" />
+        </>
+      ) : null}
       {/* Outline adaptation of the JumpServer layered hexagon mark:
           https://download.jumpserver.org/images/jumpserver-logo.svg */}
       {name === "stackedHexagon" ? (
@@ -261,7 +290,13 @@ export function Icon({ name, ...props }: IconProps) {
         </>
       ) : null}
       {name === "folder" ? (
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+        <path fill="var(--icon-wash, none)" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+      ) : null}
+      {name === "folderOpen" ? (
+        <>
+          <path d="M3 17.5V7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2" />
+          <path fill="var(--icon-wash, none)" d="M3 18.3 5.2 12a1.5 1.5 0 0 1 1.4-1h14.2a1 1 0 0 1 .9 1.3l-2.2 6A1.8 1.8 0 0 1 17.8 19.5H4a1 1 0 0 1-1-1.2Z" />
+        </>
       ) : null}
       {name === "house" ? (
         <>
@@ -311,52 +346,11 @@ export function Icon({ name, ...props }: IconProps) {
       {name === "shield" ? (
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
       ) : null}
-      {name === "file" ? (
+      {sheetDetail !== undefined ? (
         <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5" />
-        </>
-      ) : null}
-      {name === "fileText" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M8.5 12h7M8.5 16h7" />
-        </>
-      ) : null}
-      {name === "fileCode" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M10 12l-2 2 2 2M14 12l2 2-2 2" />
-        </>
-      ) : null}
-      {name === "fileImage" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M8 17l3-3 2 2 2-2 2 3M9.5 11.5h.01" />
-        </>
-      ) : null}
-      {name === "fileArchive" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M11 8h2M11 11h2M11 14h2M10 17h4" />
-        </>
-      ) : null}
-      {name === "fileMusic" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M14 12v5.5a1.5 1.5 0 1 1-1-1.3M14 12l3-1v5.5a1.5 1.5 0 1 1-1-1.3" />
-        </>
-      ) : null}
-      {name === "fileVideo" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M10 12l5 3-5 3v-6Z" />
-        </>
-      ) : null}
-      {name === "fileSpreadsheet" ? (
-        <>
-          <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-          <path d="M14 3v5h5M8 12h8M8 16h8M12 10v8" />
+          <path fill="var(--icon-wash, none)" d="M7 3h6.5L19 8.5V19a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+          <path d="M13.5 3v4a1.5 1.5 0 0 0 1.5 1.5h4" />
+          {sheetDetail ? <path d={sheetDetail} /> : null}
         </>
       ) : null}
       {name === "download" ? (

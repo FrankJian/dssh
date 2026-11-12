@@ -1,4 +1,4 @@
-import { connectionTypeForProfile, connectionTypeLabel, isJumpServerProfile, type ConnectionProfile } from "../ssh/connectionTypes.ts";
+import { connectionTypeForProfile, connectionTypeLabel, isJumpServerProfile, isSmbProfile, type ConnectionProfile } from "../ssh/connectionTypes.ts";
 import type { PaletteItem } from "./CommandPalette";
 import { buildConnectionFolders, type ConnectionFolderNode } from "../ssh/connectionFolders.ts";
 
@@ -36,12 +36,12 @@ export function connectionActionPaletteItems(profiles: ConnectionProfile[], acti
   return profiles.flatMap((profile): PaletteItem[] => {
     const type = connectionTypeForProfile(profile);
     const label = connectionTypeLabel(type);
-    const address = isJumpServerProfile(profile) ? profile.coreUrl : `${profile.username}@${profile.host}:${profile.port}`;
+    const address = isJumpServerProfile(profile) ? profile.coreUrl : isSmbProfile(profile) ? `${profile.sharePath} → ${profile.driveLetter}:` : `${profile.username}@${profile.host}:${profile.port}`;
     const keywords = `${type} ${connectionSearchKeywords(profile)}`;
     const openId = type === "ssh" ? `conn:${profile.id}` : `${type}:${profile.id}`;
     return [
-      { id: openId, label: `${type === "jumpserver" ? "打开资产" : type === "rdp" ? "远程桌面" : type === "sftp" ? "打开 SFTP" : "连接 SSH"}：${profile.name}`,
-        hint: address, icon: type === "jumpserver" ? "stackedHexagon" : type === "rdp" ? "monitor" : type === "sftp" ? "folder" : "ssh",
+      { id: openId, label: `${type === "jumpserver" ? "打开资产" : type === "rdp" ? "远程桌面" : type === "sftp" ? "打开 SFTP" : type === "smb" ? "映射网络共享" : "连接 SSH"}：${profile.name}`,
+        hint: address, icon: type === "jumpserver" ? "stackedHexagon" : type === "rdp" ? "monitor" : type === "sftp" || type === "smb" ? "folder" : "ssh",
         keywords: `${keywords} connect open 打开 连接`, run: () => actions.onOpen(profile) },
       { id: type === "ssh" ? `conn:edit:${profile.id}` : `${type}:edit:${profile.id}`, label: `编辑 ${label} 配置：${profile.name}`,
         hint: address, icon: "edit", keywords: `${keywords} edit 编辑`, run: () => actions.onEdit(profile) },

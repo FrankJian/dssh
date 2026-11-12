@@ -7,8 +7,8 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use russh::ChannelMsg;
 use russh_sftp::{
-    client::SftpSession,
-    protocol::{FileAttributes, OpenFlags},
+    client::{SftpSession, error::Error as SftpClientError, fs::File as RemoteFile},
+    protocol::{FileAttributes, OpenFlags, StatusCode},
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -53,6 +53,7 @@ enum TransferDirection {
     Download,
     Upload,
     Delete,
+    Copy,
 }
 
 /// Emit progress at most every ~256 KiB (and always on completion) to avoid
@@ -582,6 +583,194 @@ impl SftpManager {
         result
     }
 
+    /// Copy between two paths in the same SFTP namespace. KoKo exposes each
+    /// authorized asset through this namespace and handles each open separately.
+    pub async fn copy_remote(
+        &self,
+        app: &AppHandle,
+        profile: &SshProfile,
+        source: &str,
+        destination: &str,
+        operation_id: &str,
+    ) -> AppResult<()> {
+        let conn = self.connection(profile).await?;
+        let sftp = &conn.sftp;
+        validate_remote_copy_location(sftp, source, destination).await?;
+        require_remote_copy_destination(sftp, destination).await?;
+        let temporary = join_path(
+            &parent_path(destination),
+            &format!(".dssh-copy-{:032x}.part", rand::random::<u128>()),
+        );
+        let transfer = TransferContext {
+            operation_id,
+            profile_id: &profile.id,
+        };
+        let mut created = Vec::new();
+        let result = async {
+            let mut pending = vec![(source.to_owned(), temporary.clone(), 0)];
+            while let Some((source, target, depth)) = pending.pop() {
+                if self.operation_cancelled(operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
+                if depth > 64 {
+                    return Err(AppError::new("sftp_copy_limit", "复制目录超过 64 层。"));
+                }
+                let metadata = sftp.symlink_metadata(&source).await.map_err(sftp_error)?;
+                if metadata.is_dir() {
+                    sftp.create_dir(&target).await.map_err(sftp_error)?;
+                    created.push((target.clone(), true));
+                    for entry in sftp.read_dir(&source).await.map_err(|error| {
+                        AppError::new(
+                            "sftp_copy_read",
+                            format!("无法读取来源目录 {source}：{error}"),
+                        )
+                    })? {
+                        let name = entry.file_name();
+                        if matches!(name.as_str(), "." | "..") {
+                            continue;
+                        }
+                        if !valid_remote_copy_name(&name) || entry.file_type().is_symlink() {
+                            return Err(AppError::new(
+                                "sftp_copy_invalid_entry",
+                                format!("无法复制目录条目：{name}"),
+                            ));
+                        }
+                        pending.push((
+                            join_path(&source, &name),
+                            join_path(&target, &name),
+                            depth + 1,
+                        ));
+                    }
+                } else if metadata.file_type().is_file() {
+                    let input = sftp.open(&source).await.map_err(|error| {
+                        AppError::new(
+                            "sftp_copy_read",
+                            format!("无法打开来源文件 {source}：{error}"),
+                        )
+                    })?;
+                    let output = sftp
+                        .open_with_flags(
+                            &target,
+                            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+                        )
+                        .await
+                        .map_err(|error| {
+                            AppError::new(
+                                "sftp_copy_write",
+                                format!("无法创建目标文件 {target}：{error}"),
+                            )
+                        })?;
+                    created.push((target, false));
+                    self.copy_remote_file(app, input, output, &source, &transfer, metadata.size)
+                        .await?;
+                } else {
+                    return Err(AppError::new(
+                        "sftp_copy_invalid_entry",
+                        format!("仅支持复制普通文件和目录：{source}"),
+                    ));
+                }
+            }
+            if self.operation_cancelled(operation_id).await {
+                return Err(operation_cancelled_error());
+            }
+            require_remote_copy_destination(sftp, destination).await?;
+            sftp.rename(&temporary, destination)
+                .await
+                .map_err(sftp_error)
+        }
+        .await;
+        if let Err(error) = result {
+            let mut cleanup_error = None;
+            for (path, is_dir) in created.into_iter().rev() {
+                let removed = if is_dir {
+                    sftp.remove_dir(&path).await
+                } else {
+                    sftp.remove_file(&path).await
+                };
+                if let Err(error) = removed {
+                    cleanup_error.get_or_insert(error);
+                }
+            }
+            if let Some(cleanup_error) = cleanup_error {
+                return Err(AppError::new(
+                    "sftp_copy_cleanup",
+                    format!(
+                        "{}；无法清理目标临时路径 {temporary}：{cleanup_error}",
+                        error.message
+                    ),
+                ));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn copy_remote_file(
+        &self,
+        app: &AppHandle,
+        mut input: RemoteFile,
+        mut output: RemoteFile,
+        source: &str,
+        transfer: &TransferContext<'_>,
+        total: Option<u64>,
+    ) -> AppResult<()> {
+        let mut transferred = 0;
+        let result = async {
+            let mut buffer = vec![0u8; 64 * 1024];
+            let mut last_emitted = 0;
+            emit_progress(
+                app,
+                transfer,
+                TransferDirection::Copy,
+                source,
+                0,
+                total,
+                false,
+            );
+            loop {
+                if self.operation_cancelled(transfer.operation_id).await {
+                    return Err(operation_cancelled_error());
+                }
+                let count = input.read(&mut buffer).await.map_err(sftp_error)?;
+                if count == 0 {
+                    break;
+                }
+                output
+                    .write_all(&buffer[..count])
+                    .await
+                    .map_err(sftp_error)?;
+                transferred += count as u64;
+                if transferred - last_emitted >= PROGRESS_STEP {
+                    last_emitted = transferred;
+                    emit_progress(
+                        app,
+                        transfer,
+                        TransferDirection::Copy,
+                        source,
+                        transferred,
+                        total,
+                        false,
+                    );
+                }
+            }
+            Ok(())
+        }
+        .await;
+        let close = output.shutdown().await.map_err(sftp_error);
+        result?;
+        close?;
+        emit_progress(
+            app,
+            transfer,
+            TransferDirection::Copy,
+            source,
+            transferred,
+            total,
+            true,
+        );
+        Ok(())
+    }
+
     pub async fn create_dir(
         &self,
         profile: &SshProfile,
@@ -1071,7 +1260,12 @@ async fn open_connection(profile: &SshProfile, pool: &SshConnectionPool) -> AppR
         .map_err(ssh_error)?;
     let sftp = SftpSession::new(channel.into_stream())
         .await
-        .map_err(sftp_error)?;
+        .map_err(|error| {
+            AppError::new(
+                "sftp_subsystem_error",
+                format!("无法初始化 SFTP 子系统，请确认此 SSH 入口已开放原生 SFTP：{error}"),
+            )
+        })?;
 
     Ok(SftpConn {
         transport,
@@ -1353,6 +1547,58 @@ async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> AppResult<()> {
     }
 }
 
+fn valid_remote_copy_name(name: &str) -> bool {
+    !name.is_empty() && !matches!(name, "." | "..") && !name.contains(['/', '\\', '\0'])
+}
+
+fn validate_remote_copy_paths(source: &str, destination: &str) -> AppResult<()> {
+    for path in [source, destination] {
+        if !path.starts_with('/') || !path[1..].split('/').all(valid_remote_copy_name) {
+            return Err(AppError::new(
+                "sftp_invalid_path",
+                "请选择有效的远程文件或目录。",
+            ));
+        }
+    }
+    if source == destination || is_descendant(destination, source) {
+        return Err(AppError::new(
+            "sftp_copy_same_path",
+            "不能将项目复制到自身或其子目录。",
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_remote_copy_location(
+    sftp: &SftpSession,
+    source: &str,
+    destination: &str,
+) -> AppResult<()> {
+    validate_remote_copy_paths(source, destination)?;
+    let real_source = sftp.canonicalize(source).await.map_err(sftp_error)?;
+    let real_parent = sftp
+        .canonicalize(parent_path(destination))
+        .await
+        .map_err(sftp_error)?;
+    validate_remote_copy_paths(
+        &normalize_dir(&real_source),
+        &join_path(&real_parent, path_name(destination)),
+    )
+}
+
+async fn require_remote_copy_destination(sftp: &SftpSession, path: &str) -> AppResult<()> {
+    match sftp.symlink_metadata(path).await {
+        Err(SftpClientError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+            Ok(())
+        }
+        Err(error) => Err(sftp_error(error)),
+        Ok(_) => Err(AppError::new(
+            "sftp_copy_exists",
+            format!("目标已存在：{path}"),
+        )),
+    }
+}
+
 fn local_child_path(parent: &Path, name: &str) -> AppResult<PathBuf> {
     let child = Path::new(name);
     if child.components().count() != 1
@@ -1525,6 +1771,23 @@ mod tests {
         assert_eq!(super::normalize_dir("/srv/name /"), "/srv/name ");
         assert_eq!(super::non_empty_path("/srv/name ").unwrap(), "/srv/name ");
         assert!(super::non_root_path("///").is_err());
+    }
+
+    #[test]
+    fn remote_copy_rejects_ambiguous_paths_and_recursive_destinations() {
+        use super::validate_remote_copy_paths as validate;
+
+        assert!(validate("/team/asset A/file ", "/team/asset B/file ").is_ok());
+        assert!(validate("/asset/data", "/asset/database/data").is_ok());
+        for destination in [
+            "/asset/data",
+            "/asset/data/child/data",
+            "/asset/../data",
+            "/asset//data",
+        ] {
+            assert!(validate("/asset/data", destination).is_err());
+        }
+        assert!(validate("/", "/asset/data").is_err());
     }
 
     use super::{

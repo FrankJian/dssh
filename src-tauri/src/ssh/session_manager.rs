@@ -66,6 +66,7 @@ const OUTPUT_FLUSH_BYTES: usize = 16 * 1024;
 /// short window to replace the request's fallback size before spawning it.
 const LOCAL_INITIAL_RESIZE_WAIT: Duration = Duration::from_millis(250);
 const LOCAL_INITIAL_RESIZE_POLL: Duration = Duration::from_millis(2);
+const INITIAL_PTY_FIT_TIMEOUT: Duration = Duration::from_millis(750);
 const ZMODEM_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 const ZMODEM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const ZMODEM_SHELL_RETURN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -236,6 +237,86 @@ enum SessionCommand {
     CancelReconnect,
 }
 
+struct SshStartup {
+    size: TerminalSize,
+    wait_for_initial_resize: bool,
+    received_resize: bool,
+    input: String,
+    exit_intent: ShellExitIntent,
+}
+
+impl SshStartup {
+    fn new(size: TerminalSize, wait_for_initial_resize: bool) -> Self {
+        Self {
+            size,
+            wait_for_initial_resize,
+            received_resize: false,
+            input: String::new(),
+            exit_intent: ShellExitIntent::default(),
+        }
+    }
+
+    fn handle_command(
+        &mut self,
+        command: Option<SessionCommand>,
+        accept_input: bool,
+    ) -> AppResult<bool> {
+        match command {
+            Some(SessionCommand::Resize(size)) => {
+                self.size = size;
+                self.received_resize = true;
+            }
+            Some(SessionCommand::Input { data, interactive }) if accept_input => {
+                if self.input.len().saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
+                    return Err(AppError::new(
+                        "session_input_limit",
+                        "连接期间输入过多，请等待连接完成。",
+                    ));
+                }
+                self.input.push_str(&data);
+                self.exit_intent.observe(&data, interactive);
+            }
+            Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => {
+                return Ok(false);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    async fn prepare_pty(
+        &mut self,
+        rx: &mut mpsc::Receiver<SessionCommand>,
+        accept_input: bool,
+    ) -> AppResult<bool> {
+        if !self.wait_for_initial_resize {
+            return Ok(true);
+        }
+        // A reused transport may be ready before the terminal view has even
+        // mounted. Set the measured size before the shell paints its prompt.
+        let wait = tokio::time::timeout(INITIAL_PTY_FIT_TIMEOUT, async {
+            while !self.received_resize {
+                if !self.handle_command(rx.recv().await, accept_input)? {
+                    return Ok(false);
+                }
+            }
+            Ok::<_, AppError>(true)
+        })
+        .await;
+        if let Ok(result) = wait
+            && !result?
+        {
+            return Ok(false);
+        }
+        while let Ok(command) = rx.try_recv() {
+            if !self.handle_command(Some(command), accept_input)? {
+                return Ok(false);
+            }
+        }
+        Ok(!rx.is_closed())
+    }
+}
+
 /// Outcome of one connect-and-run attempt for an SSH session.
 enum ConnOutcome {
     /// The user explicitly closed the session.
@@ -379,7 +460,23 @@ impl SessionManager {
         profile: SshProfile,
         size: TerminalSize,
     ) -> AppResult<TerminalSession> {
-        self.start_owned_session(app_handle, profile, size, None, None)
+        self.start_session_with_initial_fit(app_handle, profile, size, false)
+    }
+
+    pub fn start_session_with_initial_fit(
+        &self,
+        app_handle: AppHandle,
+        profile: SshProfile,
+        size: TerminalSize,
+        wait_for_initial_resize: bool,
+    ) -> AppResult<TerminalSession> {
+        self.start_owned_session(
+            app_handle,
+            profile,
+            SshStartup::new(size, wait_for_initial_resize),
+            None,
+            None,
+        )
     }
 
     pub fn start_background_session(
@@ -391,10 +488,13 @@ impl SessionManager {
         self.start_owned_session(
             app,
             profile,
-            TerminalSize {
-                cols: 120,
-                rows: 40,
-            },
+            SshStartup::new(
+                TerminalSize {
+                    cols: 120,
+                    rows: 40,
+                },
+                false,
+            ),
             Some(conversation.to_string()),
             None,
         )
@@ -404,7 +504,7 @@ impl SessionManager {
         &self,
         app_handle: AppHandle,
         profile: SshProfile,
-        size: TerminalSize,
+        startup: SshStartup,
         conversation: Option<String>,
         restart: Option<(&str, &watch::Receiver<bool>)>,
     ) -> AppResult<TerminalSession> {
@@ -504,7 +604,7 @@ impl SessionManager {
                 app_handle.clone(),
                 task_session_id.clone(),
                 profile,
-                size,
+                startup,
                 rx,
                 output,
                 pool,
@@ -747,7 +847,13 @@ impl SessionManager {
         stop_session_worker(&handle).await?;
         let restart = Some((session_id, &handle.closed));
         match profile {
-            Some(profile) => self.start_owned_session(app_handle, profile, size, None, restart)?,
+            Some(profile) => self.start_owned_session(
+                app_handle,
+                profile,
+                SshStartup::new(size, false),
+                None,
+                restart,
+            )?,
             None => self.spawn_local_session(app_handle, size, restart)?,
         };
         Ok(())
@@ -959,7 +1065,7 @@ async fn run_ssh_session(
     app_handle: AppHandle,
     session_id: String,
     profile: SshProfile,
-    mut size: TerminalSize,
+    startup: SshStartup,
     mut rx: mpsc::Receiver<SessionCommand>,
     output: Arc<Mutex<String>>,
     pool: SshConnectionPool,
@@ -968,7 +1074,7 @@ async fn run_ssh_session(
         &app_handle,
         &session_id,
         &profile,
-        &mut size,
+        startup,
         &mut rx,
         &output,
         &pool,
@@ -1214,7 +1320,7 @@ async fn connect_and_run(
     app_handle: &AppHandle,
     session_id: &str,
     profile: &SshProfile,
-    size: &mut TerminalSize,
+    mut startup: SshStartup,
     rx: &mut mpsc::Receiver<SessionCommand>,
     output: &Arc<Mutex<String>>,
     pool: &SshConnectionPool,
@@ -1242,26 +1348,26 @@ async fn connect_and_run(
         }
     };
     tokio::pin!(acquire);
-    let mut early_input = String::new();
-    let mut exit_intent = ShellExitIntent::default();
+    let accept_early_input = !crate::jumpserver::is_target(&profile.id);
     let transport = loop {
         tokio::select! {
             result = &mut acquire => break result?,
-            command = rx.recv() => match command {
-                Some(SessionCommand::Resize(new_size)) => *size = new_size,
-                Some(SessionCommand::Input { data, interactive }) => {
-                    if crate::jumpserver::is_target(&profile.id) { continue; }
-                    if early_input.len().saturating_add(data.len()) > MAX_POST_TRANSFER_INPUT_BYTES {
-                        return Err(AppError::new("session_input_limit", "连接期间输入过多，请等待连接完成。"));
-                    }
-                    early_input.push_str(&data);
-                    exit_intent.observe(&data, interactive);
+            command = rx.recv() => {
+                if !startup.handle_command(command, accept_early_input)? {
+                    return Ok(ConnOutcome::Closed);
                 }
-                Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => return Ok(ConnOutcome::Closed),
-                _ => {}
             }
         }
     };
+    if !startup.prepare_pty(rx, accept_early_input).await? {
+        return Ok(ConnOutcome::Closed);
+    }
+    let SshStartup {
+        mut size,
+        input: early_input,
+        mut exit_intent,
+        ..
+    } = startup;
     let (channel, _channel_lease) = match transport.open_session_channel().await {
         Ok(channel) => channel,
         Err(error) => {
@@ -1291,10 +1397,6 @@ async fn connect_and_run(
             .map_err(ssh_error)?;
     }
     emit_status(app_handle, session_id, SessionStatus::Connected, None);
-    // The remote shell paints its own prompt on attach; the frontend's initial
-    // fit sends a window-change (SIGWINCH) which triggers a repaint for shells
-    // that need one. Sending an extra newline here would echo a duplicate
-    // prompt, so we intentionally do not nudge the shell.
     let (mut reader, mut writer) = channel.split();
     let (read_tx, mut read_rx) = mpsc::channel::<SshReadEvent>(16);
     let read_task = tauri::async_runtime::spawn(async move {
@@ -1800,7 +1902,7 @@ async fn connect_and_run(
                 Some(SessionCommand::Resize(new_size)) => {
                     if size.cols != new_size.cols || size.rows != new_size.rows {
                         let _ = writer.window_change(new_size.cols.into(), new_size.rows.into(), 0, 0).await;
-                        *size = new_size;
+                        size = new_size;
                     }
                 }
                 Some(SessionCommand::Close | SessionCommand::CancelReconnect) | None => {
@@ -4111,6 +4213,57 @@ mod tests {
     use crate::ssh::zmodem::{ZmodemDownloadProbe, ZmodemFinishFilter, ZmodemProbe};
     use tokio::io::AsyncWriteExt;
     use zmodem2::{Action, Receiver, Sender};
+
+    #[tokio::test]
+    async fn ssh_startup_waits_for_the_view_and_uses_the_latest_size_before_shell() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let mut startup = super::SshStartup::new(
+            TerminalSize {
+                cols: 100,
+                rows: 30,
+            },
+            true,
+        );
+        let send_fit = async {
+            tokio::task::yield_now().await;
+            tx.send(SessionCommand::Input {
+                data: "pwd\r".into(),
+                interactive: true,
+            })
+            .await
+            .unwrap();
+            tx.send(SessionCommand::Resize(TerminalSize {
+                cols: 120,
+                rows: 40,
+            }))
+            .await
+            .unwrap();
+            tx.send(SessionCommand::Resize(TerminalSize {
+                cols: 140,
+                rows: 43,
+            }))
+            .await
+            .unwrap();
+        };
+        let (prepared, ()) = tokio::join!(startup.prepare_pty(&mut rx, true), send_fit);
+        assert!(prepared.unwrap());
+        assert_eq!((startup.size.cols, startup.size.rows), (140, 43));
+        assert_eq!(startup.input, "pwd\r");
+    }
+
+    #[tokio::test]
+    async fn ssh_startup_can_close_before_the_view_reports_a_size() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut startup = super::SshStartup::new(
+            TerminalSize {
+                cols: 100,
+                rows: 30,
+            },
+            true,
+        );
+        tx.send(SessionCommand::Close).await.unwrap();
+        assert!(!startup.prepare_pty(&mut rx, true).await.unwrap());
+    }
 
     fn interactive_test_session() -> (
         SessionHandle,

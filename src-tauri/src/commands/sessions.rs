@@ -37,9 +37,12 @@ pub fn start_ssh_session(
     webview: Webview,
 ) -> AppResult<TerminalSession> {
     let profile = resolve_ssh_profile(&state, &webview, &request.profile_id)?;
-    state
-        .sessions
-        .start_session(app_handle, profile, request.size)
+    state.sessions.start_session_with_initial_fit(
+        app_handle,
+        profile,
+        request.size,
+        request.wait_for_initial_resize,
+    )
 }
 
 fn resolve_ssh_profile(

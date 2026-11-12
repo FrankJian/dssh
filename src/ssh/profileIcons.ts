@@ -21,3 +21,7 @@ export const SSH_PROFILE_ICON_OPTIONS: readonly SshProfileIconOption[] = [
 export function profileIconName(icon: SshProfileIcon | undefined): IconName {
   return SSH_PROFILE_ICON_OPTIONS.find((option) => option.id === icon)?.icon ?? "ssh";
 }
+
+export function sftpConnectionIconName(icon: SshProfileIcon | undefined): IconName {
+  return !icon || icon === "ssh" ? "serverFolder" : profileIconName(icon);
+}

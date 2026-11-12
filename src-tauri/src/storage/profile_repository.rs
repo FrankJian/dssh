@@ -583,6 +583,7 @@ impl ProfileRepository {
         connection.execute_batch(include_str!(
             "../../migrations/014_artifactory_profiles.sql"
         ))?;
+        connection.execute_batch(include_str!("../../migrations/015_smb_profiles.sql"))?;
         ensure_columns(&connection)?;
         Ok(())
     }

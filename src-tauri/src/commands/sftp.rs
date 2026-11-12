@@ -563,6 +563,22 @@ pub async fn sftp_upload_dir(
 }
 
 #[tauri::command]
+pub async fn sftp_copy_remote(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    source: String,
+    destination: String,
+    operation_id: String,
+) -> AppResult<()> {
+    let profile = require_profile(&state, &profile_id)?;
+    state
+        .sftp
+        .copy_remote(&app, &profile, &source, &destination, &operation_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn sftp_create_dir(
     state: State<'_, AppState>,
     profile_id: String,

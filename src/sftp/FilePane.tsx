@@ -1,14 +1,20 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type MouseEvent,
   type PointerEvent,
+  type ReactNode,
 } from "react";
-import { relativeSearchPath, type SearchProgress } from "./recursiveSearch";
+import { relativeSearchPath, type FileSearchScope, type SearchProgress } from "./recursiveSearch";
 import type { RecursiveSearchStatus } from "./useRecursiveFileSearch";
 import { Icon } from "../ui/Icon";
+import { FileEntryIcon } from "./FileEntryIcon";
 import { IconButton } from "../ui/IconButton";
+import { SelectMenu } from "../ui/SelectMenu";
+import { directoryBreadcrumbs } from "./browserPaths";
+import { usePathSuggestions } from "./usePathSuggestions";
 import type { LocalRoot } from "../services/sftpService";
 import {
   formatSize,
@@ -18,8 +24,18 @@ import {
   type DirectoryHistory,
 } from "./fileBrowserModel";
 
+const searchScopes = [
+  { value: "directory", label: "当前目录" },
+  { value: "depth", label: "指定深度" },
+  { value: "subdirectories", label: "所有子目录" },
+] as const;
+
 export interface FilePaneProps {
   side: BrowserSide;
+  fileSystem?: BrowserSide;
+  sourceAction?: ReactNode;
+  transferLabel?: string;
+  transferDisabled?: boolean;
   connectionName?: string;
   connectionAddress?: string;
   entries: BrowserEntry[];
@@ -30,14 +46,16 @@ export interface FilePaneProps {
   path: string;
   currentPath: string;
   search: string;
-  recursive: boolean;
+  searchScope: FileSearchScope;
+  searchDepth: number;
   searchState: SearchProgress & {
     active: boolean;
     status: RecursiveSearchStatus;
     cancel: () => void;
     restart: () => void;
   };
-  onRecursive: () => void;
+  onSearchScope: (scope: FileSearchScope) => void;
+  onSearchDepth: (depth: number) => void;
   onReveal: (entry: BrowserEntry) => void;
   selectedPaths: Set<string>;
   roots?: LocalRoot[];
@@ -47,6 +65,9 @@ export interface FilePaneProps {
   onHistory: (index: number) => void;
   onNavigate: (path: string) => void;
   onPathSubmit: () => void;
+  resolvePath: (input: string, currentPath: string) => Promise<string>;
+  listDirectories: (path: string) => Promise<BrowserEntry[]>;
+  windowsPaths: boolean;
   atRoot: boolean;
   onRefresh: () => void;
   onUp: () => void;
@@ -57,6 +78,7 @@ export interface FilePaneProps {
   ) => void;
   onSelection: (paths: Set<string>) => void;
   onEnter: (entry: BrowserEntry) => void;
+  onOpenFileList?: (path: string) => void;
   onCreate: (file: boolean) => void;
   onRename: () => void;
   onDelete: () => void;
@@ -76,23 +98,70 @@ export interface FilePaneProps {
   setPath: (value: string) => void;
 }
 export function FilePane(p: FilePaneProps) {
-  const title = p.side === "remote" ? "服务器" : "本机";
+  const fileSystem = p.fileSystem ?? p.side;
+  const server = fileSystem === "remote";
+  const title = server ? "服务器" : "本机";
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [editingPath, setEditingPath] = useState(false);
+  const [pathChoice, setPathChoice] = useState(-1);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [depthDraft, setDepthDraft] = useState<string | null>(null);
   const paneRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const pathRef = useRef<HTMLInputElement>(null);
+  const addressRef = useRef<HTMLDivElement>(null);
+  const suggestionsId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
   const focusPath = useRef<string | null>(null);
   const selected = p.entries.filter((entry) => p.selectedPaths.has(entry.path));
+  const searchVisible = searchOpen || Boolean(p.search);
+  const recursive = p.searchScope !== "directory";
+  const breadcrumbs = directoryBreadcrumbs(p.currentPath, !server);
   const mutationsLocked =
     p.disabled || p.isLoading || p.mutationsDisabled || !p.currentPath;
   const locked = p.disabled || p.isLoading || !p.currentPath;
+  const suggestions = usePathSuggestions(editingPath && !locked, p.path, p.currentPath, p.windowsPaths, p.resolvePath, p.listDirectories);
+  const activeSuggestion = suggestions[pathChoice];
   const columns: { key: SortKey; label: string }[] = [
     { key: "name", label: "名称" },
     { key: "size", label: "大小" },
     { key: "modified", label: "修改时间" },
   ];
+
+  function openAddress() {
+    if (locked) return;
+    setPathChoice(-1);
+    setEditingPath(true);
+    pathRef.current?.focus();
+    pathRef.current?.select();
+  }
+
+  function closeAddress(restoreFocus = true) {
+    setEditingPath(false);
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        paneRef.current?.querySelector<HTMLButtonElement>("[data-path-trigger]")?.focus();
+      });
+    }
+  }
+
+  function openSuggestedDirectory(entry: BrowserEntry) {
+    closeAddress();
+    p.onNavigate(entry.path);
+  }
+
+  function openSearch() {
+    setSearchOpen(true);
+    searchRef.current?.focus();
+  }
+
+  function closeSearch() {
+    p.setSearch("");
+    setSearchOpen(false);
+    paneRef.current?.querySelector<HTMLButtonElement>("[data-search-trigger]")?.focus();
+  }
+
   useEffect(() => {
     if (!menu) return;
     // WebKit can report a null blur target when clicking a button. Dismissing
@@ -105,6 +174,12 @@ export function FilePane(p: FilePaneProps) {
         setMenu(null);
     };
     const close = () => setMenu(null);
+    const pane = paneRef.current;
+    const popup = menuRef.current;
+    if (pane && popup) {
+      popup.style.left = `${Math.max(0, Math.min(menu.x, pane.clientWidth - popup.offsetWidth))}px`;
+      popup.style.top = `${Math.max(0, Math.min(menu.y, pane.clientHeight - popup.offsetHeight))}px`;
+    }
     menuRef.current
       ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
       ?.focus();
@@ -147,8 +222,7 @@ export function FilePane(p: FilePaneProps) {
           event.key.toLowerCase() === "l"
         ) {
           event.preventDefault();
-          pathRef.current?.focus();
-          pathRef.current?.select();
+          openAddress();
           return;
         }
         if (
@@ -156,7 +230,7 @@ export function FilePane(p: FilePaneProps) {
           event.key.toLowerCase() === "f"
         ) {
           event.preventDefault();
-          searchRef.current?.focus();
+          openSearch();
           return;
         }
         if (event.key === "Escape" && menu) {
@@ -229,7 +303,7 @@ export function FilePane(p: FilePaneProps) {
         <span
           className="sftp-dual-browser__identity"
           title={
-            p.side === "remote"
+            server
               ? [p.connectionName || title, p.connectionAddress, "SFTP"]
                   .filter(Boolean)
                   .join(" · ")
@@ -237,22 +311,24 @@ export function FilePane(p: FilePaneProps) {
           }
         >
           <Icon
-            name={p.side === "remote" ? "server" : "monitor"}
-            height="16"
-            width="16"
+            className={server ? "sftp-connection-icon" : undefined}
+            name={server ? "serverFolder" : "monitor"}
+            height="18"
+            width="18"
           />
           <span className="sftp-dual-browser__identity-copy">
             <strong>
-              {p.side === "remote"
+              {server
                 ? p.connectionName || p.connectionAddress || title
                 : title}
             </strong>
             <small>
-              {p.side === "remote" ? p.connectionAddress || "SFTP" : "本地文件"}
+              {server ? p.connectionAddress || "SFTP" : null}
             </small>
           </span>
         </span>
         <div>
+          {p.sourceAction}
           <IconButton disabled={locked} label="返回主目录" onClick={p.onHome}>
             <Icon name="house" />
           </IconButton>
@@ -273,13 +349,28 @@ export function FilePane(p: FilePaneProps) {
           <IconButton disabled={locked} label="刷新 (F5)" onClick={p.onRefresh}>
             <Icon name="refresh" />
           </IconButton>
+          <IconButton
+            active={searchVisible}
+            aria-expanded={searchVisible}
+            data-search-trigger=""
+            label="搜索与筛选 (Ctrl/⌘+F)"
+            onClick={searchVisible ? closeSearch : openSearch}
+          >
+            <Icon name="search" />
+          </IconButton>
         </div>
       </header>
       <form
         className="sftp-dual-browser__path"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!locked && p.path.trim()) p.onPathSubmit();
+          if (!locked && p.path.trim()) {
+            if (activeSuggestion) openSuggestedDirectory(activeSuggestion);
+            else {
+              closeAddress();
+              p.onPathSubmit();
+            }
+          }
         }}
       >
         <IconButton
@@ -303,83 +394,191 @@ export function FilePane(p: FilePaneProps) {
         >
           <Icon name="arrowUp" />
         </IconButton>
-        <input
-          ref={pathRef}
-          aria-label={`${title}路径`}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
+        {editingPath ? (
+          <div
+            className="sftp-dual-browser__address"
+            ref={addressRef}
+            onBlur={(event) => {
+              if (addressRef.current?.contains(event.relatedTarget)) return;
               p.setPath(p.currentPath);
-            }
-          }}
-          onChange={(event) => p.setPath(event.currentTarget.value)}
-          spellCheck={false}
-          value={p.path}
-        />
-        <button
-          type="submit"
-          disabled={locked}
-          title="前往目录"
-          aria-label="前往目录"
-        >
-          <Icon name="chevron-right" width="14" height="14" />
-        </button>
-      </form>
-      <div className="sftp-dual-browser__filters">
-        <label className="sftp-dual-browser__search">
-          <Icon name="search" height="14" width="14" />
-          <input
-            ref={searchRef}
-            aria-label={
-              p.recursive ? `递归搜索${title}文件` : `搜索${title}当前目录`
-            }
-            onChange={(event) => p.setSearch(event.currentTarget.value)}
-            placeholder={p.recursive ? "模糊搜索文件及子目录…" : "筛选文件…"}
-            type="search"
-            value={p.search}
-          />
-        </label>
-        <label
-          className="sftp-dual-browser__recursive-toggle"
-          title="递归搜索子目录，按文件名和相对路径模糊匹配（不搜索文件内容）"
-        >
-          <input
-            type="checkbox"
-            checked={p.recursive}
-            onChange={p.onRecursive}
-            aria-label={`${title}递归搜索`}
-          />
-          <span>递归搜索</span>
-        </label>
-        <button
-          className="sftp-dual-browser__toggle"
-          type="button"
-          aria-label="显示隐藏文件"
-          aria-pressed={p.showHidden}
-          onClick={p.onHidden}
-          title="显示隐藏文件"
-        >
-          <Icon name="eye" width="15" height="15" />
-        </button>
-        {p.roots ? (
+              closeAddress(false);
+            }}
+          >
+            <input
+              ref={pathRef}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              role="combobox"
+              aria-label={`${title}路径`}
+              aria-autocomplete="list"
+              aria-expanded={suggestions.length > 0}
+              aria-controls={suggestions.length ? suggestionsId : undefined}
+              aria-activedescendant={activeSuggestion ? `${suggestionsId}-${pathChoice}` : undefined}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  p.setPath(p.currentPath);
+                  closeAddress();
+                } else if (suggestions.length && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+                  event.preventDefault();
+                  const step = event.key === "ArrowDown" ? 1 : -1;
+                  setPathChoice((current) => current < 0
+                    ? (step === 1 ? 0 : suggestions.length - 1)
+                    : (current + step + suggestions.length) % suggestions.length);
+                } else if (event.key === "Tab" && !event.shiftKey && suggestions.length) {
+                  event.preventDefault();
+                  const path = (activeSuggestion ?? suggestions[0]).path;
+                  const separator = p.windowsPaths ? "\\" : "/";
+                  setPathChoice(-1);
+                  p.setPath(path.endsWith(separator) ? path : path + separator);
+                }
+              }}
+              onChange={(event) => {
+                setPathChoice(-1);
+                p.setPath(event.currentTarget.value);
+              }}
+              spellCheck={false}
+              value={p.path}
+            />
+            <button type="submit" disabled={locked} title="前往目录" aria-label="前往目录" onPointerDown={(event) => event.preventDefault()}>
+              <Icon name="chevron-right" width="14" height="14" />
+            </button>
+            {suggestions.length ? (
+              <div id={suggestionsId} className="sftp-dual-browser__path-suggestions" role="listbox" aria-label="目录提示">
+                {suggestions.map((entry, index) => (
+                  <button
+                    key={entry.path}
+                    id={`${suggestionsId}-${index}`}
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={index === pathChoice}
+                    title={entry.path}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => openSuggestedDirectory(entry)}
+                  >
+                    <FileEntryIcon directory />
+                    <span>{entry.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="sftp-dual-browser__location" onClick={(event) => {
+            if (!(event.target instanceof Element && event.target.closest("button"))) openAddress();
+          }}>
+            <nav className="sftp-dual-browser__breadcrumbs" aria-label={`${title}目录路径`}>
+              {breadcrumbs.truncated ? <span aria-hidden="true">…</span> : null}
+              {breadcrumbs.items.map(({ path, label }, index) => (
+                <span key={path}>
+                  {index > 0 || breadcrumbs.truncated ? <Icon name="chevron-right" width="11" height="11" /> : null}
+                  {path === p.currentPath ? (
+                    <button
+                      type="button"
+                      title={path}
+                      aria-current="location"
+                      aria-label={`编辑${title}路径 (Ctrl/⌘+L)`}
+                      data-path-trigger=""
+                      disabled={locked}
+                      onClick={openAddress}
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <button type="button" title={path} disabled={locked} onClick={() => p.onNavigate(path)}>{label}</button>
+                  )}
+                </span>
+              ))}
+            </nav>
+          </div>
+        )}
+        {p.roots?.length ? (
           <select
             aria-label="本机常用位置"
             disabled={locked}
             value=""
             onChange={(event) => p.onNavigate(event.currentTarget.value)}
           >
-            <option disabled value="">
-              常用位置
-            </option>
+            <option disabled value="">常用位置</option>
             {p.roots.map((root) => (
-              <option key={root.path} value={root.path}>
-                {root.label}
-              </option>
+              <option key={root.path} value={root.path}>{root.label}</option>
             ))}
           </select>
         ) : null}
-      </div>
+      </form>
+      {searchVisible ? <div className="sftp-dual-browser__filters">
+        <label className="sftp-dual-browser__search">
+          <Icon name="search" height="14" width="14" />
+          <input
+            ref={searchRef}
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                closeSearch();
+              }
+            }}
+            aria-label={
+              recursive ? `递归搜索${title}文件` : `搜索${title}当前目录`
+            }
+            onChange={(event) => p.setSearch(event.currentTarget.value)}
+            placeholder={recursive ? "搜索文件名或相对路径…" : "筛选当前目录…"}
+            type="search"
+            value={p.search}
+          />
+        </label>
+        <div className="sftp-dual-browser__search-controls">
+          <div className="sftp-dual-browser__search-scope" data-recursive={recursive}>
+            <SelectMenu
+              ariaLabel={`${title}搜索范围`}
+              options={searchScopes}
+              value={p.searchScope}
+              onChange={(value) => {
+                setDepthDraft(null);
+                p.onSearchScope(value as FileSearchScope);
+              }}
+            />
+            {p.searchScope === "depth" ? (
+              <label className="sftp-dual-browser__search-depth" title="从当前目录向下进入的最多层数">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  aria-label={`${title}最大搜索深度`}
+                  value={depthDraft ?? String(p.searchDepth)}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    if (!/^\d*$/.test(value)) return;
+                    setDepthDraft(value);
+                    const depth = Number(value);
+                    if (Number.isSafeInteger(depth) && depth > 0) p.onSearchDepth(depth);
+                  }}
+                  onBlur={() => setDepthDraft(null)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      searchRef.current?.focus();
+                    }
+                  }}
+                />
+                <span>层</span>
+              </label>
+            ) : null}
+          </div>
+          <IconButton
+            className="sftp-dual-browser__toggle"
+            active={p.showHidden}
+            label="显示隐藏文件"
+            aria-pressed={p.showHidden}
+            onClick={p.onHidden}
+          >
+            <Icon name="eye" width="15" height="15" />
+          </IconButton>
+        </div>
+      </div> : null}
       {p.searchState.active ? (
         <div
           className="sftp-dual-browser__search-status"
@@ -415,51 +614,6 @@ export function FilePane(p: FilePaneProps) {
           )}
         </div>
       ) : null}
-      <div className="sftp-dual-browser__actions">
-        <button
-          type="button"
-          disabled={mutationsLocked || !selected.length}
-          onClick={p.onTransfer}
-        >
-          <Icon
-            name={p.side === "remote" ? "download" : "upload"}
-            width="14"
-            height="14"
-          />
-          {p.side === "remote" ? "下载" : "上传"}
-          {selected.length ? ` (${selected.length})` : ""}
-        </button>
-        {p.onDownloadAs ? (
-          <button
-            type="button"
-            disabled={mutationsLocked || !selected.length}
-            onClick={p.onDownloadAs}
-          >
-            下载到…
-          </button>
-        ) : null}
-        <IconButton
-          label="重命名 (F2)"
-          disabled={mutationsLocked || selected.length !== 1}
-          onClick={p.onRename}
-        >
-          <Icon name="edit" width="14" height="14" />
-        </IconButton>
-        <IconButton
-          label="复制所选路径"
-          disabled={!selected.length}
-          onClick={p.onCopy}
-        >
-          <Icon name="copy" width="14" height="14" />
-        </IconButton>
-        <IconButton
-          label="删除所选项目"
-          disabled={mutationsLocked || !selected.length}
-          onClick={p.onDelete}
-        >
-          <Icon name="trash" width="14" height="14" />
-        </IconButton>
-      </div>
       <div className="sftp-dual-browser__columns">
         {columns.map(({ key, label }) => (
           <button
@@ -560,42 +714,21 @@ export function FilePane(p: FilePaneProps) {
                 event.currentTarget.focus();
                 const rect = paneRef.current!.getBoundingClientRect();
                 setMenu({
-                  x: Math.max(
-                    0,
-                    Math.min(event.clientX - rect.left, rect.width - 180),
-                  ),
-                  y: Math.max(
-                    0,
-                    Math.min(event.clientY - rect.top, rect.height - 220),
-                  ),
+                  x: event.clientX - rect.left,
+                  y: event.clientY - rect.top,
                 });
               }}
             >
               <span className="sftp-dual-browser__name">
-                <Icon
-                  name={
-                    entry.isDir
-                      ? "folder"
-                      : /\.(png|jpe?g|webp|gif|svg)$/i.test(entry.name)
-                        ? "fileImage"
-                        : /\.(zip|tgz|gz|tar|7z)$/i.test(entry.name)
-                          ? "fileArchive"
-                          : "fileText"
-                  }
-                  height="16"
-                  width="16"
-                />
+                <FileEntryIcon name={entry.name} directory={entry.isDir} symlink={entry.isSymlink} />
                 <span className="sftp-dual-browser__filename">
                   <span>{entry.name}</span>
                   {p.searchState.active ? (
                     <small>
-                      {relativeSearchPath(entry.path, p.currentPath, p.side)}
+                      {relativeSearchPath(entry.path, p.currentPath, fileSystem)}
                     </small>
                   ) : null}
                 </span>
-                {entry.isSymlink ? (
-                  <Icon name="arrowDownRight" width="12" height="12" />
-                ) : null}
               </span>
               <small>{entry.isDir ? "—" : formatSize(entry.size)}</small>
               <time>
@@ -620,16 +753,58 @@ export function FilePane(p: FilePaneProps) {
           <span>松开上传到 {p.currentPath}</span>
         </div>
       ) : null}
-      <footer className="sftp-dual-browser__pane-status">
-        <span>
-          {p.searchState.active
-            ? `找到 ${p.entries.length} 项 / 检查 ${p.totalCount} 项`
-            : `${p.entries.length} / ${p.totalCount} 项`}
+      <footer className="sftp-dual-browser__pane-status" data-selected={selected.length > 0}>
+        <span
+          className="sftp-dual-browser__pane-count"
+          title={p.searchState.active ? `检查 ${p.totalCount} 项` : `目录共 ${p.totalCount} 项`}
+        >
           {selected.length
-            ? ` · 已选 ${selected.length} 项 · ${formatSize(selected.filter((entry) => !entry.isDir).reduce((size, entry) => size + entry.size, 0))}`
-            : ""}
+            ? `已选 ${selected.length} 项 · ${formatSize(selected.filter((entry) => !entry.isDir).reduce((size, entry) => size + entry.size, 0))}`
+            : `${p.entries.length} 项`}
         </span>
-        <span title="Ctrl/⌘ 多选 · Shift 连选 · ↑↓ 导航">多选 / 拖拽传输</span>
+        {selected.length > 0 ? (
+          <div className="sftp-dual-browser__actions">
+            <button
+              type="button"
+              disabled={mutationsLocked || p.transferDisabled}
+              onClick={p.onTransfer}
+            >
+              <Icon
+                name={p.side === "remote" ? "download" : "upload"}
+                width="14"
+                height="14"
+              />
+              {p.transferLabel ?? (p.side === "remote" ? "下载" : "上传")}
+            </button>
+            {p.onDownloadAs ? (
+              <button
+                className="sftp-dual-browser__download-as"
+                type="button"
+                disabled={mutationsLocked}
+                onClick={p.onDownloadAs}
+              >
+                下载到…
+              </button>
+            ) : null}
+            <IconButton
+              label="重命名 (F2)"
+              disabled={mutationsLocked || selected.length !== 1}
+              onClick={p.onRename}
+            >
+              <Icon name="edit" width="14" height="14" />
+            </IconButton>
+            <IconButton label="复制所选路径" onClick={p.onCopy}>
+              <Icon name="copy" width="14" height="14" />
+            </IconButton>
+            <IconButton
+              label="删除所选项目"
+              disabled={mutationsLocked}
+              onClick={p.onDelete}
+            >
+              <Icon name="trash" width="14" height="14" />
+            </IconButton>
+          </div>
+        ) : null}
       </footer>
       {menu ? (
         <div
@@ -684,6 +859,18 @@ export function FilePane(p: FilePaneProps) {
             >
               打开 / 编辑
             </button>
+            {p.onOpenFileList && selected.length === 1 && selected[0].isDir ? (
+              <button
+                role="menuitem"
+                disabled={mutationsLocked}
+                onClick={() => {
+                  setMenu(null);
+                  p.onOpenFileList?.(selected[0].path);
+                }}
+              >
+                在文件列表中打开
+              </button>
+            ) : null}
             {p.searchState.active ? (
               <button
                 role="menuitem"
@@ -698,16 +885,28 @@ export function FilePane(p: FilePaneProps) {
             ) : null}
             <button
               role="menuitem"
-              disabled={mutationsLocked}
+              disabled={mutationsLocked || p.transferDisabled}
               onClick={() => {
                 p.onTransfer();
                 setMenu(null);
               }}
             >
-              {p.side === "remote"
+              {p.transferLabel ?? (p.side === "remote"
                 ? "下载到本机当前目录"
-                : "上传到服务器当前目录"}
+                : "上传到服务器当前目录")}
             </button>
+            {p.onDownloadAs ? (
+              <button
+                role="menuitem"
+                disabled={mutationsLocked || !selected.length}
+                onClick={() => {
+                  setMenu(null);
+                  p.onDownloadAs?.();
+                }}
+              >
+                下载到…
+              </button>
+            ) : null}
             <button
               role="menuitem"
               disabled={mutationsLocked || selected.length !== 1}

@@ -9,6 +9,8 @@ export interface BrowserEntry {
 export type SortKey = "name" | "size" | "modified";
 export type BrowserSide = "remote" | "local";
 
+const fileNameOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 export function visibleEntries<T extends BrowserEntry>(
   entries: T[],
   query: string,
@@ -21,21 +23,16 @@ export function visibleEntries<T extends BrowserEntry>(
     .filter(
       (entry) =>
         (hidden || !entry.name.startsWith(".")) &&
-        entry.name.toLocaleLowerCase().includes(search),
+        (!search || entry.name.toLocaleLowerCase().includes(search)),
     )
     .sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      const byName = a.name.localeCompare(b.name, undefined, {
-        numeric: true,
-        sensitivity: "base",
-      });
-      const order =
-        key === "name"
-          ? byName
-          : key === "size"
-            ? a.size - b.size
-            : (a.modified ?? 0) - (b.modified ?? 0);
-      return (order || byName) * (descending ? -1 : 1);
+      const order = key === "size"
+        ? a.size - b.size
+        : key === "modified"
+          ? (a.modified ?? 0) - (b.modified ?? 0)
+          : 0;
+      return (order || fileNameOrder.compare(a.name, b.name)) * (descending ? -1 : 1);
     });
 }
 
