@@ -15,8 +15,8 @@ export function chromeThemeHeader(css) {
     }
     const surface = color('bg-toolbar', color('bg-app'));
     const values = [surface, color('border-strong', surface), color('text-base'), color('text-muted'),
-      color('bg-hover', surface), color('bg-selected', surface), color('accent'), color('danger'), color('btn-danger-bg'), color('accent-fg')];
+      color('bg-hover', surface), color('bg-selected', surface), color('accent'), color('danger'), color('btn-danger-bg'), color('btn-danger-fg')];
     return values.map((rgb) => '0x' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')).join(', ');
   }
-  return `// Generated from src/theme/global.css. Do not edit.\n#pragma once\ntypedef struct DsshChromePalette {\n    unsigned surface, border, text, muted, hover, pressed, accent, danger, dangerHover, onAccent;\n} DsshChromePalette;\nstatic const DsshChromePalette dssh_chrome_dark = { ${palette(blocks[0])} };\nstatic const DsshChromePalette dssh_chrome_light = { ${palette(blocks[1])} };\n`;
+  return `// Generated from src/theme/global.css. Do not edit.\n#pragma once\ntypedef struct DsshChromePalette {\n    unsigned surface, border, text, muted, hover, pressed, accent, danger, dangerHover, onDanger;\n} DsshChromePalette;\nstatic const DsshChromePalette dssh_chrome_dark = { ${palette(blocks[0])} };\nstatic const DsshChromePalette dssh_chrome_light = { ${palette(blocks[1])} };\n`;
 }

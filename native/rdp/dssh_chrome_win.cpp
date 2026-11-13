@@ -175,7 +175,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 (flags & SDL_WINDOW_FULLSCREEN) ? DSSH_GLYPH_COLLAPSE : DSSH_GLYPH_EXPAND, DSSH_GLYPH_CLOSE};
             const float size = 18 * scale;
             glyph(item->hDC, icons[index], (item->rcItem.right - size) / 2, (item->rcItem.bottom - size) / 2,
-                size, index == 3 ? (hot ? p.onAccent : p.danger) : p.text, scale);
+                size, index == 3 ? (hot ? p.onDanger : p.danger) : p.text, scale);
             return TRUE;
         }
         if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;

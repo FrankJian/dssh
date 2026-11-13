@@ -20,13 +20,15 @@ test('workbench themes generate readable opaque native toolbar palettes', () => 
       .split(', ').map((v) => Number(v));
     assert.equal(values.length, 10);
     assert.ok(values.every((v) => Number.isInteger(v) && v >= 0 && v <= 0xffffff));
-    const [surface, , text, muted, , , , , closeHover, onAccent] = values;
+    const [surface, , text, muted, , , , , closeHover, onDanger] = values;
     assert.ok(contrast(surface, text) >= 4.5, `${theme}: title contrast`);
     assert.ok(contrast(surface, muted) >= 3, `${theme}: grip contrast`);
-    assert.ok(contrast(closeHover, onAccent) >= 4.5, `${theme}: close hover contrast`);
+    assert.ok(contrast(closeHover, onDanger) >= 4.5, `${theme}: close hover contrast`);
   }
 });
 test('missing or unsupported native theme tokens fail the build explicitly', () => {
-  assert.throws(() => chromeThemeHeader(css.replace('--text-base: #dde4ea;', '')), /Missing RDP chrome token: text-base/);
-  assert.throws(() => chromeThemeHeader(css.replace('--text-base: #dde4ea;', '--text-base: var(--text-strong);')), /Unsupported RDP chrome token: text-base/);
+  const textBase = /--text-base:\s*#[\da-f]{6};/i;
+  assert.match(css, textBase);
+  assert.throws(() => chromeThemeHeader(css.replace(textBase, '')), /Missing RDP chrome token: text-base/);
+  assert.throws(() => chromeThemeHeader(css.replace(textBase, '--text-base: var(--text-strong);')), /Unsupported RDP chrome token: text-base/);
 });

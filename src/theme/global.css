@@ -62,6 +62,7 @@
   --btn-primary-fg: #ffffff;
   --btn-danger-bg: #a8464d;
   --btn-danger-bg-hover: #bb535b;
+  --btn-danger-fg: #ffffff;
 
   /* Status */
   --success: #73c9a2;
@@ -211,6 +212,7 @@
   --btn-primary-fg: #ffffff;
   --btn-danger-bg: #b8474f;
   --btn-danger-bg-hover: #c95860;
+  --btn-danger-fg: #ffffff;
   --success: #287c5d;
   --warning: #8b651f;
   --danger: #b5484f;
@@ -3002,7 +3004,7 @@ button {
 
 .window-control--close:hover {
   background: var(--btn-danger-bg);
-  color: var(--accent-fg);
+  color: var(--btn-danger-fg);
 }
 
 .activity-bar {

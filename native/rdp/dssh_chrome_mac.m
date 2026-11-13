@@ -65,7 +65,7 @@ static void drawGlyph(int glyph, NSRect rect, NSColor* color)
     if (hot) { [chromeColor(close ? p.dangerHover : (self.highlighted ? p.pressed : p.hover)) setFill]; [shape fill]; }
     if (self.window.firstResponder == self) { [chromeColor(p.accent) setStroke]; shape.lineWidth = 1; [shape stroke]; }
     drawGlyph(self.glyph, NSMakeRect(NSMidX(self.bounds) - 9, NSMidY(self.bounds) - 9, 18, 18),
-        chromeColor(close ? (hot ? p.onAccent : p.danger) : p.text));
+        chromeColor(close ? (hot ? p.onDanger : p.danger) : p.text));
 }
 @end
 
