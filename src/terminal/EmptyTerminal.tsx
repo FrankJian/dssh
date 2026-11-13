@@ -30,7 +30,7 @@ export function EmptyTerminal({
             <div className="terminal-empty__recent-heading">
               <div className="terminal-empty__recent-title"><h1><Icon name="clock" height="16" width="16" />最近连接</h1>
                 {recentProfiles.length > 0 ? <span className="terminal-empty__recent-count">{recentProfiles.length}</span> : null}</div>
-              <p>继续最近的工作，快速回到你的服务器。</p>
+              <p>选择最近使用的连接。</p>
             </div>
             {onOpenConnections ? (
               <Button className="terminal-empty__all" onClick={onOpenConnections} variant="ghost">
@@ -61,9 +61,9 @@ export function EmptyTerminal({
                       </span>
                       <span className="terminal-empty__recent-details">
                         <ConnectionAddress address={address} focusable={false} />
-                        <span className="terminal-empty__recent-folder" title={profile.folder || "根目录"}>
-                          <Icon name="folder" height="12" width="12" /><span>{profile.folder || "根目录"}</span>
-                        </span>
+                        {profile.folder ? <span className="terminal-empty__recent-folder" title={profile.folder}>
+                          <Icon name="folder" height="12" width="12" /><span>{profile.folder}</span>
+                        </span> : null}
                         {isRdpProfile(profile) && profile.skipCertificateVerification ? <span className="conn-card__warning">
                           <Icon name="shield" height="12" width="12" />未验证证书
                         </span> : null}

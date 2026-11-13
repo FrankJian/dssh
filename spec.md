@@ -106,33 +106,34 @@ SSH 连接卡片与列表提供“打开 SFTP”文件夹按钮，直接进入�
 
 ## 4. 视觉系统（当前基线与后续方向）
 
-**当前已实现**的 Graphite Glass 使用冷黑石墨、雾白和冰蓝；深色为默认，浅色为可选。下表记录当前代码基线，不限定后续重设计的视觉身份。后续方向见 4.2 节与 [`features/interface-redesign.md`](features/interface-redesign.md)。
+**当前界面**使用柔和矿物灰、海玻璃绿与少量暖色细节；深色为默认，浅色为可选。原 Graphite Glass 规格是上一轮主题的历史记录。整体方向见 4.2 节与 [`features/interface-redesign.md`](features/interface-redesign.md)。
 
 ### 4.1 当前关键 token
 
 | Token | 深色 | 浅色 |
 | --- | --- | --- |
-| `--accent` | `#79a6c9` | `#426f8d` |
-| `--accent-strong` | `#a8c7de` | `#2d5d7b` |
-| `--accent-soft` | `rgb(121 166 201 / 13%)` | `rgb(66 111 141 / 10%)` |
-| `--bg-app` | `#0b0e12` | `#f4f6f8` |
-| `--bg-sidebar` / `--bg-panel` | 半透明冷石墨 | 半透明冷白 |
-| `--bg-elevated` | `rgb(27 34 43 / 92%)` | `rgb(255 255 255 / 94%)` |
-| `--bg-selected` | `rgb(121 166 201 / 15%)` | `rgb(66 111 141 / 13%)` |
-| `--border-subtle` / `--border-strong` | 雾白 `8.5%` / `16%` | 冷灰 `10%` / `20%` |
-| `--text-strong` / `--text-base` / `--text-muted` | `#f4f7fa` / `#dde4ea` / `#98a4af` | `#171c21` / `#252b31` / `#596672` |
+| `--accent` | `#84c6ae` | `#356f60` |
+| `--accent-strong` | `#b2e0cc` | `#265b4e` |
+| `--accent-soft` | `rgb(132 198 174 / 15%)` | `rgb(53 111 96 / 11%)` |
+| `--accent-warm` | `#d5b388` | `#8b6035` |
+| `--bg-app` | `#151c1e` | `#f3f6f2` |
+| `--bg-sidebar` / `--bg-panel` | 半透明矿物灰 | 半透明暖白 |
+| `--bg-elevated` | `rgb(42 55 56 / 97%)` | `rgb(255 255 252 / 98%)` |
+| `--bg-selected` | `rgb(132 198 174 / 17%)` | `rgb(53 111 96 / 12%)` |
+| `--border-subtle` / `--border-strong` | 雾绿 `11%` / `22%` | 深绿灰 `11%` / `22%` |
+| `--text-strong` / `--text-base` / `--text-muted` | `#f3f5ef` / `#dce5dd` / `#a9b9ad` | `#202b27` / `#34413b` / `#526258` |
 | 状态 | `--success #73c9a2` · `--warning #d6b56c` · `--danger #e18484` · `--info #82b3d5` | 各自使用较深色以保持浅底对比度 |
 
 共享材质 token（`--glass-*`）只允许由 `.is-glass-chrome` 与 `.is-glass-overlay` 用于稳定 chrome 和浮层。`prefers-reduced-transparency` 与无 `backdrop-filter` 环境退化为实色表面；不得在终端、Monaco、文件树和长列表添加 filter。完整边界见 [`features/graphite-glass-theme.md`](features/graphite-glass-theme.md)。
 
-当前实现的圆角为 `2/4/6/8/999`，间距刻度为 `4/8/12/16/20/24`，活动栏 48、标签条与标题栏 36；它们是现状记录，不是未来页面的固定尺寸。
+当前语义圆角为 `5/8/12/18/24/999`，间距刻度为 `4/8/12/16/20/24`。活动栏 48、标签条与标题栏 36 仍是工作台现状，后续可按页面重设计调整。
 
 ### 4.2 后续页面重设计
 
 - 布局和控件使用更柔和、相互协调的圆角与间距，降低连续直角矩形造成的压迫感；列表和终端仍优先可读性与效率。
 - 背景、表面、文字、边界与强调色组成完整的应用配色方案；未来可切换方案。应用配色、深浅外观和终端配色各自独立，切换应覆盖所有窗口和浮层。
 - 稳定导航与浮层可以使用轻量玻璃；滚动内容、终端和编辑器保持清晰。减少透明度与不支持模糊的环境使用实色替代。
-- Graphite Glass 文档保留为已实施主题的历史规格，不再限制新页面必须采用冷黑 / 冰蓝、小圆角或旧版固定布局。
+- Graphite Glass 文档保留为上一轮主题的历史规格，不再限制新页面的颜色、圆角或布局。
 
 ### 4.3 终端调色板
 
@@ -231,7 +232,8 @@ Tauri 载荷统一 **camelCase**；改命令 / 事件时同步 Rust serde DTO �
   首版 `rz` 上传已接入，真实环境兼容性待验证；JumpServer SFTP 路径诊断与指定资产终端上传方案尚未实现。
 - [终端吞吐、生命周期与显示保真](features/terminal-performance.md)：终端数据通路、xterm 实例生命周期与
   显示保真的优化规格，含性能基线与指标门槛。尚未实施。
-- [Graphite Glass 主题](features/graphite-glass-theme.md)：默认的冷黑、冰蓝与应用内 chrome / 浮层玻璃材质，已实现；终端、Monaco 与滚动内容区保持不模糊。
+- [界面重设计方向](features/interface-redesign.md)：当前的柔和几何与矿物灰配色基线，以及后续应用整体配色切换要求。
+- [Graphite Glass 主题记录](features/graphite-glass-theme.md)：上一轮冷黑、冰蓝主题的实施规格；应用内玻璃层级与内容区可读性约束仍可参考。
 - [原生窗口材质](features/liquid-glass.md)：可选的整窗桌面透视，依赖系统材质，默认关闭、尚未实现。
 - [VNC 远程桌面工作区](features/vnc-workspace.md)：以 noVNC 渲染、Rust 侧 RFB 会话 bridge 为基础的独立 VNC
   viewer，支持经现有 SSH connection pool 的安全隧道。该能力尚未实现，不应被视为当前发布功能。

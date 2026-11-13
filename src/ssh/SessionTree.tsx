@@ -86,6 +86,7 @@ interface SessionTreeProps {
   paneLayouts: PaneLayout[];
   activeSessionId: string | null;
   activeSftpId: string | null;
+  activeAssetProfileId?: string;
   profiles: SshProfile[];
   onFocusTerminal: (sessionId: string) => void;
   onNewTerminal: (node: SessionNode) => void;
@@ -113,6 +114,7 @@ export function SessionTree({
   paneLayouts,
   activeSessionId,
   activeSftpId,
+  activeAssetProfileId,
   profiles,
   onFocusTerminal,
   onNewTerminal,
@@ -247,14 +249,14 @@ export function SessionTree({
                         <Icon name="plus" height="15" width="15" />
                         <span>新建终端</span>
                       </button> : null}
-                      {node.kind === "ssh" && node.profile && !hasSftp ? (
+                      {node.kind === "ssh" && node.profile && (!hasSftp || activeAssetProfileId === node.profile.id) ? (
                         <button
                           className="session-child"
                           onClick={() => onOpenSftp(node.profile!)}
                           type="button"
                         >
                           <Icon name="serverFolder" height="16" width="16" />
-                          <span>SFTP</span>
+                          <span>{activeAssetProfileId === node.profile.id ? "资产 SFTP" : "SFTP"}</span>
                         </button>
                       ) : null}
                       {hasTerminals && node.kind === "ssh" && node.profile ? (

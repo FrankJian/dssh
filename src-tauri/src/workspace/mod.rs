@@ -76,7 +76,7 @@ impl DetachedWorkspaceManager {
         app_handle: &AppHandle,
         parent_label: String,
         title: String,
-        profile_id: String,
+        sftp: DetachedSftpWorkspace,
     ) -> AppResult<DetachedWorkspace> {
         let label = format!(
             "detached-sftp-{}",
@@ -88,7 +88,7 @@ impl DetachedWorkspaceManager {
             kind: DetachedWorkspaceKind::Sftp,
             title,
             terminal: None,
-            sftp: Some(DetachedSftpWorkspace { profile_id }),
+            sftp: Some(sftp),
             workbench: None,
         };
         self.open(app_handle, workspace)

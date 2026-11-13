@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { jumpServerAssetIp, TerminalTargetTracker } from "./terminalTarget.ts";
+import { jumpServerAssetIp, jumpServerSftpTarget, TerminalTargetTracker } from "./terminalTarget.ts";
 
 test("JumpServer direct-login username exposes the asset IP, not the gateway", () => {
   assert.equal(jumpServerAssetIp("alice@root@10.8.0.12@203.0.113.1"), "10.8.0.12");
   assert.equal(jumpServerAssetIp("alice@root@10.8.0.12"), "10.8.0.12");
   assert.equal(jumpServerAssetIp("alice"), null);
   assert.equal(jumpServerAssetIp("alice@root@999.8.0.12@gateway"), null);
+  assert.deepEqual(jumpServerSftpTarget("alice@sftp@root@10.8.0.12"), { account: "root", address: "10.8.0.12" });
 });
 
 test("JumpServer can identify an asset directly from its shell prompt", () => {
@@ -22,12 +23,16 @@ test("KoKo's OSC 2 asset title identifies the real server even without a menu ch
   assert.equal(tracker.observeOutput("0.12\x07"), "10.8.0.12");
   assert.equal(tracker.observeOutput("[root@app-server ~]# "), undefined);
   assert.equal(tracker.address, "10.8.0.12");
+  assert.deepEqual(tracker.sftpTarget, { account: "root", address: "10.8.0.12" });
+  tracker.observeOutput("\x1b]2;ssh://other@10.8.0.99\x07");
+  assert.deepEqual(tracker.sftpTarget, { account: "root", address: "10.8.0.12" });
 });
 
 test("KoKo's asset title works even if its welcome banner is customized", () => {
   const tracker = new TerminalTargetTracker();
   assert.equal(tracker.observeOutput("\x1b]2;ssh://root@10.8.0.12\x07"), "10.8.0.12");
   assert.equal(tracker.observeOutput("\r\nOpt> "), null);
+  assert.equal(tracker.sftpTarget, undefined);
 });
 
 test("JumpServer connection notice supplies an IP when the shell prompt has only a hostname", () => {
@@ -35,6 +40,7 @@ test("JumpServer connection notice supplies an IP when the shell prompt has only
   tracker.observeOutput("Welcome to JumpServer\r\n");
   assert.equal(tracker.observeOutput("开始连接到 root(root)@10.8.0.12\r\n"), undefined);
   assert.equal(tracker.observeOutput("[root@app-server ~]# "), "10.8.0.12");
+  assert.deepEqual(tracker.sftpTarget, { account: "root", address: "10.8.0.12" });
 });
 
 test("returning to KoKo's Opt menu clears the old asset and accepts a new choice", () => {
@@ -65,6 +71,16 @@ test("JumpServer asset choice is promoted only after an asset shell prompt", () 
   assert.equal(tracker.observeOutput("Connecting...\r\n[root@machine-a ~]# "), "10.8.0.12");
   assert.equal(tracker.observeOutput("cat file 10.8.0.99\r\n"), undefined);
   assert.equal(tracker.address, "10.8.0.12");
+});
+
+test("selecting an account keeps the pending asset address", () => {
+  const tracker = new TerminalTargetTracker();
+  tracker.observeOutput("Welcome to JumpServer\r\n3) machine-a 10.8.0.12\r\n");
+  tracker.observeInput("3\r");
+  tracker.observeOutput("Select an account:\r\n1) deploy\r\n");
+  tracker.observeInput("1\r");
+  tracker.observeOutput("deploy@machine-a:~$ ");
+  assert.deepEqual(tracker.sftpTarget, { account: "deploy", address: "10.8.0.12" });
 });
 
 test("JumpServer accepts an IP entered directly, but never mistakes its own OSC title for the asset", () => {

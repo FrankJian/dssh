@@ -32,7 +32,7 @@
 - Treat backend error payloads as user-facing errors: use the project `AppError` conventions and normalize Tauri rejections in the frontend service layer.
 
 ## UI conventions
-- The current implementation uses **Graphite Glass**. Future page redesigns follow [`features/interface-redesign.md`](features/interface-redesign.md): softer, consistently rounded geometry, more refined backgrounds, restrained glass, and a future whole-app palette choice independent of light/dark appearance and terminal schemes. Do not treat the current cold graphite / ice-blue values or small radii as permanent redesign constraints.
+- The interface uses a soft mineral palette, sea-glass focus color, restrained warm details, and coherent rounded geometry. Follow [`features/interface-redesign.md`](features/interface-redesign.md) for page redesigns. Graphite Glass is an older implementation record, not a constraint on current colors or radii. A future whole-app palette choice remains separate from light/dark appearance and terminal schemes.
 - All colors, spacing, radii, and metrics use semantic CSS variables in `src/theme/global.css`; components reference tokens only, never literal colors. Glass belongs on stable chrome and overlays; terminal, Monaco, and scroll-heavy file content stay unblurred. The terminal palette lives in `terminal/terminalTheme.ts`.
 - Terminal selection colors are kept close to the terminal background on purpose: xterm's WebGL renderer bakes the cell background into the glyph texture, so a high-contrast selection visibly changes how the text is antialiased. Don't "brighten" them without re-checking that.
 - Follow `.cursor/rules/design.mdc`: efficient desktop workflow, coherent rounded layout, restrained motion, and clear content hierarchy.

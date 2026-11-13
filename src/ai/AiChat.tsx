@@ -230,12 +230,12 @@ function AiEmptyState({
 
   return (
     <div className="ai-chat__empty">
-      <Icon name="bot" height="28" width="28" />
+      <Icon name="terminalTool" height="22" width="22" />
       {isConfigured ? (
         <>
-          <p className="ai-chat__empty-title">开始与 AI 助手对话</p>
+          <p className="ai-chat__empty-title">描述要完成的任务</p>
           <p className="ai-chat__empty-hint">
-            我可以操作应用界面、查找已保存的服务器、请求打开 SSH 连接，或在当前终端上帮助你排查问题。
+            可以从连接、终端输出或主机状态开始排查。远程操作会先请你确认。
           </p>
         </>
       ) : (

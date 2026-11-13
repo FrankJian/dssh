@@ -52,6 +52,16 @@ pub struct DetachedTerminalWorkspace {
 #[serde(rename_all = "camelCase")]
 pub struct DetachedSftpWorkspace {
     pub profile_id: String,
+    pub asset: Option<DetachedSftpAsset>,
+    pub remote_path: Option<String>,
+    pub local_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachedSftpAsset {
+    pub address: String,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,7 +77,8 @@ pub struct OpenDetachedTerminalRequest {
 pub struct OpenDetachedSftpRequest {
     pub parent_label: String,
     pub title: String,
-    pub profile_id: String,
+    #[serde(flatten)]
+    pub sftp: DetachedSftpWorkspace,
 }
 
 #[derive(Debug, Clone, Deserialize)]

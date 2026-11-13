@@ -15,6 +15,9 @@ export interface DetachedTerminalWorkspace {
 
 export interface DetachedSftpWorkspace {
   profileId: string;
+  asset?: import("../terminal/terminalTarget").JumpServerSftpTarget;
+  remotePath?: string;
+  localPath?: string;
 }
 
 export interface DetachedWorkspace {
@@ -33,10 +36,9 @@ export interface OpenDetachedTerminalRequest {
   terminal: DetachedTerminalWorkspace;
 }
 
-export interface OpenDetachedSftpRequest {
+export interface OpenDetachedSftpRequest extends DetachedSftpWorkspace {
   parentLabel: string;
   title: string;
-  profileId: string;
 }
 
 export interface DetachedWorkbench {

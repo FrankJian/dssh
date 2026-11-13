@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import type { JumpServerSftpTarget } from "../terminal/terminalTarget";
 
 /**
  * A non-terminal surface that lives in the top tab strip. Phase 1 supports SFTP
@@ -9,6 +10,7 @@ export interface SftpTab {
   id: string;
   profileId: string;
   title: string;
+  asset?: JumpServerSftpTarget;
   /** Last successfully opened directories, retained while the tab is open. */
   remotePath?: string;
   localPath?: string;
@@ -48,10 +50,10 @@ export function useWorkspace(initialTabs: SftpTab[] = [], initialOrder: string[]
     });
   }, []);
 
-  const openSftpTab = useCallback((profileId: string, title: string) => {
-    const id = `sftp:${profileId}`;
+  const openSftpTab = useCallback((profileId: string, title: string, asset?: JumpServerSftpTarget) => {
+    const id = asset ? `sftp:${profileId}:asset:${asset.account}@${asset.address}` : `sftp:${profileId}`;
     setSftpTabs((current) =>
-      current.some((tab) => tab.id === id) ? current : [...current, { id, profileId, title }],
+      current.some((tab) => tab.id === id) ? current : [...current, { id, profileId, title, asset }],
     );
     setActiveBrowserId(null);
     setActiveSftpId(id);

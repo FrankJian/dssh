@@ -86,6 +86,7 @@ import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePan
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
 import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
 import { defaultSshTerminalTitle } from "../terminal/terminalTitle";
+import { jumpServerSftpTarget, type JumpServerSftpTarget } from "../terminal/terminalTarget";
 import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
 import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
@@ -218,7 +219,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       ? { [initialWorkspace.terminal.tabSessionId]: initialWorkspace.title } : {},
     paneNames: {}, terminalSnapshots: initialWorkspace?.terminal?.terminalSnapshots ?? {},
     sftpTabs: initialWorkspace?.sftp ? [{ id: `sftp:${initialWorkspace.sftp.profileId}`, profileId: initialWorkspace.sftp.profileId,
-      title: initialWorkspace.title.replace(/^SFTP · /, "") }] : [],
+      title: initialWorkspace.title.replace(/^SFTP · /, ""), asset: initialWorkspace.sftp.asset,
+      remotePath: initialWorkspace.sftp.remotePath, localPath: initialWorkspace.sftp.localPath }] : [],
     tabOrder: [], s3ProfileIds: [],
   }).current;
   const closingWindowRef = useRef(false);
@@ -428,6 +430,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     cancelReconnect,
     commandActivity,
     targetAddresses,
+    sftpTargets,
     closeSession,
     forgetSession,
     getBacklog,
@@ -680,8 +683,14 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const sftpTabSurfaces = sftpTabs
     .map((tab) => {
       const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !isArtifactory && !appLock.status?.locked;
-      const terminal = findSftpTerminal(sessions, tab.profileId, activeSessionId);
+      const terminal = tab.asset ? undefined : findSftpTerminal(sessions, tab.profileId, activeSessionId);
       const profile = profiles.find((item) => item.id === tab.profileId);
+      const directAsset = profile && jumpServerSftpTarget(profile.username);
+      const sftpProfileId = tab.asset
+        ? profile && (directAsset
+          ? directAsset.address === tab.asset.address && directAsset.account === tab.asset.account ? profile.id : null
+          : `koko-sftp:${profile.id}:${tab.asset.account}@${tab.asset.address}`)
+        : tab.profileId;
       const host = profile?.host.trim();
       const endpoint = profile && host
         ? `${profile.username ? `${profile.username}@` : ""}${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${profile.port}`
@@ -693,14 +702,15 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             initialLocalPath={tab.localPath}
             initialRemotePath={tab.remotePath}
             onTabPathsChange={updateSftpTabPaths}
-            onOpenSshTerminal={profile && !openSshProfileIds.has(tab.profileId)
+            onOpenSshTerminal={!tab.asset && profile && !openSshProfileIds.has(tab.profileId)
               ? () => void handleOpenSftpTerminal(profile)
               : undefined}
-            profileId={tab.profileId}
-            remoteName={profile?.name.trim() || tab.title}
-            remoteEndpoint={endpoint}
+            profileId={sftpProfileId ?? null}
+            singleRemote={Boolean(tab.asset)}
+            remoteName={tab.asset?.address || profile?.name.trim() || tab.title}
+            remoteEndpoint={tab.asset ? `${tab.asset.account} · 经 ${profile?.name ?? "JumpServer"}` : endpoint}
             tabId={tab.id}
-            onOpenInTerminal={terminal ? (dir) => {
+            onOpenInTerminal={terminal && !sftpTargets[terminal.id] && targetAddresses[terminal.id] !== null ? (dir) => {
               const quoted = `'${dir.replace(/'/g, "'\\''")}'`;
               handleFocusTerminal(terminal.id);
               void writeToSession(terminal.id, `cd ${quoted}\r`);
@@ -1209,10 +1219,30 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
-  function handleOpenSftpForProfile(profile: SshProfile) {
+  function sftpAssetForActiveTerminal(profile: SshProfile) {
+    const session = activeSession?.profileId === profile.id && activeSession.status === "connected"
+      ? activeSession
+      : undefined;
+    return session ? sftpTargets[session.id] : undefined;
+  }
+
+  function openProfileSftp(profile: SshProfile, asset?: JumpServerSftpTarget) {
     setActiveActivity(current => current === "sftp" ? current : "sessions");
-    openSftpTab(profile.id, profile.name);
+    openSftpTab(profile.id, asset ? asset.address : profile.name, asset);
     recordUse(profile.id);
+  }
+
+  function handleOpenSftpForProfile(profile: SshProfile) {
+    openProfileSftp(profile, jumpServerSftpTarget(profile.username));
+  }
+
+  function handleOpenSftpFromTerminal(profile: SshProfile) {
+    const asset = jumpServerSftpTarget(profile.username) ?? sftpAssetForActiveTerminal(profile);
+    if (!asset && activeSession?.profileId === profile.id && targetAddresses[activeSession.id] === null) {
+      toast("尚未识别到当前 JumpServer 资产。请先在终端进入目标机器，或从连接管理打开授权资产目录。", "error");
+      return;
+    }
+    openProfileSftp(profile, asset);
   }
 
   async function handleOpenSftpTerminal(profile: SshProfile) {
@@ -1661,6 +1691,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         const workspace = await openDetachedSftpWorkspace({
           parentLabel,
           profileId: sftpTab.profileId,
+          asset: sftpTab.asset,
+          remotePath: sftpTab.remotePath,
+          localPath: sftpTab.localPath,
           title: tab.title,
         });
         addWorkspace(workspace);
@@ -1706,7 +1739,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     sidebarCollapsed || isConnections || isArtifactory ? null : activeActivity === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
           openSshProfileIds={openSshProfileIds}
-          onOpen={handleOpenSftpForProfile} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
+          onOpen={handleOpenSftpFromTerminal} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
           onCreate={(initialTags, initialFolder) => setEditorState({ mode: "create", profile: null, initialTags, initialFolder, initialConnectionType: "sftp" })}
           onEdit={openEditProfile} onClone={profile => setEditorState({ mode: "create", profile })}
           onDelete={profile => handleDeleteProfile(profile.id)} onRenameFolder={handleRenameConnectionFolder} onRenameTag={handleRenameConnectionTag} />
@@ -1743,7 +1776,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           profiles={profiles}
           onFocusTerminal={handleFocusTerminal}
           onNewTerminal={handleNewTerminalForNode}
-          onOpenSftp={handleOpenSftpForProfile}
+          onOpenSftp={handleOpenSftpFromTerminal}
+          activeAssetProfileId={activeSessionProfile && sftpAssetForActiveTerminal(activeSessionProfile)
+            ? activeSessionProfile.id : undefined}
           onOpenSshTerminal={(profile) => void handleOpenSftpTerminal(profile)}
           onFocusSftp={handleFocusSftpTab}
           onCloseSftp={closeSftpTab}
@@ -2113,11 +2148,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       if (activeSessionProfile) {
         items.push({
           id: "act:sftp-current",
-          label: `打开 SFTP · ${activeSessionProfile.name}`,
+          label: `打开 SFTP · ${sftpAssetForActiveTerminal(activeSessionProfile)?.address ?? activeSessionProfile.name}`,
           hint: "终端",
           icon: "folder",
           keywords: "sftp 文件",
-          run: () => handleOpenSftpForProfile(activeSessionProfile),
+          run: () => handleOpenSftpFromTerminal(activeSessionProfile),
         });
         items.push({
           id: "act:forward-current",

@@ -77,6 +77,7 @@ interface FileBrowserProps {
   /** Suppress the native WebView menu when no SFTP context actions exist. */
   disableContextMenu?: boolean;
   profileId: string | null;
+  singleRemote?: boolean;
   remoteName?: string;
   remoteEndpoint?: string;
   editorOptions: EditorOptions;
@@ -180,6 +181,7 @@ export function FileBrowser({
   onOpenSshTerminal,
   onTabPathsChange,
   profileId,
+  singleRemote = false,
   remoteName,
   remoteEndpoint,
   tabId,
@@ -416,15 +418,15 @@ export function FileBrowser({
       .catch((reason: unknown) => {
         if (!cancelled)
           setError(
-            reason instanceof Error
-              ? reason.message
-              : "连接服务器文件系统失败。",
+            singleRemote
+              ? `无法打开 JumpServer 资产的 SFTP，请确认资产和账号已授权原生 SFTP。${reason instanceof Error ? ` ${reason.message}` : ""}`
+              : reason instanceof Error ? reason.message : "连接服务器文件系统失败。",
           );
       });
     return () => {
       cancelled = true;
     };
-  }, [loadRemote, profileId]);
+  }, [loadRemote, profileId, singleRemote]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1225,7 +1227,7 @@ export function FileBrowser({
         fileSystem={server ? "remote" : "local"}
         connectionName={server ? remoteName : undefined}
         connectionAddress={server ? remoteEndpoint : undefined}
-        sourceAction={!remote && profileId ? (
+        sourceAction={!remote && profileId && !singleRemote ? (
           <IconButton
             active={rightRemote}
             aria-pressed={rightRemote}

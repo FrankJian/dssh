@@ -5,7 +5,7 @@ import { workspaceSessionIds } from "../models/workspace";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
 import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
-import { TerminalTargetTracker } from "./terminalTarget";
+import { TerminalTargetTracker, type JumpServerSftpTarget } from "./terminalTarget";
 import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../ui/ToastHost";
@@ -100,6 +100,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   const [terminalConflicts, setTerminalConflicts] = useState<TerminalTransferConflictEvent[]>([]);
   const [commandActivity, setCommandActivity] = useState<ReadonlySet<string>>(() => new Set());
   const [targetAddresses, setTargetAddresses] = useState<Readonly<Record<string, string | null>>>({});
+  const [sftpTargets, setSftpTargets] = useState<Readonly<Record<string, JumpServerSftpTarget | undefined>>>({});
   const pendingZmodemPromptsRef = useRef(new Set<string>());
   const terminalSizesRef = useRef(new Map<string, TerminalSize>());
   const manualReconnectsRef = useRef(new Set<string>());
@@ -169,7 +170,13 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
       return;
     }
     updateCommandActivity(sessionId, trackerForSession(sessionId).observeOutput(data));
-    const address = targetTrackerForSession(sessionId).observeOutput(data);
+    const tracker = targetTrackerForSession(sessionId);
+    const before = tracker.sftpTarget;
+    const address = tracker.observeOutput(data);
+    if (tracker.sftpTarget !== before) {
+      const target = tracker.sftpTarget;
+      setSftpTargets((current) => ({ ...current, [sessionId]: target }));
+    }
     if (address !== undefined) {
       setTargetAddresses((current) => current[sessionId] === address
         ? current : { ...current, [sessionId]: address });
@@ -267,6 +274,10 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
           return address === undefined ? [] : [[sessionId, address]];
         }));
         setTargetAddresses((current) => ({ ...hydratedAddresses, ...current }));
+        setSftpTargets((current) => ({
+          ...Object.fromEntries(snapshots.map(({ sessionId }) => [sessionId, targetTrackerForSession(sessionId).sftpTarget])),
+          ...current,
+        }));
 
         if (loadedSessions.length > 0) {
           const currentSessions = loadedSessions.map(withLatestStatus);
@@ -317,6 +328,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
           else next[event.sessionId] = address;
           return next;
         });
+        setSftpTargets((current) => ({ ...current, [event.sessionId]: undefined }));
       }
       setSessions((currentSessions) =>
         currentSessions.map((session) =>
@@ -428,7 +440,10 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
   const attachSession = useCallback(async (session: TerminalSession) => {
     const output = await readSshSessionOutput(session.id).catch(() => "");
     buffersRef.current.set(session.id, createBacklog(output));
-    const address = targetTrackerForSession(session.id).observeOutput(output);
+    const tracker = targetTrackerForSession(session.id);
+    const address = tracker.observeOutput(output);
+    const target = tracker.sftpTarget;
+    setSftpTargets((current) => ({ ...current, [session.id]: target }));
     if (address !== undefined) setTargetAddresses((current) => ({ ...current, [session.id]: address }));
     updateCommandActivity(session.id, trackerForSession(session.id).restoreFromOutput(output));
     setSessions((previous) => previous.some((item) => item.id === session.id) ? previous : [...previous, withLatestStatus(session)]);
@@ -525,6 +540,11 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     listenersRef.current.delete(sessionId);
     activityTrackersRef.current.delete(sessionId);
     targetTrackersRef.current.delete(sessionId);
+    setSftpTargets((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     setTargetAddresses((current) => {
       if (!(sessionId in current)) return current;
       const next = { ...current };
@@ -580,6 +600,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     resolveTerminalConflict,
     commandActivity,
     targetAddresses,
+    sftpTargets,
     setActiveSessionId,
     startLocalSession,
     startSession,

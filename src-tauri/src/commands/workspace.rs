@@ -46,7 +46,7 @@ pub async fn open_detached_sftp_workspace(
         &app_handle,
         request.parent_label,
         request.title,
-        request.profile_id,
+        request.sftp,
     )
 }
 

@@ -5,7 +5,7 @@ alwaysApply: true
 
 # dssh Design Language
 
-> The current shipped UI uses Graphite Glass. For new page redesigns, follow the direction in [`../../features/interface-redesign.md`](../../features/interface-redesign.md). Existing screens do not need a piecemeal restyle before their redesign begins.
+> Follow the direction in [`../../features/interface-redesign.md`](../../features/interface-redesign.md). The former Graphite Glass palette is documented as an implementation record, not the current visual target.
 
 ## Intent
 - Build a polished Windows/macOS developer tool with a calm, approachable shape language and clear workspace hierarchy.
@@ -24,7 +24,7 @@ alwaysApply: true
 - Separate regions primarily through surface tone, spacing, and subtle borders. Avoid thick outlines, heavy shadows, oversized hero areas, and decorative cards.
 
 ## Color and material direction
-- The current cold graphite and ice-blue palette is an implementation baseline, not the only allowed visual identity for future redesigns. Explore more refined neutral backgrounds with coordinated, selectable whole-app palettes; do not tint only the accent while leaving surfaces and states mismatched.
+- Use the current soft mineral surfaces, sea-glass interaction color, and restrained warm detail as the visual baseline. Future selectable whole-app palettes should update surfaces, text, borders, and states together; do not tint only the accent.
 - Treat appearance (light/dark/system), app palette, and terminal color scheme as distinct settings. Every app palette needs light and dark token variants, accessible state colors, and a solid-surface fallback.
 - Glass may add depth to stable chrome, navigation, menus, and overlays. Keep it restrained and legible; terminal, Monaco, remote desktops, and long scrolling content remain stable, near-opaque surfaces. Do not stack blur layers without a clear hierarchy.
 

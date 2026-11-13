@@ -14,12 +14,43 @@ use crate::{
 };
 
 fn require_profile(state: &AppState, profile_id: &str) -> AppResult<SshProfile> {
-    state.profiles.get_profile(profile_id)?.ok_or_else(|| {
+    let target = profile_id.strip_prefix("koko-sftp:");
+    let saved_id = target
+        .and_then(|target| target.split_once(':'))
+        .map_or(profile_id, |(id, _)| id);
+    let mut profile = state.profiles.get_profile(saved_id)?.ok_or_else(|| {
         AppError::new(
             "profile_not_found",
-            format!("SSH profile '{profile_id}' does not exist."),
+            format!("SSH profile '{saved_id}' does not exist."),
         )
-    })
+    })?;
+    if let Some((_, asset)) = target.and_then(|target| target.split_once(':')) {
+        profile.username = koko_sftp_username(&profile.username, asset)?;
+        // Each asset/account pair has a distinct cache and pool identity.
+        profile.id = profile_id.to_owned();
+    }
+    Ok(profile)
+}
+
+fn koko_sftp_username(gateway_user: &str, asset: &str) -> AppResult<String> {
+    let invalid = || {
+        AppError::new(
+            "sftp_asset_target",
+            "JumpServer 资产地址或账号格式不受支持。",
+        )
+    };
+    let (account, address) = asset.split_once('@').ok_or_else(invalid)?;
+    if gateway_user.is_empty()
+        || gateway_user.contains(['@', '#'])
+        || account.is_empty()
+        || !account
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        || address.parse::<std::net::Ipv4Addr>().is_err()
+    {
+        return Err(invalid());
+    }
+    Ok(format!("{gateway_user}@sftp@{account}@{address}"))
 }
 
 #[derive(Serialize)]
@@ -717,6 +748,17 @@ pub async fn sftp_disconnect(state: State<'_, AppState>, profile_id: String) -> 
 #[cfg(test)]
 mod path_tests {
     use super::*;
+
+    #[test]
+    fn koko_direct_sftp_keeps_gateway_login_and_validates_the_asset() {
+        assert_eq!(
+            koko_sftp_username("alice", "root@10.8.0.12").unwrap(),
+            "alice@sftp@root@10.8.0.12"
+        );
+        assert!(koko_sftp_username("alice", "root@other@10.8.0.12").is_err());
+        assert!(koko_sftp_username("alice", "root@999.8.0.12").is_err());
+        assert!(koko_sftp_username("alice", "@10.8.0.12").is_err());
+    }
 
     #[test]
     fn windows_display_paths_keep_roots_unicode_and_volume_paths() {
