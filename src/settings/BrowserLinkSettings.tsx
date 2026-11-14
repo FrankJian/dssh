@@ -15,6 +15,5 @@ export function BrowserLinkSettings() {
     <SelectMenu ariaLabel="终端链接打开方式" className="settings-select-menu" value={target}
       options={[{ value: "builtin", label: "内置浏览器（标签页）" }, { value: "system", label: "系统默认浏览器" }, { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" }]}
       onChange={(value) => { const next = parseBrowserLinkTarget(value); localStorage.setItem(BROWSER_LINK_TARGET_KEY, next); setTarget(next); }} />
-    <p className="settings-field__hint">即时生效，适用于普通网址和终端超链接。Chrome / Edge 需要先安装；无法打开时会提示错误。</p>
   </section>;
 }

@@ -207,6 +207,7 @@ export function SelectMenu({
         onClick={() => { if (canOpen) setOpen((current) => !current); }}
         onKeyDown={handleTriggerKeyDown}
         ref={triggerRef}
+        title={selected?.label}
         type="button"
       >
         <span>{selected?.label ?? "暂无选项"}</span>
@@ -243,6 +244,7 @@ export function SelectMenu({
                       selectOption(option);
                     }}
                     role="option"
+                    title={option.label}
                     type="button"
                   >
                     <span>{option.label}</span>

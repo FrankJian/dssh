@@ -74,7 +74,7 @@ export function TerminalWorkspace({
   );
 
   return (
-    <section className="terminal-workspace" aria-label="终端会话">
+    <section className={`terminal-workspace${activeSession ? " terminal-workspace--active" : ""}`} aria-label="终端会话">
       {activeSession ? (
         <>
           <div className="terminal-stage">

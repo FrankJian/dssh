@@ -63,6 +63,20 @@ export interface AiConnectionTestResult {
   };
 }
 
+export interface AiModelSelection {
+  providerId: string;
+  model: string;
+  reasoningLevel: string | null;
+}
+
+export interface AiConversation {
+  id: string;
+  title: string | null;
+  items: unknown[];
+  draft: string;
+  selection: AiModelSelection | null;
+}
+
 export interface AiServerContext {
   id: string;
   label: string;
@@ -84,6 +98,12 @@ export interface AiHistoryMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+export type AiQuestionAnswer =
+  | { optionIds: string[]; customText?: never }
+  | { customText: string; optionIds?: never };
+
+export const MAX_AI_QUESTION_ANSWER_LENGTH = 2000;
 
 export interface AiSendMessageRequest {
   runId: string;

@@ -125,7 +125,6 @@ export function ShortcutSettingsSection() {
       <div className="settings-section__head shortcuts-section__head">
         <div>
           <h3>快捷键</h3>
-          <p>点击快捷键后直接按下新的组合；主修饰键在 macOS 为 ⌘，Windows/Linux 为 Ctrl。</p>
         </div>
         <Button className="shortcuts-reset-all" onClick={resetAll} title="恢复全部默认快捷键" variant="ghost">
           <Icon name="refresh" height="14" width="14" />
@@ -145,8 +144,7 @@ export function ShortcutSettingsSection() {
                 return (
                   <div className="shortcut-row" key={definition.id}>
                     <div className="shortcut-row__info">
-                      <span className="shortcut-row__label">{definition.label}</span>
-                      <span className="shortcut-row__description">{definition.description}</span>
+                      <span className="shortcut-row__label" title={definition.description}>{definition.label}</span>
                     </div>
                     <div className="shortcut-row__actions">
                       <ShortcutRecorder

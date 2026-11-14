@@ -39,25 +39,36 @@ export function fitWorkspaceDocks({ width, height, railWidth, sidebarWidth, pane
   };
 }
 
-export function workspaceDockGrid({ rail, sidebar, panel, position, sizes }: {
+export function workspaceDockGrid({ rail, sidebar, panel, position, sizes, animateSidebar = false, animatePanel = false }: {
   rail: boolean; sidebar: boolean; panel: boolean; position: AssistantDockPosition;
   sizes: ReturnType<typeof fitWorkspaceDocks>;
+  animateSidebar?: boolean;
+  animatePanel?: boolean;
 }) {
   const columns: string[] = [];
   const top: string[] = [];
   if (rail) { columns.push("auto"); top.push("rail"); }
-  if (sidebar && sizes.showSidebar) { columns.push(`${sizes.sidebarWidth}px`, "1px"); top.push("sidebar", "sidebar-resizer"); }
-  if (panel && position === "left") { columns.push(`${sizes.panelWidth}px`, "1px"); top.push("dock", "dock-resizer"); }
+  if (animateSidebar) {
+    columns.push("calc(var(--workspace-sidebar-width) * var(--workspace-sidebar-progress))", "calc(1px * var(--workspace-sidebar-progress))");
+    top.push("sidebar", "sidebar-resizer");
+  } else if (sidebar && sizes.showSidebar) {
+    columns.push(`${sizes.sidebarWidth}px`, "1px");
+    top.push("sidebar", "sidebar-resizer");
+  }
+  const hasPanelTrack = panel || animatePanel;
+  const panelTrack = animatePanel ? "calc(var(--workspace-panel-size) * var(--workspace-panel-progress))" : `${position === "bottom" ? sizes.panelHeight : sizes.panelWidth}px`;
+  const dividerTrack = animatePanel ? "calc(1px * var(--workspace-panel-progress))" : "1px";
+  if (hasPanelTrack && position === "left") { columns.push(panelTrack, dividerTrack); top.push("dock", "dock-resizer"); }
   columns.push("minmax(0, 1fr)"); top.push("main");
-  if (panel && position === "right") { columns.push("1px", `${sizes.panelWidth}px`); top.push("dock-resizer", "dock"); }
+  if (hasPanelTrack && position === "right") { columns.push(dividerTrack, panelTrack); top.push("dock-resizer", "dock"); }
   const rows = [top];
-  if (panel && position === "bottom") {
+  if (hasPanelTrack && position === "bottom") {
     rows.push(top.map((area) => area === "main" ? "dock-resizer" : area));
     rows.push(top.map((area) => area === "main" ? "dock" : area));
   }
   return {
     gridTemplateColumns: columns.join(" "),
     gridTemplateAreas: rows.map((row) => `"${row.join(" ")}"`).join(" "),
-    gridTemplateRows: panel && position === "bottom" ? `minmax(0, 1fr) 1px ${sizes.panelHeight}px` : "minmax(0, 1fr)",
+    gridTemplateRows: hasPanelTrack && position === "bottom" ? `minmax(0, 1fr) ${dividerTrack} ${panelTrack}` : "minmax(0, 1fr)",
   };
 }

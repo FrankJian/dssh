@@ -184,6 +184,7 @@ impl ContextCompressor {
         client: &AiClient,
         model: &str,
         manager: &AiManager,
+        scope: (&str, &str),
     ) -> Result<bool, String> {
         let summary_request_budget = self.input_budget;
         // Share a deadline across all chunks; a busy service should not make
@@ -191,7 +192,7 @@ impl ContextCompressor {
         let summary_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         self.fit_with(request, |chunk, max_output| async move {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
-            (model, &chunk, max_output).hash(&mut hash);
+            (scope, model, &chunk, max_output).hash(&mut hash);
             let key = hash.finish();
             if let Some(cached) = manager.cached_summary(key) {
                 return Ok(cached);

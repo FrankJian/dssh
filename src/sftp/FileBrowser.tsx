@@ -1227,6 +1227,7 @@ export function FileBrowser({
         fileSystem={server ? "remote" : "local"}
         connectionName={server ? remoteName : undefined}
         connectionAddress={server ? remoteEndpoint : undefined}
+        scopedRemoteRoot={remote && singleRemote}
         sourceAction={!remote && profileId && !singleRemote ? (
           <IconButton
             active={rightRemote}

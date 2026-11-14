@@ -1,6 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import type {
   AiEvent,
+  AiQuestionAnswer,
+  AiConversation,
   AiConnectionTestResult,
   AiProvider,
   AiSendMessageRequest,
@@ -18,10 +20,6 @@ export function takeOverAiSession(conversationId: string, sessionId: string) {
 
 export function closeAiBackgroundSession(conversationId: string, sessionId: string) {
   return invokeCommand<void>("ai_close_background_session", { conversationId, sessionId });
-}
-
-export function closeAiConversation(conversationId: string) {
-  return invokeCommand<void>("ai_close_conversation", { conversationId });
 }
 
 export function listAiModels(providerId: string) {
@@ -58,9 +56,9 @@ export function approveAiTool(runId: string, callId: string, approved: boolean) 
   });
 }
 
-export function answerAiQuestion(runId: string, callId: string, optionIds: string[]) {
+export function answerAiQuestion(runId: string, callId: string, answer: AiQuestionAnswer) {
   return invokeCommand<void>("ai_answer_question", {
-    request: { runId, callId, optionIds },
+    request: { runId, callId, ...answer },
   });
 }
 
@@ -68,18 +66,26 @@ export function cancelAiRun(runId: string) {
   return invokeCommand<void>("ai_cancel_run", { runId });
 }
 
-export function loadAiChatHistory() {
-  return invokeCommand<unknown[]>("ai_load_chat_history");
+export function listAiConversations() {
+  return invokeCommand<AiConversation[]>("ai_list_conversations");
 }
 
-export function saveAiChatHistory(items: unknown[]) {
-  return invokeCommand<void>("ai_save_chat_history", { items });
+export function createAiConversation() {
+  return invokeCommand<AiConversation>("ai_create_conversation");
 }
 
-export function clearAiChatHistory() {
-  return invokeCommand<void>("ai_clear_chat_history");
+export function saveAiConversation(conversation: AiConversation) {
+  return invokeCommand<void>("ai_save_conversation", { conversation });
 }
 
-export function onAiEvent(handler: (event: AiEvent) => void) {
-  return listen<AiEvent>("ai-event", (event) => handler(event.payload));
+export function generateAiConversationTitle(conversationId: string, providerId: string, model: string, message: string, answer: string) {
+  return invokeCommand<string | null>("ai_generate_conversation_title", { conversationId, providerId, model, message, answer });
+}
+
+export function resetAiConversation(conversationId: string, remove: boolean) {
+  return invokeCommand<void>("ai_reset_conversation", { conversationId, delete: remove });
+}
+
+export function onAiEvent(windowLabel: string, handler: (event: AiEvent) => void) {
+  return listen<AiEvent>("ai-event", (event) => handler(event.payload), { target: windowLabel });
 }

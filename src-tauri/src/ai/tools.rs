@@ -21,7 +21,7 @@ pub fn tool_defs() -> Vec<Tool> {
         Tool::new("list_servers")
             .with_description(
                 "列出用户已保存的所有 SSH 服务器配置（返回 id、名称、主机、端口、用户名、标签、描述）。\
-                 在需要选择或操作某台服务器之前，先调用此工具获取服务器的 id。",
+                 仅在用户要求查看已保存的服务器，或用户明确要求操作服务器且需要查找目标 id 时调用。",
             )
             .with_schema(json!({
                 "type": "object",
@@ -118,7 +118,7 @@ pub fn tool_defs() -> Vec<Tool> {
         Tool::new("ask_user_question")
             .with_description(
                 "向用户提出一个需要选择的问题。仅在无法从当前上下文确定目标时使用，例如让用户从多台服务器中选择。\
-                 每次只问一个问题，提供 2 到 6 个清晰、可直接选择的选项。用户的选择会作为工具结果返回。",
+                 每次只问一个问题，提供 2 到 6 个清晰、可直接选择的选项。界面始终允许用户自定义回答。用户选择的选项或输入的文字会作为工具结果返回。",
             )
             .with_schema(json!({
                 "type": "object",
@@ -347,7 +347,7 @@ pub async fn execute_tool(
             Err(_) => ("无法读取活动终端列表。".into(), true),
         },
         "run_command" => execute_run_command(state, args, current).await,
-        "ask_user_question" => ("正在等待用户选择。".to_string(), false),
+        "ask_user_question" => ("正在等待用户回答。".to_string(), false),
         "open_ssh_session" => ("请通过后台会话管理器建立 SSH 连接。".to_string(), false),
         "read_terminal" => {
             execute_read_terminal(state, args, current.and_then(|c| c.session_id.as_deref()), conversation).await

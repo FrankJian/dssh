@@ -62,6 +62,7 @@ impl AppState {
 
         let profiles =
             ProfileRepository::initialize(&app_data_dir, storage_config.database_file_name)?;
+        profiles.recover_detached_ai_conversations()?;
         let app_lock = lock::AppLockManager::initialize(profiles.clone(), app_handle.clone())?;
 
         Ok(Self {

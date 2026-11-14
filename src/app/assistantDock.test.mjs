@@ -59,3 +59,30 @@ test('zen and fullscreen layouts retain only the main surface', () => {
   assert.equal(result.gridTemplateAreas, '"main"');
   assert.equal(result.gridTemplateColumns, 'minmax(0, 1fr)');
 });
+
+test('sidebar transitions preserve grid tracks in each auxiliary dock position', () => {
+  for (const position of ['left', 'right', 'bottom']) {
+    const layout = (sidebar) => workspaceDockGrid({
+      rail: true, sidebar, panel: true, position, animateSidebar: true,
+      sizes: fitWorkspaceDocks({ ...base, sidebar, position }),
+    });
+    const open = layout(true);
+    const closed = layout(false);
+    assert.equal(open.gridTemplateAreas, closed.gridTemplateAreas);
+    assert.match(closed.gridTemplateColumns, /--workspace-sidebar-progress/);
+  }
+});
+
+test('auxiliary dock transitions retain a collapsible track after closing', () => {
+  for (const position of ['left', 'right', 'bottom']) {
+    const layout = (panel) => workspaceDockGrid({
+      rail: true, sidebar: true, panel, position, animateSidebar: true, animatePanel: true,
+      sizes: fitWorkspaceDocks({ ...base, panel, position }),
+    });
+    const open = layout(true);
+    const closed = layout(false);
+    assert.deepEqual(closed, open);
+    const tracks = position === 'bottom' ? closed.gridTemplateRows : closed.gridTemplateColumns;
+    assert.match(tracks, /--workspace-panel-progress/);
+  }
+});

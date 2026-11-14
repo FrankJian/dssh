@@ -23,7 +23,7 @@
 
 ## 2. 首版范围
 
-- 31 套内置方案、浅色/深色标识、默认随应用外观切换，并可分别保存浅色与深色方案。
+- 35 套内置方案、浅色/深色标识、默认随应用外观切换，并可分别保存浅色与深色方案。
 - 自定义方案：复制、新建副本、编辑、重命名、删除；颜色输入和静态终端预览。
 - 所有已存在与后续创建的终端同步更新，不重建 xterm，不重连，不清屏，不重新播放历史输出。
 - 默认仍是当前 Graphite Dark；升级不改变原有字体、字号、行高、字间距、GPU、壁纸和透明度。
@@ -38,6 +38,10 @@
 | `builtin:graphite-dark` | Graphite Dark | 深色、默认 | 项目自有；石墨底、柔和彩色输出和清晰蓝色选区 |
 | `builtin:graphite-light` | Graphite Light | 浅色 | 项目自有；雾白底、深石墨文字、冰蓝光标 |
 | `builtin:porcelain-white` | Porcelain White（瓷白） | 浅色 | 项目自有；纯白底、墨灰文字，低饱和灰蓝、鼠尾草绿、灰紫与玫瑰色；背景不透明度为 100% 时呈现纯白 |
+| `builtin:sea-glass-light` | Sea Glass Light（海玻璃） | 浅色 | 项目自有；浅海玻璃绿背景、深绿灰文字与克制的暖金色 |
+| `builtin:sea-glass-dark` | Sea Glass Dark（海玻璃） | 深色 | 项目自有；墨绿背景、雾白文字，呼应浅色海玻璃方案 |
+| `builtin:mineral-light` | Mineral Light（矿雾） | 浅色 | 项目自有；接近应用浅色画布的中性雾灰绿 |
+| `builtin:mineral-dark` | Mineral Dark（矿夜） | 深色 | 项目自有；接近应用深色工作区的矿物灰绿 |
 | `builtin:graphite-contrast` | Graphite Contrast | 深色、高对比 | 项目自有；强调文字可读性，选区仍需单独验证 |
 | `builtin:nord` | Nord | 深色 | 基于 Nord 官方调色板，记录终端字段映射 |
 | `builtin:solarized-dark` | Solarized Dark | 深色 | 基于 Solarized 官方终端深色映射 |
@@ -71,7 +75,9 @@ Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其
 
 选择即提交，更新所有终端。选择方案后焦点保留在配色选择框，按 ↑ / ↓ 可循环切换当前列表中的方案并即时应用，无需再次展开列表；Enter / 空格仍可展开列表。关闭设置不会撤销已选择的方案；与下面明确标识的编辑草稿区分。提供“恢复默认配色”，只选择 Graphite Dark，不删除自定义方案，不重置字体或背景图片。
 
-内置配色将 ANSI 绿 / 亮绿（编号 2 / 10）分别适配为同方案中的蓝、青、紫或琥珀色，使 Linux `ls` 常见的可写目录底色随方案变化。这也会影响使用同一编号的文字与其他背景。自定义配色不会被重映射；在“复制并编辑 → ANSI 16 色 → 绿（可写目录背景）”可设为任意颜色。现存自定义方案保持原值，纯真彩色输出仍由程序指定。
+“叠加背景色”独立于方案编辑：开关关闭时使用方案原背景，但保留已选颜色和透明度，重新开启即可恢复。可通过系统色板或 HEX 色值选任意 RGB 颜色，并设置 0–100% 的颜色叠加不透明度。0% 显示方案原背景，100% 完全使用自定义颜色；中间值先与方案背景混合，形成终端使用的不透明基础色。浅色与深色方案分别记住覆盖色，切换方案不修改文字、光标、选区或 ANSI 色。清除覆盖色则删除当前外观的自定义颜色。原有“背景与布局 → 背景不透明度”仍独立控制基础色对应用背景或磨砂壁纸的透出；预览显示颜色混合后的不透明基础色。若默认文字对比度低于 4.5:1，显示非阻塞提醒。
+
+原有内置配色将 ANSI 绿 / 亮绿（编号 2 / 10）分别适配为同方案中的蓝、青、紫或琥珀色，使 Linux `ls` 常见的可写目录底色随方案变化。新增海玻璃与矿雾方案保留其专门调校的绿色。自定义配色不会被重映射；在“复制并编辑 → ANSI 16 色 → 绿（可写目录背景）”可设为任意颜色。现存自定义方案保持原值，纯真彩色输出仍由程序指定。
 
 ### 4.2 自定义编辑
 
@@ -95,6 +101,8 @@ Nord、Solarized、Catppuccin、Tokyo Night 和 Gruvbox 的基础色均来自其
 | 标准与明亮 ANSI 色 | `black`…`white`、`brightBlack`…`brightWhite` | 对应索引 0–15，每个色样有名称和索引 |
 
 颜色选择器和 HEX 文本框双向联动，只保存规范化的 `#RRGGBB`；允许输入 `#RGB` 并展开。无效/未完成输入保留在草稿输入框，显示错误并禁止保存，不能传给 xterm/CSS。首版不接受 CSS 表达式、变量、URL、任意命名色或 alpha；背景 alpha 继续使用现有控件。
+
+独立叠加背景色使用同样的 HEX 校验；透明度单独存为 0–100 的整数，不向 xterm 传入未校验的 CSS 颜色。
 
 提示用户：修改默认文字颜色不等于给全部输出重新染色。程序使用的 ANSI 0–15 随对应调色板改变；索引 16–255 保持 xterm 默认扩展色；程序显式指定的 RGB 真彩色不被强行覆盖。Vim/tmux 等程序自身主题可能仍需在程序内调整。
 
@@ -124,6 +132,10 @@ interface TerminalThemePreferencesV1 {
   followAppearance: boolean;          // 新记录默认为 true
   darkSchemeId: string;               // 深色应用对应方案
   lightSchemeId: string;              // 浅色应用对应方案
+  backgroundOverrides: {
+    dark: { color: string; opacity: number; enabled: boolean } | null;
+    light: { color: string; opacity: number; enabled: boolean } | null;
+  };                                  // 旧记录读取时补空值
   customSchemes: Array<{
     id: string;                     // custom:<uuid>
     name: string;
@@ -163,7 +175,7 @@ interface TerminalThemePreferencesV1 {
 | 类别 | 必须验证的结果 |
 | --- | --- |
 | 兼容升级 | 无新 key 时与原 Graphite 逐字段相同；已有字体、背景设置不变 |
-| 31 套预设 | 基础色与 16 ANSI 均完整；深浅背景、光标、选区可读；第三方来源可追溯 |
+| 35 套预设 | 基础色与 16 ANSI 均完整；深浅背景、光标、选区可读；第三方来源可追溯 |
 | 编辑闭环 | 新建/复制/编辑/重命名/重置/删除/取消正确；重启后名称与颜色一致 |
 | 颜色边界 | 非法 HEX 不生效；null 选中文字清除前值；真彩色不被默认文字设置覆盖 |
 | 背景 | 0/50/100% 不透明度、壁纸开关、磨砂开关下画布与边缘一致，文字不随背景变透明 |
@@ -173,6 +185,6 @@ interface TerminalThemePreferencesV1 {
 | 渲染 | macOS/Windows，GPU 开/关及上下文丢失回退；特别检查选区字重观感、中英文、粗体、细线和浅色 ANSI |
 | 资源/性能 | 连续切换 100 次与反复开关编辑器，无 terminal/listener/context 持续增长；无 SSH 重连或额外 PTY resize |
 
-首轮已增加 Node 24 原生测试入口 `pnpm test:terminal-themes`，覆盖31 套预设完整性、Graphite 兼容、HEX 边界、透明主题解析、自定义方案保存/删除及无效数据保留。registry 生命周期、冲突和跨窗口传播仍需补充自动覆盖或人工验收；真实 GPU 和 Tauri 多窗口必须实机验证。
+首轮已增加 Node 24 原生测试入口 `pnpm test:terminal-themes`，现覆盖 35 套预设完整性、Graphite 兼容、HEX 边界、透明主题解析、自定义方案保存/删除及无效数据保留。registry 生命周期、冲突和跨窗口传播仍需补充自动覆盖或人工验收；真实 GPU 和 Tauri 多窗口必须实机验证。
 
 发布门槛：自动测试、`pnpm exec tsc --noEmit`、`pnpm build` 通过，`pnpm tauri dev` 完成双平台矩阵并记录证据。预计不涉及 Rust；若同步方案确需 Rust 变更，再执行 Rust fmt、严格 clippy 和 cargo test。未完成真实平台验收的项目不能勾选为通过。

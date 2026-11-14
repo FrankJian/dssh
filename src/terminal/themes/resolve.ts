@@ -1,9 +1,21 @@
 import type { ITheme } from "@xterm/xterm";
-import type { TerminalColors } from "./types";
+import type { TerminalBackgroundOverride, TerminalColors } from "./types";
 
 // Remote LS_COLORS and TUI programs can combine any ANSI/256/RGB colors.
 // Protect text against its actual cell background, including colored directories.
 export const TERMINAL_MINIMUM_CONTRAST_RATIO = 4.5;
+
+export function applyTerminalBackgroundOverride(
+  colors: TerminalColors,
+  override: TerminalBackgroundOverride | null,
+): TerminalColors {
+  if (!override?.enabled || override.opacity === 0) return colors;
+  const mix = (base: number, top: number) => Math.round(base * (1 - override.opacity / 100) + top * override.opacity / 100);
+  const base = colors.background.match(/[\da-f]{2}/gi)?.map((part) => Number.parseInt(part, 16)) ?? [];
+  const top = override.color.match(/[\da-f]{2}/gi)?.map((part) => Number.parseInt(part, 16)) ?? [];
+  const background = `#${base.map((value, index) => mix(value, top[index]).toString(16).padStart(2, "0")).join("")}`;
+  return { ...colors, background };
+}
 
 export function toXtermTheme(colors: TerminalColors, transparent: boolean): ITheme {
   const { selectionForeground, ...theme } = colors;

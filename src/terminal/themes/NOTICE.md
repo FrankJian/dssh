@@ -10,11 +10,11 @@ The built-in Tokyo Night and Tokyo Night Day palettes use the terminal mapping f
 
 The built-in Gruvbox Dark and Gruvbox Light palettes use the official medium-contrast palette and terminal ANSI mapping from [Gruvbox](https://github.com/morhetz/gruvbox). The application supplies cursor and selection colors.
 
-The Graphite Dark, Graphite Light, Graphite Contrast, and Porcelain White palettes are original Duo SSH palettes.
+The Graphite Dark, Graphite Light, Graphite Contrast, Porcelain White, Sea Glass Light / Dark, and Mineral Light / Dark palettes are original Duo SSH palettes.
 
 ## Writable-directory accent adaptation
 
-All built-in palettes adapt ANSI green / bright green (slots 2 / 10) to a blue, cyan, purple or amber accent from the same palette. Linux `ls` commonly uses slot 2 as the background for other-writable directories. This also changes all text and other backgrounds using these ANSI slots. Other ANSI slots and upstream background / foreground colors remain as documented below. Saved custom palettes retain their literal colors and are never remapped.
+Earlier built-in palettes adapt ANSI green / bright green (slots 2 / 10) to a blue, cyan, purple or amber accent from the same palette. The Sea Glass and Mineral palettes keep their individually tuned greens. Linux `ls` commonly uses slot 2 as the background for other-writable directories. This also changes all text and other backgrounds using these ANSI slots. Other ANSI slots and upstream background / foreground colors remain as documented below. Saved custom palettes retain their literal colors and are never remapped.
 
 ## Screenshot gallery palettes
 

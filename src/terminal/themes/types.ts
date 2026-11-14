@@ -29,6 +29,13 @@ export type TerminalColors = Record<Exclude<TerminalColorField, "selectionForegr
 
 export type TerminalThemeKind = "dark" | "light";
 
+export interface TerminalBackgroundOverride {
+  color: string;
+  /** Percentage of the custom color over the selected scheme background. */
+  opacity: number;
+  enabled: boolean;
+}
+
 export interface BuiltinTerminalScheme {
   id: `builtin:${string}`;
   name: string;
@@ -54,6 +61,7 @@ export interface TerminalThemePreferencesV1 {
   followAppearance: boolean;
   darkSchemeId: string;
   lightSchemeId: string;
+  backgroundOverrides: Record<TerminalThemeKind, TerminalBackgroundOverride | null>;
   customSchemes: CustomTerminalScheme[];
 }
 

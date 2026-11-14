@@ -1,3 +1,4 @@
+import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { BrowserLinkSettings } from "./BrowserLinkSettings";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +10,7 @@ import { ConfigPasswordDialog } from "./ConfigPasswordDialog";
 import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
+import { AppPaletteSettings } from "./AppPaletteSettings";
 import { TerminalCursorSettings } from "./TerminalCursorSettings";
 import {
   clampCommandHistoryLimit,
@@ -82,6 +84,8 @@ interface SettingsDialogProps {
   initialCategory?: SettingsCategory;
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
+  appPaletteColor: string | null;
+  onAppPaletteColorChange: (color: string | null) => void;
   navigationIcons: readonly NavigationIconId[];
   onNavigationIconsChange: (icons: NavigationIconId[]) => void;
   editorSettings: EditorSettings;
@@ -237,6 +241,8 @@ export function SettingsDialog({
   onTerminalWorkspaceRightInsetChange,
   onTerminalWorkspaceBottomInsetChange,
   onThemeChange,
+  appPaletteColor,
+  onAppPaletteColorChange,
   navigationIcons,
   onNavigationIconsChange,
   rightClick,
@@ -552,9 +558,8 @@ export function SettingsDialog({
               <section className="settings-section" aria-label="主题">
                 <div className="settings-section__head">
                   <h3>主题</h3>
-                  <p>选择应用的浅色 / 深色外观。</p>
                 </div>
-                <div className="settings-theme">
+                <div className="settings-theme" role="group" aria-label="应用主题">
                   {themeOptions.map((option) => (
                     <button
                       aria-pressed={themeMode === option.mode}
@@ -571,6 +576,8 @@ export function SettingsDialog({
                   ))}
                 </div>
 
+                <AppPaletteSettings color={appPaletteColor} onChange={onAppPaletteColorChange} />
+
                 <label className="settings-field settings-field--short" title={`默认 ${RECENT_CONNECTIONS_DEFAULT_LIMIT} 个，调整后立即生效，不会删除连接记录。`}>
                   <span className="settings-field__label">最近连接显示数量</span>
                   <SelectMenu
@@ -586,9 +593,8 @@ export function SettingsDialog({
 
                 <div className="settings-section__head">
                   <h3>左侧导航栏</h3>
-                  <p>选择要在左侧活动栏显示的入口。设置始终保留。</p>
                 </div>
-                <div className="settings-card settings-navigation-icons">
+                <div className="settings-control-group" role="group" aria-label="导航入口">
                   {NAVIGATION_ICON_OPTIONS.map((option) => {
                     const checked = navigationIcons.includes(option.id);
                     const visibleActivityCount = navigationIcons.filter(
@@ -599,8 +605,12 @@ export function SettingsDialog({
                       (option.id === "sessions" || option.id === "connections" || option.id === "s3" || option.id === "artifactory" || option.id === "sftp") &&
                       visibleActivityCount === 1;
                     return (
-                      <label className="checkbox-field" key={option.id}>
-                        <input
+                      <label className="settings-control-row" key={option.id}>
+                        <span className="settings-control-row__label">
+                          <Icon name={option.icon} height="16" width="16" />
+                          {option.label}
+                        </span>
+                        <SettingsSwitch
                           checked={checked}
                           disabled={disableLastActivity}
                           onChange={(event) => {
@@ -609,10 +619,7 @@ export function SettingsDialog({
                               : navigationIcons.filter((item) => item !== option.id);
                             onNavigationIconsChange(next);
                           }}
-                          type="checkbox"
                         />
-                        <Icon name={option.icon} height="15" width="15" />
-                        {option.label}
                       </label>
                     );
                   })}
@@ -624,7 +631,6 @@ export function SettingsDialog({
               <section className="settings-section terminal-settings" aria-label="终端设置">
                 <div className="settings-section__head">
                   <h3>终端</h3>
-                  <span className="terminal-settings__live"><Icon name="check" width="12" height="12" />实时生效</span>
                 </div>
                 <div className="terminal-settings__tabs" role="tablist" aria-label="终端设置分组">
                   {([
@@ -700,8 +706,8 @@ export function SettingsDialog({
                 <section className="terminal-settings__group" aria-label="终端交互设置">
                   <h4>鼠标与复制</h4>
                   <label className="terminal-settings__toggle-row">
-                    <span><strong>选中即复制</strong><small>选中文字后自动写入剪贴板。</small></span>
-                    <input checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} type="checkbox" role="switch" aria-label="选中即复制" />
+                    <span><strong>选中即复制</strong></span>
+                    <SettingsSwitch checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} aria-label="选中即复制" />
                   </label>
                   <label className="terminal-settings__inline-field">
                     <span className="settings-field__label">右键操作</span>
@@ -713,7 +719,7 @@ export function SettingsDialog({
                   <h4>命令补全</h4>
                   <label className="terminal-settings__toggle-row" title="正常回显的命令按回车后记录，所有终端共享。历史仅保存在本机，密码提示、隐藏或掩码输入、敏感信息和多行输入不记录。">
                     <span><strong>启用命令补全</strong><small>基于本机历史，所有终端共享。</small></span>
-                    <input aria-label="启用命令补全" role="switch"
+                    <SettingsSwitch aria-label="启用命令补全"
                       checked={commandCompletion}
                       onChange={(event) => {
                         const enabled = event.currentTarget.checked;
@@ -723,12 +729,10 @@ export function SettingsDialog({
                         }
                         onCommandCompletionChange(enabled);
                       }}
-                      type="checkbox"
                     />
                   </label>
                   {commandCompletion ? (
                     <div className="command-history-settings">
-                      <p className="command-history-settings__help">所有终端共享 · <kbd>↑</kbd> <kbd>↓</kbd> 选择，<kbd>Tab</kbd> 填入</p>
                       <div className="command-history-settings__row">
                         <div className="command-history-settings__limit" title={`${COMMAND_HISTORY_MIN_LIMIT}–${COMMAND_HISTORY_MAX_LIMIT} 条，默认 ${COMMAND_HISTORY_DEFAULT_LIMIT} 条。降低上限会删除超出的旧记录。`}>
                           <label htmlFor="command-history-limit">历史上限</label>
@@ -765,7 +769,7 @@ export function SettingsDialog({
                           <Button onClick={() => setConfirmClearCommandHistory(false)} variant="ghost">取消</Button>
                         </div>
                       ) : null}
-                      {commandHistoryCleared ? <p className="command-history-settings__help" role="status">历史已清空，之后输入的命令会继续记录。</p> : null}
+                      {commandHistoryCleared ? <p className="command-history-settings__help" role="status">历史已清空</p> : null}
                     </div>
                   ) : null}
                 </section>
@@ -776,8 +780,8 @@ export function SettingsDialog({
                   <section className="terminal-settings__group" aria-label="终端渲染设置">
                     <h4>渲染</h4>
                     <label className="terminal-settings__toggle-row">
-                      <span><strong>GPU 加速</strong><small>使用 WebGL 渲染，不支持时自动回退。</small></span>
-                      <input checked={gpuAcceleration} onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)} type="checkbox" role="switch" aria-label="GPU 加速" />
+                      <span><strong>GPU 加速</strong></span>
+                      <SettingsSwitch checked={gpuAcceleration} onChange={(event) => onGpuAccelerationChange(event.currentTarget.checked)} aria-label="GPU 加速" />
                     </label>
                   </section>
                 <section className="terminal-settings__background" aria-label="背景与留白设置">
@@ -803,14 +807,13 @@ export function SettingsDialog({
                       <Button disabled={!terminalBgImage} onClick={() => onTerminalBgImageChange("")} variant="ghost">清除</Button>
                     </div>
                     <label className="terminal-settings__toggle-row" title="背景图仅以磨砂形式显示；关闭此项或系统不支持时会隐藏图片。">
-                      <span><strong>背景图磨砂</strong><small>使用模糊处理后的背景图片。</small></span>
-                      <input aria-label="背景图磨砂" role="switch" checked={terminalBgGlassEnabled} onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)} type="checkbox" />
+                      <span><strong>背景图磨砂</strong></span>
+                      <SettingsSwitch aria-label="背景图磨砂" checked={terminalBgGlassEnabled} onChange={(event) => onTerminalBgGlassEnabledChange(event.currentTarget.checked)} />
                     </label>
                     <label className="settings-field">
                       <span className="terminal-settings__range-label">模糊度<output>{terminalBgGlassBlur}px</output></span>
                       <input aria-label="背景模糊度" className="settings-range" disabled={!terminalBgImage || !terminalBgGlassEnabled} max={TERMINAL_BG_GLASS_BLUR_MAX} min={TERMINAL_BG_GLASS_BLUR_MIN} onChange={(event) => onTerminalBgGlassBlurChange(Number(event.currentTarget.value))} type="range" value={terminalBgGlassBlur} />
                     </label>
-                    <p className="settings-field__hint">背景图仅在支持背景模糊的系统上显示。</p>
                   </div>
                 </section>
                 </div>
@@ -821,17 +824,15 @@ export function SettingsDialog({
               <section className="settings-section editor-settings" aria-label="文件编辑器设置">
                 <div className="settings-section__head">
                   <h3>文件编辑器</h3>
-                  <p>修改即时生效</p>
                 </div>
 
-                <div className="editor-settings__font-source">
-                  <label className="checkbox-field" title="开启后，编辑器会同步使用终端的字体和字号。">
-                    <input
+                <div className="settings-control-group">
+                  <label className="settings-control-row">
+                    <span>字体和字号跟随终端</span>
+                    <SettingsSwitch
                       checked={editorSettings.inheritTerminal}
                       onChange={(event) => editorSettings.setInheritTerminal(event.currentTarget.checked)}
-                      type="checkbox"
                     />
-                    字体和字号跟随终端
                   </label>
                 </div>
 
@@ -866,30 +867,27 @@ export function SettingsDialog({
 
                 <div className="editor-settings__display">
                   <h4>显示与缩进</h4>
-                  <div className="editor-settings__toggles">
-                    <label className="checkbox-field">
-                      <input
+                  <div className="settings-control-group" role="group" aria-label="编辑器显示">
+                    <label className="settings-control-row">
+                      <span>自动换行</span>
+                      <SettingsSwitch
                         checked={editorSettings.wordWrap}
                         onChange={(event) => editorSettings.setWordWrap(event.currentTarget.checked)}
-                        type="checkbox"
                       />
-                      自动换行
                     </label>
-                    <label className="checkbox-field">
-                      <input
+                    <label className="settings-control-row">
+                      <span>显示行号</span>
+                      <SettingsSwitch
                         checked={editorSettings.lineNumbers}
                         onChange={(event) => editorSettings.setLineNumbers(event.currentTarget.checked)}
-                        type="checkbox"
                       />
-                      显示行号
                     </label>
-                    <label className="checkbox-field">
-                      <input
+                    <label className="settings-control-row">
+                      <span>显示小地图</span>
+                      <SettingsSwitch
                         checked={editorSettings.minimap}
                         onChange={(event) => editorSettings.setMinimap(event.currentTarget.checked)}
-                        type="checkbox"
                       />
-                      显示小地图
                     </label>
                   </div>
                   <div className="editor-settings__editing-fields">
@@ -934,13 +932,13 @@ export function SettingsDialog({
               <section className="settings-section" aria-label="对象存储传输">
                 <div className="settings-section__head">
                   <h3>传输并发</h3>
-                  <p>上传和递归下载同时进行的文件数。数值越大速度可能越快，但会占用更多网络和系统资源。</p>
+                  <p>提高并发会增加网络和系统负载。</p>
                 </div>
-                <div className="form-grid">
-                  <label className="settings-field">
-                    <span className="settings-field__label">并行上传数</span>
+                <div className="settings-control-group" role="group" aria-label="传输并发">
+                  <label className="settings-control-row">
+                    <span>并行上传数</span>
                     <input
-                      className="settings-number"
+                      className="settings-number settings-control-row__number"
                       max={S3_TRANSFER_CONCURRENCY_MAX}
                       min={S3_TRANSFER_CONCURRENCY_MIN}
                       onChange={(event) => onS3UploadConcurrencyChange(Number(event.currentTarget.value))}
@@ -948,10 +946,10 @@ export function SettingsDialog({
                       value={s3UploadConcurrency}
                     />
                   </label>
-                  <label className="settings-field">
-                    <span className="settings-field__label">并行下载数</span>
+                  <label className="settings-control-row">
+                    <span>并行下载数</span>
                     <input
-                      className="settings-number"
+                      className="settings-number settings-control-row__number"
                       max={S3_TRANSFER_CONCURRENCY_MAX}
                       min={S3_TRANSFER_CONCURRENCY_MIN}
                       onChange={(event) => onS3DownloadConcurrencyChange(Number(event.currentTarget.value))}
@@ -976,16 +974,16 @@ export function SettingsDialog({
                 </div>
                 <div className="settings-config__actions">
                   <Button disabled={isBusy} onClick={handleImport} variant="primary">
-                    导入
+                    <Icon name="upload" height="16" width="16" />导入
                   </Button>
                   <Button disabled={isBusy} onClick={handleExport} variant="ghost">
-                    加密导出
+                    <Icon name="download" height="16" width="16" />加密导出
                   </Button>
                   <Button disabled={isBusy || !yamlText} onClick={handleCopy} variant="ghost">
-                    复制
+                    <Icon name="copy" height="16" width="16" />复制
                   </Button>
                   <Button disabled={isBusy} onClick={loadYaml} variant="ghost">
-                    刷新
+                    <Icon name="refresh" height="16" width="16" />刷新
                   </Button>
                 </div>
                 {configError ? (

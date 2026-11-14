@@ -38,6 +38,7 @@ export interface FilePaneProps {
   transferDisabled?: boolean;
   connectionName?: string;
   connectionAddress?: string;
+  scopedRemoteRoot?: boolean;
   entries: BrowserEntry[];
   totalCount: number;
   isLoading: boolean;
@@ -101,6 +102,7 @@ export function FilePane(p: FilePaneProps) {
   const fileSystem = p.fileSystem ?? p.side;
   const server = fileSystem === "remote";
   const title = server ? "服务器" : "本机";
+  const rootDescription = "JumpServer 将资产授权的 SFTP 目录映射到 /。实际目录由平台配置决定，可能是 /tmp、账号主目录或指定路径。";
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editingPath, setEditingPath] = useState(false);
   const [pathChoice, setPathChoice] = useState(-1);
@@ -329,7 +331,7 @@ export function FilePane(p: FilePaneProps) {
         </span>
         <div>
           {p.sourceAction}
-          <IconButton disabled={locked} label="返回主目录" onClick={p.onHome}>
+          <IconButton disabled={locked} label={p.scopedRemoteRoot ? "返回授权目录" : "返回主目录"} onClick={p.onHome}>
             <Icon name="house" />
           </IconButton>
           <IconButton
@@ -478,17 +480,17 @@ export function FilePane(p: FilePaneProps) {
                   {path === p.currentPath ? (
                     <button
                       type="button"
-                      title={path}
+                      title={p.scopedRemoteRoot && path === "/" ? rootDescription : path}
                       aria-current="location"
                       aria-label={`编辑${title}路径 (Ctrl/⌘+L)`}
                       data-path-trigger=""
                       disabled={locked}
                       onClick={openAddress}
                     >
-                      {label}
+                      {p.scopedRemoteRoot && path === "/" ? "授权目录" : label}
                     </button>
                   ) : (
-                    <button type="button" title={path} disabled={locked} onClick={() => p.onNavigate(path)}>{label}</button>
+                    <button type="button" title={p.scopedRemoteRoot && path === "/" ? rootDescription : path} disabled={locked} onClick={() => p.onNavigate(path)}>{p.scopedRemoteRoot && path === "/" ? "授权目录" : label}</button>
                   )}
                 </span>
               ))}

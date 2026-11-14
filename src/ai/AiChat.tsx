@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { AiServerContext } from "../models/ai";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { MAX_AI_QUESTION_ANSWER_LENGTH, type AiQuestionAnswer, type AiServerContext } from "../models/ai";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -11,7 +11,7 @@ import type { AiConfig } from "./useAiConfig";
 import type { TerminalSession } from "../models";
 import { AiBackgroundSessions } from "./AiBackgroundSessions";
 import type { AssistantDockPosition } from "../app/assistantDock";
-import { AiDockMenu } from "./AiDockMenu";
+import { AiToolbarMenu } from "./AiToolbarMenu";
 
 interface AiChatProps {
   config: AiConfig;
@@ -41,11 +41,33 @@ export function AiChat({
   locked = false,
   currentServer = null,
 }: AiChatProps) {
-  const [draft, setDraft] = useState("");
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const { activeProvider, isConfigured, options, providers } = config;
-  const { answerQuestion, approve, cancel, clear, isHistoryReady, isRunning, items, send } = chat;
+  const { options, providers } = config;
+  const { answerQuestion, approve, cancel, conversation, isHistoryReady, send, setDraft } = chat;
+  const items = conversation?.items;
+  const stopping = conversation ? chat.stopping.includes(conversation.id) : false;
+  const draft = conversation?.draft ?? "";
+  const resetting = conversation ? chat.resetting.includes(conversation.id) : false;
+  const isRunning = conversation ? chat.running.includes(conversation.id) : false;
+  const selection = conversation?.selection;
+  const selectedProvider = providers.find((provider) => provider.id === selection?.providerId);
+  const selectedModel = selectedProvider?.models.find((model) => model.id === selection?.model);
+  const activeProvider = selectedProvider && selectedModel
+    ? { ...selectedProvider, model: selectedModel.id }
+    : config.activeProvider;
   const currentModel = activeProvider?.models.find((model) => model.id === activeProvider.model);
+  const selectedLevel = selectedModel?.reasoningLevels.some((row) => row.level === selection?.reasoningLevel)
+    ? selection?.reasoningLevel : null;
+  const reasoningLevel = selectedLevel ?? currentModel?.reasoningEffort ?? currentModel?.reasoningLevels[0]?.level ?? null;
+  const isConfigured = config.isReady && Boolean(activeProvider?.baseUrl.trim() && currentModel);
+  const sessionOptions = chat.conversations.map((entry, index) => {
+    const title = entry.title ?? `会话 ${index + 1}`;
+    const status = chat.stopping.includes(entry.id) ? "正在停止" : entry.items.some((item) => item.type === "tool" &&
+      (item.status === "pendingApproval" || (item.toolName === "ask_user_question" && item.status === "running" && item.result === null)))
+      ? "待确认" : chat.running.includes(entry.id) ? "运行中" : "";
+    return { value: entry.id, title, label: status ? `${title} · ${status}` : title };
+  });
   const modelOptions = useMemo(() => providers.flatMap((provider) => {
     const models = provider.models;
     return models.map((model) => ({
@@ -59,16 +81,15 @@ export function AiChat({
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [items]);
+  }, [items, conversation?.id]);
 
-  const canSend = isConfigured && isHistoryReady && !locked && !isRunning && draft.trim().length > 0;
+  const canSend = Boolean(conversation && chat.eventsReady && isConfigured && isHistoryReady && !locked && !isRunning && !resetting && draft.trim());
 
   function handleSend() {
     if (!activeProvider || !canSend) {
       return;
     }
-    void send({ provider: activeProvider, options, message: draft, currentServer });
-    setDraft("");
+    void send({ provider: activeProvider, reasoningLevel, options, message: draft, currentServer });
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -79,15 +100,17 @@ export function AiChat({
   }
 
   function handleClear() {
-    if (window.confirm("确定要永久清空全部 AI 聊天记录，并关闭尚未接管的后台会话吗？后台任务可能中断，聊天记录无法恢复。")) {
-      clear();
+    if (window.confirm("清空当前会话的聊天记录和草稿，并关闭它尚未接管的后台终端？聊天记录无法恢复。")) {
+      chat.reset(false);
     }
   }
 
   const placeholder = locked
     ? "请先打开一个终端后再使用"
     : !isHistoryReady
-      ? "正在加载聊天记录..."
+      ? "正在加载会话…"
+      : !conversation
+      ? "请先新建会话"
     : isConfigured
       ? "描述你的目标，例如：检查磁盘使用情况"
       : "请先配置模型后端";
@@ -95,22 +118,30 @@ export function AiChat({
   return (
     <section className={`ai-chat ai-chat--${layout}${layout === "panel" ? ` ai-chat--${dockPosition}` : ""}`} aria-label="AI 对话">
       <header className="ai-chat__header">
-        <div className="ai-chat__title">
-          <Icon name="bot" height="16" width="16" />
-          <span>AI 助手</span>
-        </div>
+        <SelectMenu ariaLabel="切换 AI 会话" className="ai-chat__session-select"
+          options={sessionOptions.length ? sessionOptions : [{ value: "", label: "AI 助手", disabled: true }]}
+          value={chat.activeId ?? ""} disabled={!sessionOptions.length}
+          onChange={chat.select} searchable={sessionOptions.length > 5} searchPlaceholder="搜索会话…" />
         <div className="ai-chat__header-actions">
-          {onDockPositionChange ? <AiDockMenu position={dockPosition} onChange={onDockPositionChange} /> : null}
-          <IconButton
-            label="清空全部聊天记录"
-            disabled={!isHistoryReady || isRunning || items.length === 0}
-            onClick={handleClear}
-          >
-            <Icon name="trash" height="16" width="16" />
+          <IconButton label="新建会话"
+            disabled={!isHistoryReady || chat.creating} onClick={chat.create}>
+            <Icon name="plus" height="16" width="16" />
           </IconButton>
-          <IconButton label="模型配置" onClick={onOpenConfig}>
-            <Icon name="settings" height="16" width="16" />
-          </IconButton>
+          <AiToolbarMenu
+            position={dockPosition}
+            onPositionChange={onDockPositionChange}
+            onOpenConfig={onOpenConfig}
+            renameDisabled={!conversation || resetting}
+            onRename={() => {
+              const selected = sessionOptions.find((entry) => entry.value === conversation?.id);
+              if (selected) setRenaming({ id: selected.value, title: selected.title });
+            }}
+            sessionActionsDisabled={!conversation || isRunning || resetting}
+            onClear={handleClear}
+            onDelete={() => {
+              if (window.confirm("删除当前会话及其聊天记录，并关闭它尚未接管的后台终端？")) chat.reset(true);
+            }}
+          />
           {onClose ? (
             <IconButton label="关闭 AI 助手" onClick={onClose}>
               <Icon name="close" height="16" width="16" />
@@ -119,7 +150,15 @@ export function AiChat({
         </div>
       </header>
 
-      <AiBackgroundSessions conversationId={chat.conversationId} onTakeOver={onTakeOverSession} />
+      {renaming ? <ConversationRenameDialog
+        title={renaming.title}
+        onCancel={() => setRenaming(null)}
+        onRename={(title) => {
+          chat.rename(renaming.id, title);
+          setRenaming(null);
+        }}
+      /> : null}
+      {conversation ? <AiBackgroundSessions key={`background-${conversation.id}`} conversationId={conversation.id} onTakeOver={onTakeOverSession} /> : null}
 
       {currentServer && !locked ? (
         <div className="ai-chat__context" title={`当前终端：${currentServer.label}`}>
@@ -128,8 +167,16 @@ export function AiChat({
         </div>
       ) : null}
 
-      <div className="ai-chat__body" ref={listRef}>
-        {items.length === 0 ? (
+      <div className="ai-chat__body" ref={listRef} key={conversation?.id}>
+        {!isHistoryReady ? (
+          <div className="ai-chat__empty">
+            {chat.loading ? "正在加载会话…" : <Button onClick={chat.retryLoad}>重新加载会话</Button>}
+          </div>
+        ) : !conversation ? (
+          <div className="ai-chat__empty">
+            <Button disabled={chat.creating} onClick={chat.create}>新建会话</Button>
+          </div>
+        ) : !items?.length ? (
           <AiEmptyState isConfigured={isConfigured} locked={locked} onOpenConfig={onOpenConfig} />
         ) : (
           <div className="ai-chat__messages">
@@ -153,11 +200,11 @@ export function AiChat({
       </div>
 
       <div className="ai-chat__composer">
-        {config.error ? <div className="ai-provider__error" role="alert">{config.error}</div> : null}
+        {chat.error || config.error ? <div className="ai-provider__error" role="alert">{chat.error ?? config.error}</div> : null}
         <textarea
           aria-label="向 AI 提问"
           className="ai-chat__input"
-          disabled={!isConfigured || !isHistoryReady || locked}
+          disabled={!conversation || !isConfigured || !isHistoryReady || locked || resetting}
           onChange={(event) => setDraft(event.currentTarget.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
@@ -169,14 +216,15 @@ export function AiChat({
             <SelectMenu
               ariaLabel="切换厂商与模型"
               className="ai-chat__model-select"
-              disabled={isRunning || !config.isReady}
+              disabled={!conversation || isRunning || resetting || !config.isReady}
               searchable
               searchPlaceholder="搜索厂商或模型…"
               value={activeProvider ? JSON.stringify([activeProvider.id, activeProvider.model]) : ""}
               options={[{ label: "选择模型", value: "", disabled: true }, ...modelOptions]}
               onChange={(value) => {
                 const [id, model] = JSON.parse(value) as [string, string];
-                config.selectModel(id, model);
+                const selected = providers.find((provider) => provider.id === id)?.models.find((entry) => entry.id === model);
+                if (selected) chat.setSelection({ providerId: id, model, reasoningLevel: selected.reasoningEffort ?? selected.reasoningLevels[0]?.level ?? null });
               }}
             />
           ) : (
@@ -185,15 +233,15 @@ export function AiChat({
             </Button>
           )}
           {activeProvider && currentModel?.reasoningLevels.length ? (
-            <SelectMenu ariaLabel="选择推理档位" className="ai-chat__reasoning-select" disabled={isRunning}
-              value={currentModel.reasoningEffort ?? currentModel.reasoningLevels[0].level}
+            <SelectMenu ariaLabel="选择推理档位" className="ai-chat__reasoning-select" disabled={!conversation || isRunning || resetting}
+              value={reasoningLevel ?? ""}
               options={currentModel.reasoningLevels.map((row) => ({ value: row.level, label: row.level }))}
-              onChange={(level) => config.selectReasoningLevel(activeProvider.id, currentModel.id, level)} />
+              onChange={(level) => chat.setSelection({ providerId: activeProvider.id, model: currentModel.id, reasoningLevel: level })} />
           ) : null}
           {isRunning ? (
-            <button className="ai-chat__send is-stop" onClick={cancel} type="button">
+            <button className="ai-chat__send is-stop" onClick={cancel} disabled={stopping} type="button">
               <Icon name="stop" height="16" width="16" />
-              停止
+              {stopping ? "正在停止…" : "停止"}
             </button>
           ) : (
             <button className="ai-chat__send" disabled={!canSend} onClick={handleSend} type="button">
@@ -204,6 +252,46 @@ export function AiChat({
         </div>
       </div>
     </section>
+  );
+}
+
+function ConversationRenameDialog({ title, onCancel, onRename }: {
+  title: string;
+  onCancel: () => void;
+  onRename: (title: string) => void;
+}) {
+  const [name, setName] = useState(title);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const headingId = useId();
+  const valid = name.trim().length > 0 && !/[\u0000-\u001f\u007f-\u009f]/u.test(name.trim());
+
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    input.current?.select();
+    return () => element?.close();
+  }, []);
+
+  return (
+    <dialog className="ai-rename-dialog" ref={dialog} aria-labelledby={headingId}
+      onCancel={(event) => { event.preventDefault(); onCancel(); }}>
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        if (valid) onRename(name);
+      }}>
+        <h2 id={headingId}>重命名会话</h2>
+        <label className="field">
+          会话名称
+          <input ref={input} value={name} maxLength={64}
+            onChange={(event) => setName(event.currentTarget.value)} />
+        </label>
+        <div className="ai-rename-dialog__actions">
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="submit" variant="primary" disabled={!valid}>保存</Button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 
@@ -258,7 +346,7 @@ function ChatItemView({
   onApprove,
 }: {
   item: ChatItem;
-  onAnswerQuestion: (callId: string, optionIds: string[]) => void;
+  onAnswerQuestion: (callId: string, answer: AiQuestionAnswer) => void;
   onApprove: (callId: string, approved: boolean) => void;
 }) {
   if (item.type === "user") {
@@ -298,7 +386,7 @@ function ToolCardView({
   onApprove,
 }: {
   item: Extract<ChatItem, { type: "tool" }>;
-  onAnswerQuestion: (callId: string, optionIds: string[]) => void;
+  onAnswerQuestion: (callId: string, answer: AiQuestionAnswer) => void;
   onApprove: (callId: string, approved: boolean) => void;
 }) {
   const label = TOOL_LABELS[item.toolName] ?? item.toolName;
@@ -314,8 +402,8 @@ function ToolCardView({
   // open because the user has to act on them.
   const needsApproval = item.status === "pendingApproval";
   const [open, setOpen] = useState(false);
-  const awaitingAnswer = item.toolName === "ask_user_question" && item.result === null;
-  const expanded = needsApproval || awaitingAnswer || open;
+  const questionInProgress = Boolean(userQuestion) && item.status === "running";
+  const expanded = needsApproval || questionInProgress || open;
   const hasDetails = Boolean(command) || Boolean(item.result) || needsApproval || Boolean(userQuestion);
 
   return (
@@ -351,8 +439,8 @@ function ToolCardView({
           {terminalInput ? <pre className="ai-tool__command">{terminalInput.input}{"\n↵ 回车"}</pre> : !userQuestion && command ? <pre className="ai-tool__command">{command}</pre> : null}
           {userQuestion ? (
             <UserQuestionChoices
-              answered={item.result !== null}
-              callId={item.callId}
+              answered={!questionInProgress || item.result !== null}
+              callId={item.id}
               question={userQuestion}
               onAnswer={onAnswerQuestion}
             />
@@ -371,7 +459,7 @@ function ToolCardView({
               <div className="ai-tool__approval-buttons">
                 <button
                   className="ai-tool__btn ai-tool__btn--approve"
-                  onClick={() => onApprove(item.callId, true)}
+                  onClick={() => onApprove(item.id, true)}
                   type="button"
                 >
                   <Icon name="check" height="15" width="15" />
@@ -379,7 +467,7 @@ function ToolCardView({
                 </button>
                 <button
                   className="ai-tool__btn ai-tool__btn--reject"
-                  onClick={() => onApprove(item.callId, false)}
+                  onClick={() => onApprove(item.id, false)}
                   type="button"
                 >
                   <Icon name="close" height="15" width="15" />
@@ -410,16 +498,18 @@ function UserQuestionChoices({
   answered: boolean;
   callId: string;
   question: UserQuestion;
-  onAnswer: (callId: string, optionIds: string[]) => void;
+  onAnswer: (callId: string, answer: AiQuestionAnswer) => void;
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [customText, setCustomText] = useState("");
+  const answer = customText.trim();
 
   function select(optionId: string) {
     if (answered) {
       return;
     }
     if (!question.allowMultiple) {
-      onAnswer(callId, [optionId]);
+      onAnswer(callId, { optionIds: [optionId] });
       return;
     }
     setSelectedIds((current) =>
@@ -455,11 +545,29 @@ function UserQuestionChoices({
         <button
           className="ai-tool__btn ai-tool__btn--approve"
           disabled={selectedIds.length === 0}
-          onClick={() => onAnswer(callId, selectedIds)}
+          onClick={() => onAnswer(callId, { optionIds: selectedIds })}
           type="button"
         >
           确认选择
         </button>
+      ) : null}
+      {!answered ? (
+        <form className="ai-question__custom" onSubmit={(event) => {
+          event.preventDefault();
+          if (answer) onAnswer(callId, { customText: answer });
+        }}>
+          <label className="field">
+            自定义回答
+            <textarea
+              value={customText}
+              onChange={(event) => setCustomText(event.currentTarget.value)}
+              maxLength={MAX_AI_QUESTION_ANSWER_LENGTH}
+              placeholder="输入你的答案…"
+              rows={2}
+            />
+          </label>
+          <Button type="submit" disabled={!answer}>提交回答</Button>
+        </form>
       ) : null}
     </div>
   );
@@ -475,7 +583,7 @@ const TOOL_LABELS: Record<string, string> = {
   run_command: "执行命令",
   open_ssh_session: "后台 SSH 连接",
   control_app: "应用快捷操作",
-  ask_user_question: "需要你的选择",
+  ask_user_question: "需要你的回答",
   read_terminal: "读取终端输出",
   list_terminal_sessions: "列出活动终端",
   write_terminal: "输入到交互终端",

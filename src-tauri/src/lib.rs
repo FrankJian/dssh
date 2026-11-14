@@ -211,13 +211,14 @@ pub fn run() {
             commands::ai::ai_background_sessions,
             commands::ai::ai_take_over_session,
             commands::ai::ai_close_background_session,
-            commands::ai::ai_close_conversation,
             commands::ai::ai_approve_tool,
             commands::ai::ai_answer_question,
             commands::ai::ai_cancel_run,
-            commands::ai::ai_load_chat_history,
-            commands::ai::ai_save_chat_history,
-            commands::ai::ai_clear_chat_history,
+            commands::ai::ai_list_conversations,
+            commands::ai::ai_create_conversation,
+            commands::ai::ai_save_conversation,
+            commands::ai::ai_generate_conversation_title,
+            commands::ai::ai_reset_conversation,
         ]))
         .build(application_context())
         .expect("error while building tauri application")
@@ -229,6 +230,15 @@ pub fn run() {
             } => {
                 app.state::<app::AppState>().rdp.close_owner(Some(&label));
                 app.state::<app::AppState>().jumpserver.cancel_owner(&label);
+                let state = app.state::<app::AppState>().inner().clone();
+                state.ai.cancel_owner(&label);
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(conversations) = state.profiles.list_ai_conversations(&label) {
+                        for conversation in conversations {
+                            let _ = state.sessions.close_conversation(&conversation.id).await;
+                        }
+                    }
+                });
             }
             tauri::RunEvent::Exit => app.state::<app::AppState>().rdp.close_owner(None),
             _ => {}

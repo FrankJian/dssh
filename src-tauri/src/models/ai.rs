@@ -237,6 +237,24 @@ pub struct CurrentServer {
     pub kind: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelSelection {
+    pub provider_id: String,
+    pub model: String,
+    pub reasoning_level: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConversation {
+    pub id: String,
+    pub title: Option<String>,
+    pub items: Vec<Value>,
+    pub draft: String,
+    pub selection: Option<AiModelSelection>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSendMessageRequest {
@@ -268,7 +286,27 @@ pub struct AiApproveToolRequest {
 pub struct AiAnswerQuestionRequest {
     pub run_id: String,
     pub call_id: String,
+    #[serde(default)]
     pub option_ids: Vec<String>,
+    pub custom_text: Option<String>,
+}
+
+impl AiAnswerQuestionRequest {
+    pub fn validate_answer(&mut self) -> crate::error::AppResult<()> {
+        if let Some(text) = &mut self.custom_text {
+            *text = text.trim().to_owned();
+            if self.option_ids.is_empty() && !text.is_empty() && text.chars().count() <= 2000 {
+                return Ok(());
+            }
+        } else if !self.option_ids.is_empty() {
+            return Ok(());
+        }
+
+        Err(crate::error::AppError::new(
+            "ai_question_answer",
+            "请选择选项，或输入 1 至 2000 字的自定义回答。",
+        ))
+    }
 }
 
 /// Streamed to the frontend under the `ai-event` Tauri event as the agent

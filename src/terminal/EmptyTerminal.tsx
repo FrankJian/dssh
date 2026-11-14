@@ -30,7 +30,6 @@ export function EmptyTerminal({
             <div className="terminal-empty__recent-heading">
               <div className="terminal-empty__recent-title"><h1><Icon name="clock" height="16" width="16" />最近连接</h1>
                 {recentProfiles.length > 0 ? <span className="terminal-empty__recent-count">{recentProfiles.length}</span> : null}</div>
-              <p>选择最近使用的连接。</p>
             </div>
             {onOpenConnections ? (
               <Button className="terminal-empty__all" onClick={onOpenConnections} variant="ghost">
@@ -52,29 +51,25 @@ export function EmptyTerminal({
                       aria-label={`${connectionTypeForProfile(profile) === "sftp" ? "打开 SFTP" : "连接"} ${profile.name}，${address}`}
                       type="button"
                     >
-                      <span className="terminal-empty__recent-card-head">
-                        <span className="terminal-empty__recent-icon">
-                          <Icon name={isJumpServerProfile(profile) ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : isSmbProfile(profile) ? "folder" : profileIconName(profile.icon)} height="18" width="18" />
+                      <span className="terminal-empty__recent-icon">
+                        <Icon name={isJumpServerProfile(profile) ? "stackedHexagon" : isRdpProfile(profile) ? "monitor" : isSmbProfile(profile) ? "folder" : profileIconName(profile.icon)} height="18" width="18" />
+                      </span>
+                      <span className="terminal-empty__recent-content">
+                        <span className="terminal-empty__recent-card-head">
+                          <span className="terminal-empty__recent-name">{profile.name}</span>
+                          <span className="terminal-empty__recent-type">{connectionTypeLabel(connectionTypeForProfile(profile))}</span>
                         </span>
-                        <span className="terminal-empty__recent-name">{profile.name}</span>
-                        <span className="terminal-empty__recent-type">{connectionTypeLabel(connectionTypeForProfile(profile))}</span>
-                      </span>
-                      <span className="terminal-empty__recent-details">
-                        <ConnectionAddress address={address} focusable={false} />
-                        {profile.folder ? <span className="terminal-empty__recent-folder" title={profile.folder}>
-                          <Icon name="folder" height="12" width="12" /><span>{profile.folder}</span>
-                        </span> : null}
-                        {isRdpProfile(profile) && profile.skipCertificateVerification ? <span className="conn-card__warning">
-                          <Icon name="shield" height="12" width="12" />未验证证书
-                        </span> : null}
-                      </span>
-                      <span className="terminal-empty__recent-card-footer">
-                        <span className="terminal-empty__recent-tags">
-                          {profile.tags.slice(0, 2).map(tag => <span className="conn-card__tag" key={tag} title={tag}>{tag}</span>)}
-                          {profile.tags.length > 2 ? <span className="conn-card__tag conn-card__tag--overflow">+{profile.tags.length - 2}</span> : null}
+                        <span className="terminal-empty__recent-details">
+                          <ConnectionAddress address={address} focusable={false} />
+                          {profile.folder ? <span className="terminal-empty__recent-folder" title={profile.folder}>
+                            <Icon name="folder" height="12" width="12" /><span>{profile.folder}</span>
+                          </span> : null}
+                          {isRdpProfile(profile) && profile.skipCertificateVerification ? <span className="conn-card__warning">
+                            <Icon name="shield" height="12" width="12" />未验证证书
+                          </span> : null}
                         </span>
-                        <span className="terminal-empty__recent-open">{isJumpServerProfile(profile) ? "打开资产" : connectionTypeForProfile(profile) === "sftp" ? "打开 SFTP" : "连接"}<Icon name="arrowRight" height="14" width="14" /></span>
                       </span>
+                      <span className="terminal-empty__recent-open">{isJumpServerProfile(profile) ? "打开资产" : connectionTypeForProfile(profile) === "sftp" ? "打开 SFTP" : "连接"}<Icon name="arrowRight" height="14" width="14" /></span>
                     </button>
                   </li>
                 );

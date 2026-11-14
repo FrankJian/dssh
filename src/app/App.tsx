@@ -36,7 +36,6 @@ import { AiConfigModal } from "../ai/AiConfigModal";
 import { useAssistantDock } from "./useAssistantDock";
 import { useAiChat } from "../ai/useAiChat";
 import { useAiConfig } from "../ai/useAiConfig";
-import { onAiEvent } from "../services/aiService";
 import { readImageDataUrl } from "../services/configService";
 import {
   onHostKeyChanged,
@@ -89,6 +88,7 @@ import { defaultSshTerminalTitle } from "../terminal/terminalTitle";
 import { jumpServerSftpTarget, type JumpServerSftpTarget } from "../terminal/terminalTarget";
 import { supportsTerminalWallpaperGlass } from "../terminal/wallpaperGlass";
 import { useTheme } from "../theme/useTheme";
+import { useAppPalette } from "../theme/useAppPalette";
 import { Icon } from "../ui/Icon";
 import { ToastHost, toast } from "../ui/ToastHost";
 import { WindowControls } from "../ui/WindowControls";
@@ -306,7 +306,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     };
   }, []);
   const aiConfig = useAiConfig();
-  const aiChat = useAiChat();
+  const aiChat = useAiChat(windowLabel);
   const assistantDock = useAssistantDock();
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() =>
     loadPanelWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_PANEL_WIDTH_DEFAULT),
@@ -353,6 +353,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }, [activeActivity, navigationIcons]);
 
   const { setThemeMode, themeMode } = useTheme();
+  const { paletteColor, setPaletteColor } = useAppPalette();
   const appLock = useAppLock();
   const rdp = useRdp(appLock.status?.locked ?? true);
   const reloadSmb = useCallback(async () => { if (!appLock.status?.locked) setSmbProfiles(await listSmbProfiles()); }, [appLock.status?.locked]);
@@ -735,13 +736,17 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
 
   useEffect(() => {
-    const unlistenPromise = onAiEvent((event) => {
-      if (event.kind !== "appAction" || !aiChat.ownsRun(event.runId)) {
+    aiChat.setAppActionHandler((event, run) => {
+      const complete = (result: string, isError = false) =>
+        aiChat.completeAppAction(event.runId, event.callId, result, isError);
+      const targetsCurrentTerminal = [
+        "open_host_tools", "open_file_explorer", "open_port_forward",
+        "split_horizontal", "split_vertical", "reconnect_active_session", "cancel_reconnect",
+      ].includes(event.action);
+      if (targetsCurrentTerminal && run.currentServer?.sessionId !== activeSession?.id) {
+        complete("原终端已失去焦点。请回到原终端后在此会话中重试。", true);
         return;
       }
-
-      const complete = (result: string, isError = false) =>
-        aiChat.completeAppAction(event.callId, result, isError);
       const requireActiveSsh = () => {
         if (activeSession?.kind !== "ssh" || !activeSessionProfile) {
           complete("当前没有可用于此操作的 SSH 终端。请先连接服务器并聚焦对应终端。", true);
@@ -881,11 +886,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           complete(`不支持的应用操作：${event.action}。`, true);
       }
     });
-    return () => {
-      void unlistenPromise.then((unlisten) => unlisten());
-    };
+    return () => aiChat.setAppActionHandler(null);
   }, [
     aiChat.completeAppAction,
+    aiChat.setAppActionHandler,
     activeSession,
     activeSessionProfile,
     activeCanSplit,
@@ -1657,6 +1661,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     try {
       if (!await closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口")) return false;
       for (const tab of browserTabs) await closeBrowserTab(tab.id);
+      await aiChat.flush();
       if (initialWorkspace) await discardDetachedWorkspace();
       return true;
     } finally { closingWindowRef.current = false; }
@@ -2553,6 +2558,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           terminalWorkspaceBottomInset={terminalWorkspaceBottomInset}
           onTerminalWorkspaceBottomInsetChange={setTerminalWorkspaceBottomInset}
           onThemeChange={setThemeMode}
+          appPaletteColor={paletteColor}
+          onAppPaletteColorChange={setPaletteColor}
           rightClick={rightClick}
           s3DownloadConcurrency={s3DownloadConcurrency}
           s3UploadConcurrency={s3UploadConcurrency}

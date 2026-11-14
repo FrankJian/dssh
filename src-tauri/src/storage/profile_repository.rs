@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::{
     error::{AppError, AppResult},
-    models::ai::{AiModelConfig, AiProviderConfig},
+    models::ai::{AiConversation, AiModelConfig, AiProviderConfig},
     models::app_lock::StoredAppLockSettings,
     models::connection_folder::normalize_folder,
     models::s3::{
@@ -584,6 +584,17 @@ impl ProfileRepository {
             "../../migrations/014_artifactory_profiles.sql"
         ))?;
         connection.execute_batch(include_str!("../../migrations/015_smb_profiles.sql"))?;
+        connection.execute_batch(include_str!("../../migrations/016_ai_conversations.sql"))?;
+        let has_ai_title = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('ai_conversations') WHERE name = 'title')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_ai_title {
+            connection.execute_batch(include_str!(
+                "../../migrations/017_ai_conversation_titles.sql"
+            ))?;
+        }
         ensure_columns(&connection)?;
         Ok(())
     }
@@ -852,47 +863,114 @@ impl ProfileRepository {
         Ok(())
     }
 
-    pub fn load_ai_chat_history(&self) -> AppResult<Vec<Value>> {
+    pub fn list_ai_conversations(&self, owner: &str) -> AppResult<Vec<AiConversation>> {
         let connection = self.connection()?;
-        let serialized = connection
-            .query_row(
-                "SELECT items_json FROM ai_chat_history WHERE id = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        serialized
-            .map(|value| {
-                serde_json::from_str::<Vec<Value>>(&value)
-                    .map(normalize_ai_chat_items)
-                    .map_err(|error| AppError::new("ai_history_error", error.to_string()))
+        let mut statement = connection.prepare(
+            "SELECT id, items_json, draft, selection_json, title FROM ai_conversations WHERE owner = ?1 ORDER BY rowid",
+        )?;
+        let rows = statement.query_map([owner], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, items, draft, selection, title) = row?;
+            let decode_error = |_| AppError::new("ai_history_error", "无法读取 AI 会话记录。");
+            Ok(AiConversation {
+                id,
+                title,
+                items: normalize_ai_chat_items(serde_json::from_str(&items).map_err(decode_error)?),
+                draft,
+                selection: selection
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()
+                    .map_err(decode_error)?,
             })
-            .transpose()
-            .map(|items| items.unwrap_or_default())
+        })
+        .collect()
     }
 
-    pub fn save_ai_chat_history(&self, items: Vec<Value>) -> AppResult<()> {
-        let serialized = serde_json::to_string(&items)
-            .map_err(|error| AppError::new("ai_history_error", error.to_string()))?;
-        if serialized.len() > MAX_AI_CHAT_HISTORY_BYTES {
+    pub fn create_ai_conversation(&self, owner: &str) -> AppResult<AiConversation> {
+        let id = self.connection()?.query_row(
+            "INSERT INTO ai_conversations (id, owner) VALUES (lower(hex(randomblob(16))), ?1) RETURNING id",
+            [owner], |row| row.get(0),
+        )?;
+        Ok(AiConversation {
+            id,
+            title: None,
+            items: Vec::new(),
+            draft: String::new(),
+            selection: None,
+        })
+    }
+
+    pub fn require_ai_conversation(&self, owner: &str, id: &str) -> AppResult<()> {
+        let exists: bool = self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM ai_conversations WHERE id = ?1 AND owner = ?2)",
+            params![id, owner],
+            |row| row.get(0),
+        )?;
+        require_conversation_row(usize::from(exists))
+    }
+
+    pub fn save_ai_conversation(&self, owner: &str, conversation: AiConversation) -> AppResult<()> {
+        let encode_error = |_| AppError::new("ai_history_error", "无法保存 AI 会话记录。");
+        let items = serde_json::to_string(&conversation.items).map_err(encode_error)?;
+        if items.len() + conversation.draft.len() > MAX_AI_CHAT_HISTORY_BYTES {
             return Err(AppError::new(
                 "ai_history_too_large",
-                "聊天记录过大，请清空部分内容后重试。",
+                "会话记录过大，请清空记录或新建会话。",
             ));
         }
-        let connection = self.connection()?;
-        connection.execute(
-            "INSERT INTO ai_chat_history (id, items_json, updated_at) VALUES (1, ?1, ?2)
-             ON CONFLICT(id) DO UPDATE SET items_json = excluded.items_json, updated_at = excluded.updated_at",
-            params![serialized, timestamp()],
+        let selection = conversation
+            .selection
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(encode_error)?;
+        let title = conversation.title.as_deref().map(str::trim);
+        if title.is_some_and(|value| {
+            value.is_empty() || value.chars().count() > 64 || value.chars().any(char::is_control)
+        }) {
+            return Err(AppError::new(
+                "ai_conversation_title",
+                "会话标题须为 1–64 个字符的单行文字。",
+            ));
+        }
+        let changed = self.connection()?.execute(
+            "UPDATE ai_conversations SET items_json = ?3, draft = ?4, selection_json = ?5, title = ?6 WHERE id = ?1 AND owner = ?2",
+            params![conversation.id, owner, items, conversation.draft, selection, title],
+        )?;
+        require_conversation_row(changed)
+    }
+
+    pub fn recover_detached_ai_conversations(&self) -> AppResult<()> {
+        self.connection()?.execute(
+            "UPDATE ai_conversations SET owner = 'main' WHERE owner GLOB 'detached-*'",
+            [],
         )?;
         Ok(())
     }
 
-    pub fn clear_ai_chat_history(&self) -> AppResult<()> {
-        let connection = self.connection()?;
-        connection.execute("DELETE FROM ai_chat_history WHERE id = 1", [])?;
-        Ok(())
+    pub fn clear_ai_conversation(&self, owner: &str, id: &str) -> AppResult<()> {
+        let changed = self.connection()?.execute(
+            "UPDATE ai_conversations SET items_json = '[]', draft = '' WHERE id = ?1 AND owner = ?2",
+            params![id, owner],
+        )?;
+        require_conversation_row(changed)
+    }
+
+    pub fn delete_ai_conversation(&self, owner: &str, id: &str) -> AppResult<()> {
+        let changed = self.connection()?.execute(
+            "DELETE FROM ai_conversations WHERE id = ?1 AND owner = ?2",
+            params![id, owner],
+        )?;
+        require_conversation_row(changed)
     }
 
     pub(super) fn connection(&self) -> AppResult<Connection> {
@@ -1212,6 +1290,17 @@ fn deserialize_tags(value: Option<&str>) -> Vec<String> {
     value
         .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
         .unwrap_or_default()
+}
+
+fn require_conversation_row(changed: usize) -> AppResult<()> {
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "ai_conversation",
+            "此 AI 会话不存在或不属于当前窗口。",
+        ))
+    }
 }
 
 fn normalize_ai_chat_items(mut items: Vec<Value>) -> Vec<Value> {
@@ -2067,33 +2156,98 @@ mod tests {
     }
 
     #[test]
-    fn ai_chat_history_persists_and_marks_interrupted_tools_as_errors() {
-        let directory = std::env::temp_dir().join(format!("dssh-ai-history-test-{}", timestamp()));
+    fn ai_conversations_migrate_legacy_history_and_isolate_writes() {
+        let directory = std::env::temp_dir().join(format!("dssh-ai-history-{}", timestamp()));
         let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let items = serde_json::json!([
+            { "id": "user-1", "type": "user", "text": "连接服务器" },
+            { "id": "tool-1", "type": "tool", "status": "running" }
+        ]);
         repository
-            .save_ai_chat_history(vec![
-                serde_json::json!({ "id": "user-1", "type": "user", "text": "连接服务器" }),
-                serde_json::json!({
-                    "id": "tool-1",
-                    "type": "tool",
-                    "callId": "call-1",
-                    "toolName": "open_ssh_session",
-                    "args": { "server_id": "profile-1" },
-                    "status": "running",
-                    "result": null,
-                }),
-            ])
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO ai_chat_history (id, items_json, updated_at) VALUES (1, ?1, 'test')",
+                [items.to_string()],
+            )
             .unwrap();
-
-        let history = repository.load_ai_chat_history().unwrap();
-        assert_eq!(history.len(), 2);
-        assert_eq!(history[1]["status"], "error");
-        assert_eq!(history[1]["result"], "应用关闭前未完成，此操作未执行。");
-
-        repository.clear_ai_chat_history().unwrap();
-        assert!(repository.load_ai_chat_history().unwrap().is_empty());
+        repository
+            .connection()
+            .unwrap()
+            .execute_batch("ALTER TABLE ai_conversations DROP COLUMN title")
+            .unwrap();
+        let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let legacy = repository
+            .list_ai_conversations("main")
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(legacy.items[1]["status"], "error");
+        assert_eq!(legacy.items[0]["text"], "连接服务器");
+        let mut second = repository.create_ai_conversation("main").unwrap();
+        assert!(legacy.title.is_none());
+        second.title = Some("磁盘空间排查".into());
+        second.draft = "draft for second".into();
+        assert!(
+            repository
+                .save_ai_conversation("detached-test", second.clone())
+                .is_err()
+        );
+        repository
+            .save_ai_conversation("main", second.clone())
+            .unwrap();
+        let other = repository.create_ai_conversation("detached-test").unwrap();
+        assert_eq!(
+            repository.list_ai_conversations("detached-test").unwrap()[0].id,
+            other.id
+        );
+        assert!(
+            repository
+                .delete_ai_conversation("detached-test", &second.id)
+                .is_err()
+        );
+        repository
+            .delete_ai_conversation("main", &legacy.id)
+            .unwrap();
+        assert!(repository.save_ai_conversation("main", legacy).is_err());
+        let reopened = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
+        let sessions = reopened.list_ai_conversations("main").unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("磁盘空间排查"));
+        assert_eq!(sessions[0].draft, "draft for second");
+        assert!(sessions[0].items.is_empty());
+        assert!(
+            reopened
+                .clear_ai_conversation("detached-test", &second.id)
+                .is_err()
+        );
+        reopened.clear_ai_conversation("main", &second.id).unwrap();
+        assert!(
+            reopened.list_ai_conversations("main").unwrap()[0]
+                .draft
+                .is_empty()
+        );
+        assert_eq!(
+            reopened.list_ai_conversations("detached-test").unwrap()[0].id,
+            other.id
+        );
+        reopened.recover_detached_ai_conversations().unwrap();
+        assert!(
+            reopened
+                .list_ai_conversations("detached-test")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            reopened
+                .list_ai_conversations("main")
+                .unwrap()
+                .iter()
+                .any(|session| session.id == other.id)
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
+
     #[test]
     fn ai_header_secrets_are_write_only_preserved_by_id_and_removed() {
         let directory = std::env::temp_dir().join(format!("dssh-header-secrets-{}", timestamp()));

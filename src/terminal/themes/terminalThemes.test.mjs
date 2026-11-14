@@ -8,7 +8,7 @@ globalThis.localStorage = {
   removeItem: (key) => values.delete(key),
 };
 
-const [{ BUILTIN_TERMINAL_SCHEMES, DEFAULT_TERMINAL_SCHEME_ID }, { toXtermTheme }, store] = await Promise.all([
+const [{ BUILTIN_TERMINAL_SCHEMES, DEFAULT_TERMINAL_SCHEME_ID }, { applyTerminalBackgroundOverride, toXtermTheme }, store] = await Promise.all([
   import("./presets.ts"),
   import("./resolve.ts"),
   import("../../settings/terminalThemeStore.ts"),
@@ -22,7 +22,7 @@ const expectedFields = [
 ];
 
 test("all presets define a complete terminal palette and retain stable default IDs", () => {
-  assert.equal(BUILTIN_TERMINAL_SCHEMES.length, 31);
+  assert.equal(BUILTIN_TERMINAL_SCHEMES.length, 35);
   for (const scheme of BUILTIN_TERMINAL_SCHEMES) {
     assert.deepEqual(Object.keys(scheme.colors).sort(), [...expectedFields].sort());
     for (const [field, color] of Object.entries(scheme.colors)) {
@@ -80,8 +80,10 @@ test("writable-directory backgrounds follow blue, purple and amber preset accent
   assert.equal(backgrounds.size, expected.length);
 });
 
-test("Graphite and Porcelain text, directory accents and selection remain readable", () => {
-  for (const { colors, id } of BUILTIN_TERMINAL_SCHEMES.filter(({ id }) => ["builtin:graphite-dark", "builtin:graphite-light", "builtin:porcelain-white"].includes(id))) {
+test("Duo SSH palettes keep text, directory accents and selection readable", () => {
+  const originalIds = ["builtin:graphite-dark", "builtin:graphite-light", "builtin:porcelain-white"];
+  const mineralIds = ["builtin:sea-glass-light", "builtin:sea-glass-dark", "builtin:mineral-light", "builtin:mineral-dark"];
+  for (const { colors, id } of BUILTIN_TERMINAL_SCHEMES.filter(({ id }) => [...originalIds, ...mineralIds].includes(id))) {
     for (const field of ["foreground", "red", "green", "yellow", "blue", "magenta", "cyan", "brightBlack",
       "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan"]) {
       assert.ok(store.contrastRatio(colors[field], colors.background) >= 4.5, `${id}.${field}`);
@@ -89,6 +91,20 @@ test("Graphite and Porcelain text, directory accents and selection remain readab
     for (const background of ["selectionBackground", "selectionInactiveBackground"]) {
       assert.ok(store.contrastRatio(colors.selectionForeground ?? colors.foreground, colors[background]) >= 4.5, `${id}.${background}`);
     }
+  }
+});
+
+test("new workbench palettes have paired light and dark backgrounds", () => {
+  for (const [id, kind, background] of [
+    ["builtin:sea-glass-light", "light", "#e5f0e9"],
+    ["builtin:sea-glass-dark", "dark", "#152420"],
+    ["builtin:mineral-light", "light", "#f0f2ec"],
+    ["builtin:mineral-dark", "dark", "#202c2d"],
+  ]) {
+    const scheme = BUILTIN_TERMINAL_SCHEMES.find((item) => item.id === id);
+    assert.ok(scheme, id);
+    assert.equal(scheme.kind, kind, id);
+    assert.equal(toXtermTheme(scheme.colors, false).background, background, id);
   }
 });
 
@@ -136,6 +152,48 @@ test("xterm themes support transparency and clearing optional selection foregrou
   assert.equal(opaque.background, colors.background);
   assert.equal(transparent.background, "rgba(0, 0, 0, 0)");
   assert.equal(Object.hasOwn(opaque, "selectionForeground"), false);
+});
+
+test("background overlay blends over the selected scheme without changing ANSI colors", () => {
+  const source = BUILTIN_TERMINAL_SCHEMES.find(({ id }) => id === "builtin:sea-glass-light").colors;
+  const effective = applyTerminalBackgroundOverride(source, { color: "#ff0000", opacity: 50, enabled: true });
+  assert.equal(effective.background, "#f27875");
+  assert.equal(effective.foreground, source.foreground);
+  assert.equal(effective.green, source.green);
+  assert.equal(source.background, "#e5f0e9");
+  assert.equal(applyTerminalBackgroundOverride(source, { color: "#ff0000", opacity: 0, enabled: true }), source);
+  assert.equal(applyTerminalBackgroundOverride(source, { color: "#ff0000", opacity: 100, enabled: true }).background, "#ff0000");
+  assert.equal(applyTerminalBackgroundOverride(source, { color: "#ff0000", opacity: 100, enabled: false }), source);
+});
+
+test("light and dark background overlays persist independently and survive scheme changes", async () => {
+  const previous = values.get(store.terminalThemeStorageKey);
+  values.delete(store.terminalThemeStorageKey);
+  const overlayStore = await import("../../settings/terminalThemeStore.ts?background-overlays");
+  overlayStore.setTerminalBackgroundOverride({ color: "#123456", opacity: 60, enabled: true });
+  assert.equal(overlayStore.getActiveTerminalColors().background, applyTerminalBackgroundOverride(
+    overlayStore.getActiveTerminalScheme().colors, { color: "#123456", opacity: 60, enabled: true },
+  ).background);
+  overlayStore.selectTerminalScheme("builtin:sea-glass-dark");
+  assert.deepEqual(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.dark, { color: "#123456", opacity: 60, enabled: true });
+  overlayStore.setTerminalBackgroundOverride({ color: "#123456", opacity: 60, enabled: false });
+  assert.equal(overlayStore.getActiveTerminalColors().background, overlayStore.getActiveTerminalScheme().colors.background);
+  assert.deepEqual(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.dark, { color: "#123456", opacity: 60, enabled: false });
+  overlayStore.setTerminalBackgroundOverride({ color: "#123456", opacity: 60, enabled: true });
+  assert.notEqual(overlayStore.getActiveTerminalColors().background, overlayStore.getActiveTerminalScheme().colors.background);
+  overlayStore.setTerminalThemeFollowAppearance(false);
+  overlayStore.selectTerminalScheme("builtin:sea-glass-light");
+  assert.equal(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.light, null);
+  overlayStore.setTerminalBackgroundOverride({ color: "#abc", opacity: 25, enabled: true });
+  assert.deepEqual(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.light, { color: "#aabbcc", opacity: 25, enabled: true });
+  assert.throws(() => overlayStore.setTerminalBackgroundOverride({ color: "red", opacity: 50, enabled: true }), /有效的背景色/);
+  overlayStore.selectTerminalScheme("builtin:mineral-dark");
+  assert.deepEqual(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.dark, { color: "#123456", opacity: 60, enabled: true });
+  overlayStore.setTerminalBackgroundOverride(null);
+  assert.equal(overlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.dark, null);
+  assert.deepEqual(JSON.parse(values.get(store.terminalThemeStorageKey)).backgroundOverrides.light, { color: "#aabbcc", opacity: 25, enabled: true });
+  if (previous === undefined) values.delete(store.terminalThemeStorageKey);
+  else values.set(store.terminalThemeStorageKey, previous);
 });
 
 test("scheme selection, custom save, and active custom deletion persist atomically", () => {
@@ -195,6 +253,20 @@ test("legacy records receive compatible light and dark defaults without losing t
   assert.equal(preferences.followAppearance, true);
   assert.equal(preferences.darkSchemeId, "builtin:nord");
   assert.equal(preferences.lightSchemeId, "builtin:graphite-light");
+  assert.deepEqual(preferences.backgroundOverrides, { dark: null, light: null });
+});
+
+test("saved background overrides from before the switch remain enabled", async () => {
+  values.set(store.terminalThemeStorageKey, JSON.stringify({
+    schemaVersion: 1,
+    revision: 2,
+    activeSchemeId: "builtin:graphite-dark",
+    customSchemes: [],
+    backgroundOverrides: { dark: { color: "#123456", opacity: 42 }, light: null },
+  }));
+  const legacyOverlayStore = await import("../../settings/terminalThemeStore.ts?legacy-background-overlay");
+  assert.deepEqual(legacyOverlayStore.getTerminalThemeStoreState().preferences.backgroundOverrides.dark,
+    { color: "#123456", opacity: 42, enabled: true });
 });
 
 test("invalid persisted data is preserved until explicit reset", async () => {

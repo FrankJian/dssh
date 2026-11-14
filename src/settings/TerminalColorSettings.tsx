@@ -1,8 +1,9 @@
+import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_TERMINAL_SCHEME_ID } from "../terminal/themes/presets";
-import { TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "../terminal/themes/resolve";
+import { applyTerminalBackgroundOverride, TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "../terminal/themes/resolve";
 import type { CustomTerminalScheme, TerminalColorField, TerminalColors, TerminalThemeKind } from "../terminal/themes/types";
 import { Button } from "../ui/Button";
 import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
@@ -10,6 +11,7 @@ import {
   cloneColors,
   contrastRatio,
   deleteCustomTerminalScheme,
+  getActiveTerminalColors,
   getActiveTerminalScheme,
   getTerminalAppearanceKind,
   getTerminalSchemes,
@@ -18,6 +20,7 @@ import {
   restoreDefaultTerminalScheme,
   saveCustomTerminalScheme,
   selectTerminalScheme,
+  setTerminalBackgroundOverride,
   setTerminalThemeFollowAppearance,
 } from "./terminalThemeStore";
 import { useTerminalTheme } from "./useTerminalTheme";
@@ -76,11 +79,15 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
   const schemes = getTerminalSchemes(store.preferences);
   const appearanceKind = getTerminalAppearanceKind();
   const active = getActiveTerminalScheme(store.preferences);
+  const backgroundOverride = store.preferences.backgroundOverrides[active.kind];
+  const [backgroundText, setBackgroundText] = useState(backgroundOverride?.color ?? active.colors.background);
   const [draft, setDraft] = useState<SchemeDraft | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(() => new Set());
   const [editorError, setEditorError] = useState<string | null>(null);
-  const previewColors = draft?.colors ?? active.colors;
+  const previewBaseColors = draft?.colors ?? active.colors;
+  const previewColors = applyTerminalBackgroundOverride(previewBaseColors, store.preferences.backgroundOverrides[draft?.kind ?? active.kind]);
+  const effectiveBackground = getActiveTerminalColors(store.preferences).background;
   const schemeOptions = useMemo<SelectMenuOption[]>(() => {
     const visible = store.preferences.followAppearance
       ? schemes.filter((scheme) => scheme.kind === appearanceKind)
@@ -90,6 +97,19 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       ...visible.filter((scheme) => "sourcePresetId" in scheme).map((scheme) => ({ value: scheme.id, label: `自定义 · ${scheme.name} · ${scheme.kind === "dark" ? "深色" : "浅色"}` })),
     ];
   }, [appearanceKind, schemes, store.preferences.followAppearance]);
+
+  useEffect(() => {
+    setBackgroundText(backgroundOverride?.color ?? active.colors.background);
+  }, [backgroundOverride?.color, active.colors.background]);
+
+  function updateBackgroundOverride(color: string, opacity = backgroundOverride?.opacity ?? 100) {
+    try {
+      setTerminalBackgroundOverride({ color, opacity, enabled: backgroundOverride?.enabled ?? true });
+      setEditorError(null);
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   useEffect(() => {
     onCloseGuardChange?.(() => confirmDiscard(draft));
@@ -188,7 +208,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       <div className="terminal-color-settings__heading">
         <div className="settings-section__head"><h3>配色方案</h3></div>
       <label className="checkbox-field terminal-color-settings__follow" title="开启后仅显示与应用深浅外观一致的方案，关闭后可固定使用任意配色。">
-        <input
+        <SettingsSwitch
           checked={store.preferences.followAppearance}
           onChange={(event) => {
             try {
@@ -198,7 +218,6 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
               setEditorError(error instanceof Error ? error.message : String(error));
             }
           }}
-          type="checkbox"
         />
         跟随应用外观
       </label>
@@ -206,7 +225,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       <div className="terminal-color-settings__controls">
       <div className="terminal-color-settings__selector">
         <div className="terminal-color-settings__swatches" aria-hidden="true">
-          {[active.colors.background, active.colors.foreground, active.colors.red, active.colors.green, active.colors.blue].map((color, index) => (
+          {[effectiveBackground, active.colors.foreground, active.colors.red, active.colors.green, active.colors.blue].map((color, index) => (
             <span key={`${color}-${index}`} style={{ backgroundColor: color }} />
           ))}
         </div>
@@ -219,7 +238,48 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
           value={active.id}
         />
       </div>
-      <p className="settings-field__hint">选择后可按 ↑ / ↓ 逐个切换配色，立即查看终端效果。</p>
+      <div className="terminal-color-settings__background" role="group" aria-label="自定义终端背景色">
+        <div className="terminal-color-settings__background-title">
+          <label className="checkbox-field">
+            <SettingsSwitch aria-label="启用叠加背景色" checked={backgroundOverride?.enabled ?? false} onChange={(event) => {
+              try {
+                setTerminalBackgroundOverride({
+                  color: backgroundOverride?.color ?? active.colors.background,
+                  opacity: backgroundOverride?.opacity ?? 100,
+                  enabled: event.currentTarget.checked,
+                });
+                setEditorError(null);
+              } catch (error) {
+                setEditorError(error instanceof Error ? error.message : String(error));
+              }
+            }} />
+            叠加背景色
+          </label>
+          <Button disabled={!backgroundOverride} onClick={() => {
+            try {
+              setTerminalBackgroundOverride(null);
+              setEditorError(null);
+            } catch (error) {
+              setEditorError(error instanceof Error ? error.message : String(error));
+            }
+          }} variant="ghost">清除自定义色</Button>
+        </div>
+        <div className="terminal-color-settings__background-inputs">
+          <input aria-label="自定义背景色板" disabled={!backgroundOverride?.enabled} type="color" value={backgroundOverride?.color ?? active.colors.background} onChange={(event) => updateBackgroundOverride(event.currentTarget.value)} />
+          <input aria-label="自定义背景色 HEX 色值" aria-invalid={normalizeTerminalColorInput(backgroundText) === null} className="settings-number" disabled={!backgroundOverride?.enabled} maxLength={7} spellCheck={false} value={backgroundText} onChange={(event) => {
+            const text = event.currentTarget.value;
+            setBackgroundText(text);
+            const color = normalizeTerminalColorInput(text);
+            if (color) updateBackgroundOverride(color);
+          }} onBlur={() => setBackgroundText(backgroundOverride?.color ?? active.colors.background)} />
+        </div>
+        <label className="settings-field">
+          <span className="terminal-settings__range-label">颜色叠加不透明度<output>{backgroundOverride?.opacity ?? 100}%</output></span>
+          <input aria-label="自定义背景色不透明度" className="settings-range" disabled={!backgroundOverride?.enabled} max={100} min={0} type="range" value={backgroundOverride?.opacity ?? 100} onChange={(event) => updateBackgroundOverride(backgroundOverride!.color, Number(event.currentTarget.value))} />
+        </label>
+        <p className="settings-field__hint">0% 使用方案原色，100% 使用所选颜色。</p>
+        {backgroundOverride?.enabled && contrastRatio(active.colors.foreground, effectiveBackground) < 4.5 ? <p className="terminal-color-settings__warning" role="status">文字与当前背景对比偏低，建议调低叠加不透明度或更换颜色。</p> : null}
+      </div>
       <div className="terminal-color-settings__actions">
         <Button
           disabled={active.id === (appearanceKind === "light" ? "builtin:graphite-light" : DEFAULT_TERMINAL_SCHEME_ID)}
@@ -279,14 +339,12 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       >
         <TerminalColorPreview colors={previewColors} fontFamily={fontFamily} fontSize={fontSize} />
         </div>
-        <p className="settings-field__hint" title="低对比度文字会自动校正。背景透明度与壁纸由背景设置控制。">预览使用不透明背景，文字会自动调整以保持可读性。</p>
       </details>
 
       {draft ? (
         <div className="terminal-color-editor">
           <div className="settings-section__head">
             <h3>{draft.id ? "编辑自定义配色" : "新建自定义配色"}</h3>
-            <p>修改仅在预览中生效，保存后应用到现有终端。</p>
           </div>
           <label className="settings-field">
             <span className="settings-field__label">方案名称</span>
@@ -330,7 +388,7 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
           </div>
           <details className="terminal-color-editor__ansi">
             <summary>ANSI 16 色（含目录背景）</summary>
-            <p className="settings-field__hint">常见 Linux 可写目录使用“绿”作为背景，可改为任意颜色；同时影响程序使用该编号的文字与背景。文字会按对比度自动调整。</p>
+            <p className="settings-field__hint">ANSI 颜色同时影响使用该编号的文字与背景。</p>
             <div className="terminal-color-editor__fields">
               {ansiFields.map(({ field, label }) => (
                 <ColorField
@@ -351,12 +409,11 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
               ))}
             </div>
           </details>
-          {contrastRatio(draft.colors.foreground, draft.colors.background) < 4.5 ? (
+          {contrastRatio(previewColors.foreground, previewColors.background) < 4.5 ? (
             <p className="terminal-color-settings__warning" role="status">
               默认文字与不透明背景的对比度低于 4.5:1；透明背景或壁纸下实际对比度还会变化。
             </p>
           ) : null}
-          <p className="settings-field__hint">选区背景按所选颜色清晰显示；建议同时设置选中文字颜色，保持彩色输出被选中后的可读性。</p>
           {draftError ? <div className="terminal-color-settings__error" role="alert">{draftError}</div> : null}
           <div className="terminal-color-settings__actions">
             <Button onClick={resetColorsToBase} variant="ghost">恢复副本初始颜色</Button>
@@ -407,13 +464,12 @@ function ColorField({
       <span className="terminal-color-field__label">{label}</span>
       {nullable ? (
         <label className="terminal-color-field__inherit">
-          <input
+          <SettingsSwitch
             checked={value === null}
             onChange={(event) => {
               onValidityChange(false);
               onChange(field, event.currentTarget.checked ? null : fallbackColor ?? "#ffffff");
             }}
-            type="checkbox"
           />
           保留原色
         </label>

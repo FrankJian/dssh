@@ -6,13 +6,14 @@ import {
 } from "../terminal/themes/presets.ts";
 import type {
   CustomTerminalScheme,
+  TerminalBackgroundOverride,
   TerminalColorField,
   TerminalColors,
   TerminalThemeKind,
   TerminalThemePreferencesV1,
   TerminalThemeStoreState,
 } from "../terminal/themes/types";
-import { hexToRgbTriplet } from "../terminal/themes/resolve.ts";
+import { applyTerminalBackgroundOverride, hexToRgbTriplet } from "../terminal/themes/resolve.ts";
 
 export const terminalThemeStorageKey = "dssh.terminal.colorSchemes";
 export const MAX_CUSTOM_TERMINAL_SCHEMES = 100;
@@ -32,6 +33,7 @@ const defaultPreferences = (): TerminalThemePreferencesV1 => ({
   followAppearance: true,
   darkSchemeId: DEFAULT_TERMINAL_SCHEME_ID,
   lightSchemeId: DEFAULT_LIGHT_TERMINAL_SCHEME_ID,
+  backgroundOverrides: { dark: null, light: null },
   customSchemes: [],
 });
 
@@ -47,6 +49,16 @@ function normalizeHexColor(value: unknown, allowNull = false): string | null {
     return `#${normalized.slice(1).split("").map((character) => character + character).join("").toLowerCase()}`;
   }
   return /^#[\da-fA-F]{6}$/.test(normalized) ? normalized.toLowerCase() : null;
+}
+
+function parseBackgroundOverride(value: unknown): TerminalBackgroundOverride | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const color = normalizeHexColor(value.color);
+  if (!color || !Number.isInteger(value.opacity) || (value.opacity as number) < 0 || (value.opacity as number) > 100) return undefined;
+  if (value.enabled !== undefined && typeof value.enabled !== "boolean") return undefined;
+  // Records saved before the enable switch had an active override.
+  return { color, opacity: value.opacity as number, enabled: value.enabled ?? true };
 }
 
 export function normalizeTerminalColorInput(value: string): string | null {
@@ -111,6 +123,11 @@ function parsePreferences(raw: string): TerminalThemePreferencesV1 | null {
   if (!Number.isSafeInteger(parsed.revision) || (parsed.revision as number) < 0) return null;
   const customSchemes = parseCustomSchemes(parsed.customSchemes);
   if (!customSchemes) return null;
+  const overrides = parsed.backgroundOverrides;
+  if (overrides !== undefined && !isRecord(overrides)) return null;
+  const darkOverride = parseBackgroundOverride(overrides?.dark ?? null);
+  const lightOverride = parseBackgroundOverride(overrides?.light ?? null);
+  if (darkOverride === undefined || lightOverride === undefined) return null;
   const activeSchemeId = typeof parsed.activeSchemeId === "string" ? parsed.activeSchemeId : "";
   const activeExists = getBuiltinTerminalScheme(activeSchemeId) || customSchemes.some((scheme) => scheme.id === activeSchemeId);
   const findScheme = (id: string) => getBuiltinTerminalScheme(id) ?? customSchemes.find((scheme) => scheme.id === id);
@@ -136,6 +153,7 @@ function parsePreferences(raw: string): TerminalThemePreferencesV1 | null {
       "light",
       legacyScheme.kind === "light" ? legacyScheme.id : DEFAULT_LIGHT_TERMINAL_SCHEME_ID,
     ),
+    backgroundOverrides: { dark: darkOverride, light: lightOverride },
     customSchemes,
   };
 }
@@ -195,7 +213,7 @@ function readAppearanceKind(): TerminalThemeKind {
 }
 
 appearanceKind = readAppearanceKind();
-applyBackgroundColors(activeScheme().colors);
+applyBackgroundColors(getActiveTerminalColors());
 
 function notify() {
   for (const listener of listeners) listener();
@@ -203,7 +221,7 @@ function notify() {
 
 function refreshFromStorage() {
   state = loadState();
-  applyBackgroundColors(activeScheme().colors);
+  applyBackgroundColors(getActiveTerminalColors());
   for (const listener of listeners) listener();
 }
 
@@ -215,7 +233,7 @@ if (typeof window !== "undefined") {
     const next = readAppearanceKind();
     if (next === appearanceKind) return;
     appearanceKind = next;
-    applyBackgroundColors(activeScheme().colors);
+    applyBackgroundColors(getActiveTerminalColors());
     notify();
   }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
@@ -230,7 +248,17 @@ export function subscribeTerminalThemeStore(listener: () => void) {
 }
 
 export function getActiveTerminalColors(preferences = state.preferences): TerminalColors {
-  return activeScheme(preferences).colors;
+  const scheme = activeScheme(preferences);
+  return applyTerminalBackgroundOverride(scheme.colors, preferences.backgroundOverrides[scheme.kind]);
+}
+
+export function setTerminalBackgroundOverride(override: TerminalBackgroundOverride | null) {
+  const kind = activeScheme().kind;
+  const normalized = override === null ? null : parseBackgroundOverride(override);
+  if (normalized === undefined) throw new Error("请输入有效的背景色和 0–100% 不透明度。");
+  const next = { ...state.preferences.backgroundOverrides, [kind]: normalized };
+  if (JSON.stringify(next) === JSON.stringify(state.preferences.backgroundOverrides)) return;
+  persist({ ...state.preferences, backgroundOverrides: next });
 }
 
 export function getActiveTerminalScheme(preferences = state.preferences) {
@@ -281,7 +309,7 @@ function persist(next: TerminalThemePreferencesV1) {
     throw new Error("保存终端配色失败，请检查可用存储空间。");
   }
   state = { preferences: parsed, storageError: null, readOnly: false };
-  applyBackgroundColors(activeScheme().colors);
+  applyBackgroundColors(getActiveTerminalColors());
   notify();
 }
 
@@ -386,7 +414,7 @@ export function resetInvalidTerminalThemeStorage() {
     const preferences = defaultPreferences();
     localStorage.setItem(terminalThemeStorageKey, JSON.stringify(preferences));
     state = { preferences, storageError: null, readOnly: false };
-    applyBackgroundColors(activeScheme().colors);
+    applyBackgroundColors(getActiveTerminalColors());
     notify();
   } catch {
     throw new Error("重置终端配色失败，请检查应用存储权限。");

@@ -97,7 +97,7 @@ export function SftpConnectionSidebar({profiles, selectedId, loading, error, ope
     </div>
     <div className="sftp-library__content">
       {error?<p className="form-errors" role="alert">{error}</p>:null}
-      {loading?<p className="sftp-library__empty">正在加载连接…</p>:filtered.length===0?<div className="sftp-library__empty"><Icon name="folder" width="24" height="24"/><p>{profiles.length?'没有匹配的连接':'还没有 SFTP 连接'}</p><small>{profiles.length?'试试其他关键词或来源。':'新建 SFTP 连接，或保存一个 SSH 配置。'}</small><button className="button" type="button" onClick={()=>profiles.length?(setQuery(''),setSource('all')):create({kind:'folder',value:''})}>{profiles.length?'清除筛选':'新建 SFTP 连接'}</button></div>:
+      {loading?<p className="sftp-library__empty">正在加载连接…</p>:filtered.length===0?<div className="sftp-library__empty"><Icon name="folder" width="24" height="24"/><p>{profiles.length?'没有匹配的连接':'还没有 SFTP 连接'}</p><button className="button" type="button" onClick={()=>profiles.length?(setQuery(''),setSource('all')):create({kind:'folder',value:''})}>{profiles.length?'清除筛选':'新建 SFTP 连接'}</button></div>:
         <ul className="sftp-library__tree">{view==='folder'?folderNodes([{name:'根目录',path:'',count:filtered.length,children:folders}]):view==='list'?filtered.map(row):
           [...new Set(filtered.flatMap(profile=>profile.tags))].sort((a,b)=>a.localeCompare(b)).concat(filtered.some(profile=>!profile.tags.length)?['']:[]).map(tag=>{
             const group:Group={kind:'tag',value:tag};const open=!!query.trim()||expanded.has(`tag:${tag}`);

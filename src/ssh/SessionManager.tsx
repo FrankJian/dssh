@@ -375,19 +375,16 @@ export function SessionManager({
               <div className="session-manager__empty">
                 <Icon name="connections" height="28" width="28" />
                 <p className="session-manager__empty-title">还没有保存的连接</p>
-                <p className="session-manager__empty-hint">点击「新建连接」添加你的第一台服务器。</p>
               </div>
             ) : (
               <>
                 <div className="session-manager__results-head">
                   <h2>{scopeLabel}</h2><span aria-live="polite">{sorted.length} 个连接{activeScope.startsWith("folder:") ? " · 含子目录" : ""}{isSearching ? " · 搜索结果" : ""}</span>
-                  {view === "tree" && !activeScope.startsWith("folder:") ? <span className="session-manager__group-hint">按标签分组</span> : null}
                 </div>
                 {sorted.length === 0 ? (
                   <div className="session-manager__empty">
                     <Icon name="search" height="24" width="24" />
                     <p className="session-manager__empty-title">没有匹配的连接</p>
-                    <p className="session-manager__empty-hint">试试其他关键词、类型或分组。</p>
                     <button type="button" className="session-manager__reset" onClick={resetFilters}>显示全部连接</button>
                   </div>
                 ) : view === "tree" && !activeScope.startsWith("folder:") ? tagGroups.map((group) => (

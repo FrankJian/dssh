@@ -468,7 +468,6 @@ export function SessionTree({
           <div className="session-tree__empty-content">
             <span className="session-tree__empty-icon"><Icon name="terminalTool" height="18" width="18" /></span>
             <p className="session-tree__empty-title">暂无活动会话</p>
-            <p className="session-tree__empty-hint">连接服务器后，会话将在这里显示。</p>
             <button className="session-tree__empty-action" type="button" onClick={onOpenConnections}>
               <Icon name="connections" height="14" width="14" /><span>打开连接管理</span><Icon name="arrowRight" height="13" width="13" />
             </button>

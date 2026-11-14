@@ -1,3 +1,4 @@
+import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -192,7 +193,6 @@ export function AboutSection() {
         <img className="about-hero__logo" src="/icon.png" alt="dssh" width={44} height={44} />
         <div className="about-hero__meta">
           <h3 className="about-hero__name">{(info?.name ?? "dssh").toUpperCase()}</h3>
-          <p className="about-hero__tagline">轻量级跨平台 SSH 管理器</p>
         </div>
       </div>
 
@@ -205,32 +205,15 @@ export function AboutSection() {
         ))}
       </dl>
 
-      <div className="settings-card" aria-label="报告问题">
-        <strong>报告问题</strong>
-        <p className="settings-card__hint">
-          欢迎提交使用问题、功能建议或改进需求，我们会在 GitHub Issue 中跟进。
-        </p>
-        <div className="settings-config__actions">
-          <Button onClick={handleReportIssue} variant="secondary">
-            <Icon name="externalWindow" height="15" width="15" />
-            前往 GitHub Issues
-          </Button>
-        </div>
-      </div>
-
-      <div className="settings-card" aria-label="更新设置">
-        <strong>更新设置</strong>
-        <label className="checkbox-field">
-          <input
+      <div className="settings-section__head"><h3>软件更新</h3></div>
+      <div className="settings-control-group">
+        <label className="settings-control-row">
+          <span>启动时自动检查更新</span>
+          <SettingsSwitch
             checked={checkOnStartup}
             onChange={(event) => setCheckOnStartup(event.currentTarget.checked)}
-            type="checkbox"
           />
-          启动时自动检查更新
         </label>
-        <p className="settings-card__hint">
-          默认关闭。关闭后仍可随时手动检查更新。
-        </p>
       </div>
 
       <div className="settings-config__actions">
@@ -238,7 +221,11 @@ export function AboutSection() {
           {update.phase === "checking" ? "检查中…" : "检查更新"}
         </Button>
         <Button disabled={isWorking} onClick={handleCopy} variant="ghost">
+          <Icon name="copy" height="16" width="16" />
           {copied ? "已复制" : "复制版本信息"}
+        </Button>
+        <Button onClick={handleReportIssue} variant="ghost" title="在 GitHub Issues 报告问题">
+          <Icon name="externalWindow" height="16" width="16" />报告问题
         </Button>
       </div>
 
@@ -254,7 +241,7 @@ export function AboutSection() {
           value={proxy}
         />
         <span className="settings-field__hint">
-          留空表示直连。若检查更新因网络问题失败，可在此填写代理地址后重试；该地址同时用于下载更新包。
+          留空直连；代理同时用于检查和下载更新。
         </span>
       </label>
 

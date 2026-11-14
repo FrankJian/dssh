@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { SettingsSwitch } from "../ui/SettingsSwitch";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import type { AppLockStatus, UpdateAppLockSettingsRequest } from "../services/appLockService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -9,6 +10,99 @@ interface AppLockSettingsProps {
 }
 
 const DEFAULT_TIMEOUT = 15;
+const MIN_PASSWORD_LENGTH = 6;
+
+interface PasswordFieldProps {
+  label: string;
+  value: string;
+  disabled: boolean;
+  describedBy: string;
+  invalid?: boolean;
+  onChange: (value: string) => void;
+  onBlur?: () => void;
+}
+
+function PasswordField({ label, value, disabled, describedBy, invalid, onChange, onBlur }: PasswordFieldProps) {
+  const id = useId();
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="lock-password__row" onBlur={(event) => {
+      if (event.currentTarget.contains(event.relatedTarget)) return;
+      setVisible(false);
+      onBlur?.();
+    }}>
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        aria-describedby={describedBy}
+        aria-invalid={invalid || undefined}
+        autoCapitalize="none"
+        autoComplete="new-password"
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        spellCheck={false}
+        type={visible && !disabled ? "text" : "password"}
+        value={value}
+      />
+      <Button
+        aria-label={`${visible ? "隐藏" : "显示"}${label}`}
+        className="lock-password__visibility"
+        disabled={disabled || !value}
+        onClick={(event) => {
+          event.currentTarget.focus();
+          setVisible((previous) => !previous);
+        }}
+        variant="ghost"
+      >
+        {visible && !disabled ? "隐藏" : "显示"}
+      </Button>
+    </div>
+  );
+}
+
+interface PasswordPairProps {
+  password: string;
+  confirmation: string;
+  disabled: boolean;
+  changing?: boolean;
+  onPasswordChange: (value: string) => void;
+  onConfirmationChange: (value: string) => void;
+}
+
+function PasswordPair({ password, confirmation, disabled, changing, onPasswordChange, onConfirmationChange }: PasswordPairProps) {
+  const feedbackId = useId();
+  const [confirmationTouched, setConfirmationTouched] = useState(false);
+  const matches = !disabled && [...password].length >= MIN_PASSWORD_LENGTH && password === confirmation;
+  const mismatch = !disabled && confirmationTouched && Boolean(confirmation) && password !== confirmation;
+
+  return (
+    <div className="lock-password">
+      <div className="lock-password__fields" role="group" aria-label={changing ? "设置新密码" : "设置锁屏密码"}>
+        <PasswordField
+          label={changing ? "新密码" : "锁屏密码"}
+          value={password}
+          disabled={disabled}
+          describedBy={feedbackId}
+          onChange={onPasswordChange}
+        />
+        <PasswordField
+          label={changing ? "确认新密码" : "确认密码"}
+          value={confirmation}
+          disabled={disabled}
+          describedBy={feedbackId}
+          invalid={mismatch}
+          onChange={onConfirmationChange}
+          onBlur={() => setConfirmationTouched(true)}
+        />
+      </div>
+      <p id={feedbackId} className="lock-password__feedback" role="status" data-state={matches ? "match" : mismatch ? "mismatch" : undefined}>
+        {matches ? <><Icon name="check" height="14" width="14" />两次密码一致</> :
+          mismatch ? "两次输入的密码不一致" : `至少 ${MIN_PASSWORD_LENGTH} 个字符`}
+      </p>
+    </div>
+  );
+}
 
 type PasswordDialogMode = "change" | "disable";
 
@@ -63,9 +157,6 @@ function AppLockPasswordDialog({ busy, mode, onCancel, onSubmit }: AppLockPasswo
             <Icon name="close" height="16" width="16" />
           </button>
         </header>
-        <p className="config-password__hint">
-          {changingPassword ? "请输入当前密码并设置新密码。新密码至少需要 6 个字符。" : "请输入当前锁屏密码以关闭锁屏。"}
-        </p>
         <form className="config-password__form" onSubmit={(event) => void handleSubmit(event)}>
           <label className="field">
             <span>当前密码</span>
@@ -79,28 +170,14 @@ function AppLockPasswordDialog({ busy, mode, onCancel, onSubmit }: AppLockPasswo
             />
           </label>
           {changingPassword ? (
-            <>
-              <label className="field">
-                <span>新密码</span>
-                <input
-                  autoComplete="new-password"
-                  disabled={busy}
-                  onChange={(event) => setNewPassword(event.currentTarget.value)}
-                  type="password"
-                  value={newPassword}
-                />
-              </label>
-              <label className="field">
-                <span>确认新密码</span>
-                <input
-                  autoComplete="new-password"
-                  disabled={busy}
-                  onChange={(event) => setConfirmPassword(event.currentTarget.value)}
-                  type="password"
-                  value={confirmPassword}
-                />
-              </label>
-            </>
+            <PasswordPair
+              changing
+              password={newPassword}
+              confirmation={confirmPassword}
+              disabled={busy}
+              onPasswordChange={setNewPassword}
+              onConfirmationChange={setConfirmPassword}
+            />
           ) : null}
           {error ? <div className="config-password__error" role="alert">{error}</div> : null}
           <div className="config-password__actions">
@@ -195,38 +272,40 @@ export function AppLockSettings({ status, onSave }: AppLockSettingsProps) {
       </div>
       {!status ? <p className="settings-card__hint">正在读取锁屏设置…</p> : (
         <>
-          <div className="settings-card settings-card--fields">
-            <label className="checkbox-field">
-              <input checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.currentTarget.checked)} type="checkbox" />
-              启用锁屏
+          <div className="settings-control-group app-lock-settings__controls" role="group" aria-label="锁屏选项">
+            <label className="settings-control-row">
+              <span>启用锁屏</span>
+              <SettingsSwitch checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.currentTarget.checked)} />
             </label>
-            <label className="checkbox-field">
-              <input
+            <label className="settings-control-row">
+              <span>无操作时自动锁屏</span>
+              <SettingsSwitch
                 checked={autoLockEnabled}
                 disabled={busy || !enabled}
                 onChange={(event) => setAutoLockEnabled(event.currentTarget.checked)}
-                type="checkbox"
               />
-              无操作时自动锁屏
             </label>
-            <label className="settings-field">
-              <span className="settings-field__label">自动锁屏时间（分钟）</span>
-              <input
-                className="settings-number"
-                disabled={busy || !enabled || !autoLockEnabled}
-                max={240}
-                min={1}
-                onChange={(event) => setTimeoutMinutes(Number(event.currentTarget.value))}
-                type="number"
-                value={timeoutMinutes}
-              />
+            <label className="settings-control-row">
+              <span>自动锁屏时间</span>
+              <span className="app-lock-settings__duration">
+                <input
+                  aria-label="自动锁屏时间（分钟）"
+                  className="settings-number"
+                  disabled={busy || !enabled || !autoLockEnabled}
+                  max={240}
+                  min={1}
+                  onChange={(event) => setTimeoutMinutes(Number(event.currentTarget.value))}
+                  type="number"
+                  value={timeoutMinutes}
+                />
+                <span>分钟</span>
+              </span>
             </label>
           </div>
 
           {status.settings.hasPassword ? (
             <div className="settings-section__head">
               <h3>锁屏密码</h3>
-              <p>修改密码或关闭锁屏时，需要验证当前密码。</p>
               <div className="settings-config__actions">
                 <Button disabled={busy} onClick={() => setPasswordDialog("change")} variant="secondary">修改锁屏密码</Button>
               </div>
@@ -235,30 +314,14 @@ export function AppLockSettings({ status, onSave }: AppLockSettingsProps) {
             <>
               <div className="settings-section__head">
                 <h3>设置锁屏密码</h3>
-                <p>密码至少需要 6 个字符。</p>
               </div>
-              <div className="form-grid">
-                <label className="settings-field">
-                  <span className="settings-field__label">锁屏密码</span>
-                  <input
-                    autoComplete="new-password"
-                    disabled={busy || !enabled}
-                    onChange={(event) => setNewPassword(event.currentTarget.value)}
-                    type="password"
-                    value={newPassword}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span className="settings-field__label">确认密码</span>
-                  <input
-                    autoComplete="new-password"
-                    disabled={busy || !enabled}
-                    onChange={(event) => setConfirmPassword(event.currentTarget.value)}
-                    type="password"
-                    value={confirmPassword}
-                  />
-                </label>
-              </div>
+              <PasswordPair
+                password={newPassword}
+                confirmation={confirmPassword}
+                disabled={busy || !enabled}
+                onPasswordChange={setNewPassword}
+                onConfirmationChange={setConfirmPassword}
+              />
             </>
           )}
           {error ? <div className="settings-config__error" role="alert">{error}</div> : null}
