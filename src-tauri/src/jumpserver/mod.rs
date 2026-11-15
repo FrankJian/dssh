@@ -473,6 +473,21 @@ impl JumpServerManager {
     pub fn identity(&self, id: &str) -> AppResult<Option<JumpServerIdentity>> {
         Ok(self.lock()?.logins.get(id).map(|l| l.identity.clone()))
     }
+    /// A rejected request can invalidate only the identity it was sent with.
+    pub(crate) fn invalidate_identity(&self, id: &str, generation: &str) -> AppResult<bool> {
+        let mut state = self.lock()?;
+        if state
+            .logins
+            .get(id)
+            .is_some_and(|login| login.identity.generation == generation)
+        {
+            state.logins.remove(id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn login_context(&self, id: &str, generation: &str) -> AppResult<Arc<Login>> {
         self.lock()?
             .logins
@@ -529,6 +544,27 @@ impl JumpServerManager {
         self.check(id, &l)?;
         Ok(result)
     }
+    pub async fn resolve_ssh_target(
+        &self,
+        profile_id: &str,
+        generation: &str,
+        asset_id: &str,
+        alias: &str,
+    ) -> AppResult<JumpServerTarget> {
+        let login = self.login_context(profile_id, generation)?;
+        let detail = login.api.detail(asset_id).await?;
+        let account = authorized_account(&detail, alias)?;
+        self.check(profile_id, &login)?;
+        Ok(JumpServerTarget {
+            profile_id: profile_id.into(),
+            generation: generation.into(),
+            asset_id: asset_id.into(),
+            asset_name: required(&detail, "name")?,
+            account_alias: account.alias,
+            account_label: account.username,
+        })
+    }
+
     pub fn register_target(&self, target: JumpServerTarget) -> AppResult<SshProfile> {
         validate_id(&target.asset_id)?;
         if target.account_alias.is_empty()
@@ -541,8 +577,18 @@ impl JumpServerManager {
         {
             return Err(invalid());
         }
-        let login = self.login_context(&target.profile_id, &target.generation)?;
         let mut state = self.lock()?;
+        let name = state
+            .logins
+            .get(&target.profile_id)
+            .filter(|login| login.identity.generation == target.generation)
+            .map(|login| login.name.clone())
+            .ok_or_else(|| {
+                error(
+                    "jumpserver_auth_expired",
+                    "JumpServer 登录已失效，请重新登录。",
+                )
+            })?;
         // Reuse a non-secret identity, never a grant or transport.
         let key = state
             .targets
@@ -556,7 +602,7 @@ impl JumpServerManager {
             .map(|(id, _)| id.clone())
             .unwrap_or_else(|| format!("jms:{}", nonce()));
         state.targets.insert(key.clone(), target.clone());
-        Ok(source_profile(&key, &target, &login.name))
+        Ok(source_profile(&key, &target, &name))
     }
     pub fn source(&self, id: &str) -> AppResult<SshProfile> {
         let t = self.lock()?.targets.get(id).cloned().ok_or_else(|| {
@@ -572,18 +618,7 @@ impl JumpServerManager {
         let target = self.lock()?.targets.get(id).cloned().ok_or_else(invalid)?;
         let login = self.login_context(&target.profile_id, &target.generation)?;
         let detail = login.api.detail(&target.asset_id).await?;
-        if detail["is_active"].as_bool() == Some(false) {
-            return Err(error("jumpserver_permission_denied", "此资产已禁用。"));
-        }
-        let account = api::accounts(&detail)?
-            .into_iter()
-            .find(|a| a.alias == target.account_alias && a.supported)
-            .ok_or_else(|| {
-                error(
-                    "jumpserver_permission_denied",
-                    "此账号未授权或需要手动凭据，请在官方 Web 检查。",
-                )
-            })?;
+        let account = authorized_account(&detail, &target.account_alias)?;
         let grant = login.api.grant(&target.asset_id, &account.alias).await?;
         self.check(&target.profile_id, &login)?;
         let mut profile = source_profile(id, &target, &login.name);
@@ -625,6 +660,21 @@ impl JumpServerManager {
         Ok(())
     }
 }
+fn authorized_account(detail: &serde_json::Value, alias: &str) -> AppResult<JumpServerAccount> {
+    if detail["is_active"].as_bool() == Some(false) {
+        return Err(error("jumpserver_permission_denied", "此资产已禁用。"));
+    }
+    api::accounts(detail)?
+        .into_iter()
+        .find(|a| a.alias == alias && a.supported)
+        .ok_or_else(|| {
+            error(
+                "jumpserver_permission_denied",
+                "此账号未授权或需要手动凭据，请在官方 Web 检查。",
+            )
+        })
+}
+
 fn source_profile(id: &str, target: &JumpServerTarget, platform: &str) -> SshProfile {
     SshProfile {
         connection_type: Default::default(),
@@ -744,6 +794,75 @@ mod tests {
         assert!(m.source(&a.id).is_err());
         assert!(m.register_target(target("asset-a")).is_err());
     }
+    #[tokio::test]
+    async fn assistant_resolves_only_authorized_targets_before_approval() {
+        let detail = serde_json::json!({
+            "id":"asset-a", "org_id":"org-a", "name":"Application server", "is_active":true,
+            "permed_protocols":["ssh"],
+            "permed_accounts":[
+                {"alias":"deploy-alias","name":"Deploy","username":"deploy","has_secret":true},
+                {"alias":"@INPUT","name":"Manual","username":"","has_secret":false}
+            ]
+        });
+        let (url, server) = password_auth::tests::fixture(vec![
+            (200, detail.clone(), vec![]),
+            (200, detail, vec![]),
+            (401, serde_json::json!({}), vec![]),
+        ])
+        .await;
+        let manager = JumpServerManager::default();
+        manager.lock().unwrap().logins.insert(
+            "platform".into(),
+            Arc::new(Login {
+                api: Api::test_anonymous(url).with_bearer(Zeroizing::new("mock-bearer".into())),
+                identity: JumpServerIdentity {
+                    user_id: "user-a".into(),
+                    username: "operator".into(),
+                    org_id: "org-a".into(),
+                    generation: "generation-a".into(),
+                },
+                name: "Platform".into(),
+            }),
+        );
+
+        let target = manager
+            .resolve_ssh_target("platform", "generation-a", "asset-a", "deploy-alias")
+            .await
+            .unwrap();
+        assert_eq!(target.asset_name, "Application server");
+        assert_eq!(target.account_label, "deploy");
+        assert!(manager.lock().unwrap().targets.is_empty());
+        let denied = manager
+            .resolve_ssh_target("platform", "generation-a", "asset-a", "@INPUT")
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(denied.code, "jumpserver_permission_denied");
+        let expired = manager
+            .resolve_ssh_target("platform", "generation-a", "asset-a", "deploy-alias")
+            .await;
+        assert!(matches!(expired, Err(error) if error.code == "jumpserver_auth_expired"));
+        assert!(
+            !manager
+                .invalidate_identity("platform", "older-generation")
+                .unwrap()
+        );
+        assert!(manager.identity("platform").unwrap().is_some());
+        assert!(
+            manager
+                .invalidate_identity("platform", "generation-a")
+                .unwrap()
+        );
+        assert!(manager.identity("platform").unwrap().is_none());
+        assert!(manager.register_target(target).is_err());
+
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        for request in requests {
+            assert!(request.starts_with("GET /api/v1/perms/users/my/assets/asset-a/"));
+        }
+    }
+
     fn pending_fixture(manager: &JumpServerManager) -> Arc<PendingLogin> {
         let profile:JumpServerProfile=serde_json::from_value(serde_json::json!({"id":"platform","name":"test","coreUrl":"https://example.invalid/","authKind":"password","username":"alice","orgId":"org-a","hasCredential":false})).unwrap();
         let pending = Arc::new(PendingLogin {

@@ -183,6 +183,7 @@ pub fn tool_defs() -> Vec<Tool> {
                 "additionalProperties": false
             })),
     ];
+    tools.extend(super::jumpserver::tool_defs());
     tools.extend(crate::browser::ai::tool_defs());
     tools
 }
@@ -193,6 +194,7 @@ pub fn tool_needs_approval(tool_name: &str) -> bool {
         tool_name,
         "run_command"
             | "open_ssh_session"
+            | "open_jumpserver_asset"
             | "write_terminal"
             | "browser_open"
             | "browser_read"
@@ -340,6 +342,7 @@ pub async fn execute_tool(
 ) -> (String, bool) {
     match tool_name {
         "list_servers" => execute_list_servers(state),
+        "list_jumpserver_platforms" => super::jumpserver::list_platforms(state),
         "list_terminal_sessions" => match state.sessions.list_ai_sessions(conversation) {
             Ok(sessions) => (json!({"sessions": sessions.into_iter().map(|session| json!({
                 "session_id": session.id, "name": session.title, "profile_id": session.profile_id, "kind": session.kind, "status": session.status, "background": state.sessions.is_background(&session.id),
@@ -657,6 +660,7 @@ mod tests {
     #[test]
     fn opening_an_ssh_session_requires_explicit_approval() {
         assert!(tool_needs_approval("open_ssh_session"));
+        assert!(tool_needs_approval("open_jumpserver_asset"));
         assert!(tool_needs_approval("run_command"));
         assert!(tool_needs_approval("write_terminal"));
         assert!(!tool_needs_approval("list_terminal_sessions"));

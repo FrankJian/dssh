@@ -12,6 +12,9 @@ import type { TerminalSession } from "../models";
 import { AiBackgroundSessions } from "./AiBackgroundSessions";
 import type { AssistantDockPosition } from "../app/assistantDock";
 import { AiToolbarMenu } from "./AiToolbarMenu";
+import { JumpServerLogin } from "../jumpserver/JumpServerLogin";
+import type { JumpServerProfile } from "../models/jumpserver";
+import { listJumpServerProfiles } from "../services/jumpserverService";
 
 interface AiChatProps {
   config: AiConfig;
@@ -50,6 +53,7 @@ export function AiChat({
   const draft = conversation?.draft ?? "";
   const resetting = conversation ? chat.resetting.includes(conversation.id) : false;
   const isRunning = conversation ? chat.running.includes(conversation.id) : false;
+  const turns = useMemo(() => groupChatTurns(items ?? []), [items]);
   const selection = conversation?.selection;
   const selectedProvider = providers.find((provider) => provider.id === selection?.providerId);
   const selectedModel = selectedProvider?.models.find((model) => model.id === selection?.model);
@@ -81,7 +85,7 @@ export function AiChat({
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [items, conversation?.id]);
+  }, [items, conversation?.id, isRunning]);
 
   const canSend = Boolean(conversation && chat.eventsReady && isConfigured && isHistoryReady && !locked && !isRunning && !resetting && draft.trim());
 
@@ -180,10 +184,11 @@ export function AiChat({
           <AiEmptyState isConfigured={isConfigured} locked={locked} onOpenConfig={onOpenConfig} />
         ) : (
           <div className="ai-chat__messages">
-            {items.map((item) => (
-              <ChatItemView
-                item={item}
-                key={item.id}
+            {turns.map((turn, index) => (
+              <ChatTurnView
+                items={turn}
+                key={turn[0].id}
+                running={isRunning && index === turns.length - 1}
                 onAnswerQuestion={answerQuestion}
                 onApprove={approve}
               />
@@ -340,14 +345,59 @@ function AiEmptyState({
   );
 }
 
+function groupChatTurns(items: ChatItem[]): ChatItem[][] {
+  const turns: ChatItem[][] = [];
+  for (const item of items) {
+    const current = turns[turns.length - 1];
+    if (!current || item.type === "user") turns.push([item]);
+    else current.push(item);
+  }
+  return turns;
+}
+
+function isProcessItem(item: ChatItem) {
+  return item.type === "tool" || (item.type === "assistant" && !item.final);
+}
+
+interface ChatItemActions {
+  onAnswerQuestion: (callId: string, answer: AiQuestionAnswer) => void;
+  onApprove: (callId: string, approved: boolean) => void;
+}
+
+function ChatTurnView({ items, running, ...actions }: ChatItemActions & {
+  items: ChatItem[];
+  running: boolean;
+}) {
+  const renderItem = (item: ChatItem) => <ChatItemView key={item.id} item={item} {...actions} />;
+  if (running) return <>{items.map(renderItem)}</>;
+
+  const process = items.filter(isProcessItem);
+  const visible = items.filter((item) => !isProcessItem(item));
+  const hasOutcome = visible.some((item) => item.type !== "user");
+  return (
+    <>
+      {visible.filter((item) => item.type === "user").map(renderItem)}
+      {process.length > 0 ? (
+        <details className="ai-turn-process">
+          <summary>
+            <Icon name="chevron-right" height="14" width="14" />
+            <span>查看过程</span>
+          </summary>
+          <div className="ai-turn-process__items">{process.map(renderItem)}</div>
+        </details>
+      ) : null}
+      {visible.filter((item) => item.type !== "user").map(renderItem)}
+      {!hasOutcome && <div className="ai-turn-process__status">本轮未生成最终答复。</div>}
+    </>
+  );
+}
+
 function ChatItemView({
   item,
   onAnswerQuestion,
   onApprove,
-}: {
+}: ChatItemActions & {
   item: ChatItem;
-  onAnswerQuestion: (callId: string, answer: AiQuestionAnswer) => void;
-  onApprove: (callId: string, approved: boolean) => void;
 }) {
   if (item.type === "user") {
     return (
@@ -392,6 +442,15 @@ function ToolCardView({
   const label = TOOL_LABELS[item.toolName] ?? item.toolName;
   const browserTool = item.toolName.startsWith("browser_");
   const command = useMemo(() => extractCommand(item.args), [item.args]);
+  const jumpserverLogin = item.toolName === "jumpserver_login" && typeof item.args.platformId === "string"
+    ? { id: item.args.platformId, name: typeof item.args.platformName === "string" ? item.args.platformName : "" }
+    : null;
+  const target = item.args.jumpserverTarget;
+  const jumpserverTarget = isRecord(target) && typeof target.platform === "string"
+    && typeof target.asset === "string" && typeof target.assetId === "string"
+    && typeof target.account === "string" && typeof target.accountAlias === "string"
+    ? { label: `${target.platform} / ${target.asset} · ${target.account || target.accountAlias}`, id: target.assetId }
+    : null;
   const sshConnection = useMemo(() => extractSshConnection(item.args), [item.args]);
   const terminalInput = item.toolName === "write_terminal" && typeof item.args.input === "string"
     ? { input: item.args.input, terminal: typeof item.args.terminal === "string" ? item.args.terminal : "当前终端", sessionId: typeof item.args.session_id === "string" ? item.args.session_id : "" }
@@ -415,14 +474,17 @@ function ToolCardView({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <Icon name={browserTool ? "globe" : item.toolName === "open_ssh_session" ? "ssh" : "terminalTool"} height="15" width="15" />
+        <Icon name={browserTool ? "globe" : ["open_ssh_session", "open_jumpserver_asset", "jumpserver_login"].includes(item.toolName) ? "ssh" : "terminalTool"} height="15" width="15" />
         <span className="ai-tool__name">{label}</span>
-        {terminalInput ? <span className="ai-tool__preview">{terminalInput.terminal} · {terminalInput.input} ↵</span> : sshConnection ? (
+        {terminalInput ? <span className="ai-tool__preview">{terminalInput.terminal} · {terminalInput.input} ↵</span> : jumpserverTarget ? (
+          <span className="ai-tool__preview">{jumpserverTarget.label}</span>
+        ) : sshConnection ? (
           <span className="ai-tool__preview">{sshConnection.username}@{sshConnection.host}:{sshConnection.port}</span>
-        ) : userQuestion ? <span className="ai-tool__preview">{userQuestion.question}</span>
+        ) : jumpserverLogin ? <span className="ai-tool__preview">{jumpserverLogin.name}</span>
+          : userQuestion ? <span className="ai-tool__preview">{userQuestion.question}</span>
           : command ? <span className="ai-tool__preview">{command}</span> : null}
         <span className={`ai-tool__status ai-tool__status--${item.status}`}>
-          {STATUS_LABELS[item.status]}
+          {jumpserverLogin && needsApproval ? "等待登录" : STATUS_LABELS[item.status]}
         </span>
         {!needsApproval && hasDetails ? (
           <Icon
@@ -436,7 +498,7 @@ function ToolCardView({
       {expanded ? (
         <>
           {browserTool ? <pre className="ai-tool__command">{JSON.stringify(item.args, null, 2)}</pre> : null}
-          {terminalInput ? <pre className="ai-tool__command">{terminalInput.input}{"\n↵ 回车"}</pre> : !userQuestion && command ? <pre className="ai-tool__command">{command}</pre> : null}
+          {terminalInput ? <pre className="ai-tool__command">{terminalInput.input}{"\n↵ 回车"}</pre> : !userQuestion && !jumpserverTarget && command ? <pre className="ai-tool__command">{command}</pre> : null}
           {userQuestion ? (
             <UserQuestionChoices
               answered={!questionInProgress || item.result !== null}
@@ -445,13 +507,21 @@ function ToolCardView({
               onAnswer={onAnswerQuestion}
             />
           ) : null}
-          {needsApproval ? (
+          {needsApproval && jumpserverLogin ? (
+            <JumpServerLoginCard
+              profileId={jumpserverLogin.id}
+              onReady={() => onApprove(item.id, true)}
+              onCancel={() => onApprove(item.id, false)}
+            />
+          ) : needsApproval ? (
             <div className="ai-tool__approval">
               <span className="ai-tool__approval-hint">
                 {browserTool
                   ? item.toolName === "browser_read" ? "是否允许将此页面的可见正文和元素发送给当前 AI 模型？" : "是否允许执行以上浏览器操作？点击可能提交表单或产生外部副作用。"
                   : terminalInput
                   ? `是否允许向终端“${terminalInput.terminal}”（${terminalInput.sessionId}）输入以上内容并按回车？`
+                  : jumpserverTarget
+                  ? `是否允许在后台直连「${jumpserverTarget.label}」？资产 ID：${jumpserverTarget.id}`
                   : sshConnection
                   ? `是否允许在后台建立 SSH 连接“${sshConnection.name}”（${sshConnection.username}@${sshConnection.host}:${sshConnection.port}）？`
                   : "是否允许执行该命令？"}
@@ -479,6 +549,35 @@ function ToolCardView({
           {item.result ? <pre className="ai-tool__result">{item.result}</pre> : null}
         </>
       ) : null}
+    </div>
+  );
+}
+
+function JumpServerLoginCard({ profileId, onReady, onCancel }: {
+  profileId: string;
+  onReady: () => void;
+  onCancel: () => void;
+}) {
+  const [profile, setProfile] = useState<JumpServerProfile | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    void listJumpServerProfiles().then((profiles) => {
+      if (!live) return;
+      const current = profiles.find((entry) => entry.id === profileId);
+      if (current) setProfile(current);
+      else setError("该 JumpServer 平台已被移除。");
+    }).catch((cause: unknown) => {
+      if (live) setError(cause instanceof Error ? cause.message : "无法加载 JumpServer 配置。");
+    });
+    return () => { live = false; };
+  }, [profileId]);
+
+  if (profile) return <JumpServerLogin profile={profile} onReady={onReady} onCancel={onCancel} />;
+  return (
+    <div className="ai-tool__approval">
+      <span className="ai-tool__approval-hint" role={error ? "alert" : "status"}>{error || "正在加载 JumpServer 登录…"}</span>
+      <Button onClick={onCancel}>取消</Button>
     </div>
   );
 }
@@ -580,6 +679,11 @@ const TOOL_LABELS: Record<string, string> = {
   browser_navigate: "浏览器跳转",
   browser_interact: "操作浏览器页面",
   list_servers: "列出服务器",
+  list_jumpserver_platforms: "列出 JumpServer 平台",
+  jumpserver_login: "登录 JumpServer",
+  search_jumpserver_assets: "搜索 JumpServer 资产",
+  list_jumpserver_accounts: "查询资产授权账号",
+  open_jumpserver_asset: "直连 JumpServer 资产",
   run_command: "执行命令",
   open_ssh_session: "后台 SSH 连接",
   control_app: "应用快捷操作",

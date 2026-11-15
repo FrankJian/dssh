@@ -54,9 +54,23 @@ function Platform({ profile, onTerminal, onEdit, onDelete }: { profile: JumpServ
   const [confirmLogout, setConfirmLogout] = useState(false);
   useEffect(() => {
     let live = true;
-    void jumpServerIdentity(profile.id).then((i) => { if (live) setIdentity(i); }).catch((e: unknown) => { if (live) setError(message(e)); }).finally(() => { if (live) setChecking(false); });
-    const listener = listen<string>("jumpserver://logout", (e) => { if (live && e.payload === profile.id) setIdentity(null); });
-    return () => { live = false; void listener.then((u) => u()); };
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void jumpServerIdentity(profile.id)
+        .then((value) => { if (live && revision === current) setIdentity(value); })
+        .catch((e: unknown) => { if (live && revision === current) setError(message(e)); })
+        .finally(() => { if (live && revision === current) setChecking(false); });
+    };
+    const listeners = [
+      listen<string>("jumpserver://identity-changed", (e) => { if (live && e.payload === profile.id) refresh(); }),
+      listen<string>("jumpserver://logout", (e) => { if (live && e.payload === profile.id) refresh(); }),
+    ];
+    void Promise.allSettled(listeners).then(() => { if (live) refresh(); });
+    return () => {
+      live = false;
+      for (const listener of listeners) void listener.then((unlisten) => unlisten(), () => undefined);
+    };
   }, [profile.id]);
   async function logout() {
     setLoggingOut(true); setError("");

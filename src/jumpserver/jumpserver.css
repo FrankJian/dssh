@@ -24,6 +24,8 @@
 .jumpserver__empty { margin:auto; text-align:center; padding:var(--space-6); color:var(--text-muted); max-width:560px; }
 .jumpserver__empty h2 { margin-top:var(--space-4); color:var(--text-strong); }
 .jumpserver__login { width:min(100%, 480px); margin:auto; padding:var(--space-6); overflow:auto; }
+.jumpserver__login--inline { width:100%; margin:0; padding:var(--space-3); overflow:visible; }
+.jumpserver__login--inline p { overflow-wrap:anywhere; }
 .jumpserver__login p, .jumpserver__selection { color:var(--text-muted); line-height:1.6; }
 .jumpserver__selection { padding:var(--space-3); margin:0; border-top:1px solid var(--border-subtle); }
 .jumpserver__actions { padding:var(--space-4) 0; border:0; }

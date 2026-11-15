@@ -9177,6 +9177,38 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   gap: 12px;
 }
 
+.ai-turn-process {
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.ai-turn-process > summary {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ai-turn-process > summary::-webkit-details-marker { display: none; }
+.ai-turn-process > summary:hover { background: var(--bg-hover); color: var(--text-strong); }
+.ai-turn-process > summary:focus-visible { outline: 1px solid var(--accent); }
+.ai-turn-process[open] > summary > svg { transform: rotate(90deg); }
+
+.ai-turn-process__items {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-inline-start: var(--space-2);
+  border-inline-start: 1px solid var(--border-subtle);
+}
+
+.ai-turn-process__status { color: var(--text-muted); }
+
 .ai-chat__empty {
   display: flex;
   min-height: 100%;
@@ -11307,9 +11339,9 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   color: var(--text-strong);
   font: inherit;
   font-size: 13px;
-  cursor: pointer;
   min-width: 0;
 }
+button.ai-settings__provider { cursor: pointer; }
 .ai-settings__provider > .icon { color: var(--text-muted); }
 .ai-settings__provider > span {
   overflow: hidden;
@@ -11317,10 +11349,10 @@ button.remote-file-tree__row--root[data-local-drop-target="true"] {
   white-space: nowrap;
 }
 .ai-settings__provider small { grid-column: 2; color: var(--text-muted); }
-.ai-settings__provider:not(:disabled):hover { background: var(--bg-hover); }
+button.ai-settings__provider:not(:disabled):hover { background: var(--bg-hover); }
 .ai-settings__provider.is-selected { background: var(--bg-selected); color: var(--accent-strong); font-weight: 600; }
 .ai-settings__provider.is-selected > .icon { color: inherit; }
-.ai-settings__provider:disabled { opacity: 0.65; cursor: default; }
+button.ai-settings__provider:disabled { opacity: 0.65; cursor: default; }
 .ai-settings__provider:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ai-settings__editor { container: ai-service-editor / inline-size; padding: var(--space-3); min-width: 0; }
 .ai-settings__service-name { margin: 0; color: var(--text-strong); font-size: 14px; overflow-wrap: anywhere; }

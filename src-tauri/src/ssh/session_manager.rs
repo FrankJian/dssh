@@ -880,6 +880,18 @@ impl SessionManager {
             .collect())
     }
 
+    pub(crate) fn session_ids_for_profiles(
+        &self,
+        profile_ids: &[String],
+    ) -> AppResult<Vec<String>> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        Ok(sessions
+            .iter()
+            .filter(|(_, handle)| profile_ids.contains(&handle.profile_id))
+            .map(|(id, _)| id.clone())
+            .collect())
+    }
+
     pub fn is_background(&self, id: &str) -> bool {
         self.sessions
             .lock()

@@ -22,6 +22,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
   const draft = editedProvider ?? providers.find((provider) => provider.id === activeProviderId) ?? providers[0] ?? null;
   const savedProvider = providers.find((provider) => provider.id === draft?.id);
   const addingService = Boolean(draft && !savedProvider);
+  const showServiceList = providers.length > 0 || addingService;
   const previousServiceId = useRef<string | null>(null);
   const presetId = draft ? inferPresetId(draft) : "custom";
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
@@ -124,8 +125,14 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
       </header>
       {aiConfig.error ? <div className="ai-provider__error" role="alert">{aiConfig.error} <Button onClick={aiConfig.reload} variant="ghost">重试</Button></div> : null}
       {!aiConfig.isReady ? (!aiConfig.error && <p className="ai-settings__empty" role="status">正在加载模型配置…</p>) : (
-        <div className={`ai-settings__workspace${providers.length ? " ai-settings__workspace--has-services" : ""}`}>
-          {providers.length ? <nav className="ai-settings__sidebar" aria-label="模型服务列表">
+        <div className={`ai-settings__workspace${showServiceList ? " ai-settings__workspace--has-services" : ""}`}>
+          {showServiceList ? <nav className="ai-settings__sidebar" aria-label="模型服务列表">
+            {addingService ? (
+              <div className="ai-settings__provider is-selected" aria-current="true">
+                <Icon name="plus" height="16" width="16" />
+                <span>新建服务</span>
+              </div>
+            ) : null}
             {providers.map((provider) => (
               <button type="button" key={provider.id} disabled={busy}
                 aria-pressed={draft?.id === provider.id}
@@ -157,7 +164,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                 </div>
                 {presetId === "custom" ? <>
                 <label className="field">显示名称
-                  <input value={draft.label} onChange={(e) => patch({ label: e.currentTarget.value })} />
+                  <input placeholder="自定义 API" value={draft.label} onChange={(e) => patch({ label: e.currentTarget.value })} />
                 </label>
                 <label className="field">API 协议
                   <select className="settings-select" value={draft.kind} onChange={(e) => patch({ kind: e.currentTarget.value as AiProviderKind })}>

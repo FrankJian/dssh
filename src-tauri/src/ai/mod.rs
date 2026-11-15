@@ -19,6 +19,7 @@ mod context;
 pub(crate) mod diagnostics;
 mod failure;
 pub mod headers;
+mod jumpserver;
 mod output_wait;
 pub mod providers;
 mod reasoning;

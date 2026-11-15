@@ -101,7 +101,7 @@ export function createEmptyProvider(preset?: EndpointPreset): AiProvider {
   return {
     id: `ai-provider-${crypto.randomUUID()}`,
     presetId: preset?.id ?? "custom",
-    label: preset?.label ?? "自定义 API",
+    label: preset?.label ?? "",
     baseUrl: preset?.baseUrl ?? "",
     model: "",
     proxyUrl: "",

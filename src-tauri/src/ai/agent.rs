@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::{collections::HashSet, future::Future, sync::atomic::Ordering};
 
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ToolResponse};
 use serde_json::Value;
@@ -14,6 +14,7 @@ use crate::{
         },
     },
     app::AppState,
+    error::{AppError, AppResult},
     models::ai::{AiChatMessage, AiEvent, AiProtocol, AiSendMessageRequest},
 };
 
@@ -35,7 +36,8 @@ const SYSTEM_PROMPT: &str = "你是内嵌于 dssh（一款跨平台 SSH 管理�
 先用此工具读取终端内容，再作答，无需要求用户手动复制粘贴。\n\
 - list_terminal_sessions：查找已经打开的交互终端的真实 session_id。\n\
 - write_terminal：经用户确认，向现有交互终端输入一行并回车，返回后续输出。\n\n\
-JumpServer / KoKo 交互流程：优先使用本对话的后台会话，缺少会话时先 open_ssh_session；直接观察其返回的输出，必要时才 read_terminal，识别 Opt>、资产搜索或账号选择提示；\
+JumpServer 资产直连：用户要求查询或连接 JumpServer 资产时，优先用 list_jumpserver_platforms 查平台和 API 登录状态。目标平台不明确时先询问用户；确定平台后用 search_jumpserver_assets 搜索名称或 IP，再用 list_jumpserver_accounts 查授权账号。仅在目标和账号明确时调用 open_jumpserver_asset，等待用户确认。后续通过返回的 session_id 读写目标终端。资产工具会在目标平台未登录或认证过期时显示原生登录表单，登录后继续原操作。取消登录后结束该平台操作，无需再次查询或索要凭据。若用户仅配置了 SSH 网关或明确要求使用已有网关终端，可使用以下交互方式。直连被拒绝时报告原因，不自动改走菜单绕过限制。\n\
+JumpServer / KoKo 菜单流程：优先使用本对话的后台会话，缺少会话时先 open_ssh_session；直接观察其返回的输出，必要时才 read_terminal，识别 Opt>、资产搜索或账号选择提示；\
 目标已明确就用 write_terminal 输入该 IP 并回车，不要要求用户自己输入。\
 如果返回多个候选，先核对目标 IP / 名称，再输入屏幕实际显示的编号；有多个账号且用户没有指定时用 ask_user_question 询问。\
 每次只提交一步，观察工具返回的新输出，再决定下一步；不要重复读取刚返回的同一段输出。仅当输出不足或仍在连接时用 read_terminal(wait_ms) 等待。\
@@ -59,6 +61,7 @@ open_ssh_session 返回真实后台 session_id，后续显式使用此 ID 读取
 6. 依据工具返回的真实结果作答，不要编造输出。\n\
 7. 对已明确要求且可使用工具完成的操作，执行相应工具并遵守确认流程；需要用户澄清时，先提问并等待回答。\n\n\
 输出格式（务必遵守，让回答清晰易读）：\n\
+- 完成工具操作后，在最终答复中直接回答本轮问题，简要总结已确认的结果、关键数据与未完成事项。最终答复需能独立阅读，省略执行步骤和重复的工具输出。\n\
 - 全部使用规范的 Markdown，回答会被渲染，不要把整段回答塞进代码块。\n\
 - 结构化、多字段或可对比的数据（如资源使用、进程列表、磁盘分区、配置项等）\
 优先用 Markdown 表格呈现，让关键指标一目了然。\n\
@@ -264,6 +267,11 @@ async fn drive(
         model_config.max_output_tokens,
     );
     let mut context_retries = 0u32;
+    let mut jumpserver_login = JumpServerLoginFlow {
+        window,
+        run_id: &run_id,
+        prompted: HashSet::new(),
+    };
 
     for _step in 0..max_steps {
         if handles.cancel.load(Ordering::SeqCst) {
@@ -374,10 +382,40 @@ async fn drive(
                     &request.conversation_id,
                 )
             });
-            let needs_approval =
-                tool_needs_approval(&tool_call.fn_name) && !matches!(terminal_input, Some(Err(_)));
+            let jumpserver_target = if tool_call.fn_name == "open_jumpserver_asset" {
+                Some(
+                    jumpserver_login
+                        .request(state, handles, &tool_call.fn_arguments, |generation| {
+                            super::jumpserver::prepare_target(
+                                state,
+                                &tool_call.fn_arguments,
+                                generation,
+                            )
+                        })
+                        .await,
+                )
+            } else {
+                None
+            };
+            if handles.cancel.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            let needs_approval = tool_needs_approval(&tool_call.fn_name)
+                && !matches!(terminal_input, Some(Err(_)))
+                && !matches!(jumpserver_target, Some(Err(_)));
             let display_args = if tool_call.fn_name == "open_ssh_session" {
                 open_ssh_session_confirmation_args(state, &tool_call.fn_arguments)
+            } else if let Some(Ok(target)) = &jumpserver_target {
+                let platform = state
+                    .profiles
+                    .get_jumpserver_profile(&target.profile_id)
+                    .map(|(profile, _)| profile.name)
+                    .unwrap_or_else(|_| target.profile_id.clone());
+                serde_json::json!({"jumpserverTarget": {
+                    "platform": platform, "asset": target.asset_name,
+                    "assetId": target.asset_id, "account": target.account_label,
+                    "accountAlias": target.account_alias,
+                }})
             } else if tool_call.fn_name.starts_with("browser_") {
                 crate::browser::ai::confirmation_args(
                     app,
@@ -435,6 +473,43 @@ async fn drive(
                     },
                     Err(error) => (error, true),
                 }
+            } else if let Some(target) = jumpserver_target {
+                let result = match target
+                    .and_then(|target| super::jumpserver::register_target(state, target))
+                    .map_err(|error| error.message)
+                {
+                    Ok(profile) => {
+                        super::background::open_profile(
+                            app,
+                            state,
+                            profile,
+                            &request.conversation_id,
+                            handles,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(value) => (value.to_string(), false),
+                    Err(error) => (error, true),
+                }
+            } else if matches!(
+                tool_call.fn_name.as_str(),
+                "search_jumpserver_assets" | "list_jumpserver_accounts"
+            ) {
+                super::jumpserver::observation(
+                    jumpserver_login
+                        .request(state, handles, &tool_call.fn_arguments, |generation| {
+                            super::jumpserver::discover(
+                                state,
+                                &tool_call.fn_name,
+                                &tool_call.fn_arguments,
+                                generation,
+                            )
+                        })
+                        .await,
+                )
             } else if tool_call.fn_name == "open_ssh_session" {
                 crate::ai::background::open(
                     app,
@@ -488,6 +563,9 @@ async fn drive(
                   _ = handles.cancel_notify.notified() => return Ok(()),
                 }
             };
+            if handles.cancel.load(Ordering::SeqCst) {
+                return Ok(());
+            }
             emit(
                 window,
                 AiEvent::ToolResult {
@@ -511,6 +589,99 @@ async fn drive(
         },
     );
     Ok(())
+}
+
+struct JumpServerLoginFlow<'a> {
+    window: &'a WebviewWindow,
+    run_id: &'a str,
+    prompted: HashSet<String>,
+}
+
+impl JumpServerLoginFlow<'_> {
+    async fn request<T, F>(
+        &mut self,
+        state: &AppState,
+        handles: &mut RunHandles,
+        args: &Value,
+        mut request: impl FnMut(String) -> F,
+    ) -> AppResult<T>
+    where
+        F: Future<Output = AppResult<T>>,
+    {
+        let platform_id = super::jumpserver::field(args, "platform_id")?;
+        let cancelled = || AppError::new("jumpserver_cancelled", "JumpServer 登录或查询已取消。");
+        let mut retried = false;
+        loop {
+            super::jumpserver::require_unlocked(state)?;
+            if handles.cancel.load(Ordering::SeqCst) {
+                return Err(cancelled());
+            }
+            let identity = match state.jumpserver.identity(platform_id)? {
+                Some(identity) => identity,
+                None => {
+                    if !self.prompted.insert(platform_id.to_owned()) {
+                        return Err(cancelled());
+                    }
+                    let (profile, _) = state.profiles.get_jumpserver_profile(platform_id)?;
+                    let call_id = format!("jumpserver-login-{:032x}", rand::random::<u128>());
+                    emit(
+                        self.window,
+                        AiEvent::ToolCall {
+                            run_id: self.run_id.into(),
+                            call_id: call_id.clone(),
+                            tool_name: "jumpserver_login".into(),
+                            args: serde_json::json!({"platformId": profile.id, "platformName": profile.name}),
+                            needs_approval: true,
+                        },
+                    );
+                    let result = match wait_for_approval(handles, &call_id).await {
+                        Approval::Approved => super::jumpserver::require_unlocked(state)
+                            .and_then(|()| state.jumpserver.identity(platform_id))
+                            .and_then(|identity| identity.ok_or_else(cancelled)),
+                        Approval::Rejected | Approval::Cancelled => Err(cancelled()),
+                    };
+                    emit(
+                        self.window,
+                        AiEvent::ToolResult {
+                            run_id: self.run_id.into(),
+                            call_id,
+                            tool_name: "jumpserver_login".into(),
+                            result: match &result {
+                                Ok(_) => "已登录 JumpServer，继续当前操作。".into(),
+                                Err(error) => error.message.clone(),
+                            },
+                            is_error: result.is_err(),
+                        },
+                    );
+                    result?
+                }
+            };
+            let generation = identity.generation;
+            let result = tokio::select! {
+                result = request(generation.clone()) => result,
+                _ = handles.cancel_notify.notified() => return Err(cancelled()),
+            };
+            if result
+                .as_ref()
+                .is_err_and(|error| error.code == "jumpserver_auth_expired")
+            {
+                if state
+                    .jumpserver
+                    .invalidate_identity(platform_id, &generation)?
+                {
+                    let _ = self
+                        .window
+                        .app_handle()
+                        .emit("jumpserver://identity-changed", platform_id);
+                }
+                if !retried {
+                    retried = true;
+                    continue;
+                }
+            }
+            return result;
+        }
+    }
 }
 
 async fn wait_for_approval(handles: &mut RunHandles, call_id: &str) -> Approval {

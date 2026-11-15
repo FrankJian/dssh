@@ -72,6 +72,9 @@ pub async fn jumpserver_login(
             "应用已锁定，登录已取消。",
         ));
     }
+    if matches!(&result, JumpServerLoginResult::Ready { .. }) {
+        let _ = app.emit("jumpserver://identity-changed", &id);
+    }
     Ok(result)
 }
 #[tauri::command]
@@ -94,6 +97,9 @@ pub async fn jumpserver_verify_otp(
             "jumpserver_locked",
             "应用已锁定，登录已取消。",
         ));
+    }
+    if matches!(&result, JumpServerLoginResult::Ready { .. }) {
+        let _ = app.emit("jumpserver://identity-changed", &id);
     }
     Ok(result)
 }
@@ -197,10 +203,8 @@ pub async fn jumpserver_logout(app: AppHandle, webview: Webview, id: String) -> 
     // Attempt every close even if one worker needs more time. Keep the IDs for
     // a retry until all workers acknowledge teardown.
     let mut failure = None;
-    for session in s.sessions.list_sessions()? {
-        if ids.contains(&session.profile_id)
-            && let Err(error) = s.sessions.close_session(&session.id).await
-        {
+    for session_id in s.sessions.session_ids_for_profiles(&ids)? {
+        if let Err(error) = s.sessions.close_session(&session_id).await {
             failure.get_or_insert(error);
         }
     }
