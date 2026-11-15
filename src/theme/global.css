@@ -179,6 +179,10 @@
   --tool-preview-max-height: 28rem;
   --tool-heading-size: 1.55rem;
   --tool-catalog-heading-size: 1.15rem;
+  --tool-catalog-row-font-size: 14px;
+  --tool-catalog-row-line-height: 1.5;
+  --tool-category-height: 38px;
+  --tool-item-height: 36px;
   --tool-caption-size: .75rem;
   --tool-control-height: 2rem;
   --tool-panel-header-height: 2.75rem;
