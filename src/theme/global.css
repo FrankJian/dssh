@@ -210,6 +210,9 @@
   --tool-code-light-number: #8b5119;
   --tool-code-light-comment: #566f65;
   --tool-code-light-type: #205e83;
+  --tool-qr-bg: #ffffff;
+  --tool-qr-fg: #141a17;
+  --tool-stopwatch-size: 2.5rem;
   --tool-image-bg: #f3f6f2;
   --tool-image-fg: #202b27;
 

@@ -573,3 +573,32 @@ button.tools-workspace__category[data-current="true"] {
     grid-column: 1 / -1;
   }
 }
+
+.tool-stopwatch {
+  padding: var(--space-4);
+  font: 600 var(--tool-stopwatch-size) var(--font-mono);
+}
+
+.tool-stopwatch__laps {
+  margin: 0;
+  padding: var(--space-2) var(--space-6);
+  font-family: var(--font-mono);
+}
+
+.tool-emoji__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tool-symbol-size), 1fr));
+  gap: var(--space-1);
+  padding: var(--space-3);
+}
+
+.tool-emoji__grid .button {
+  height: var(--tool-symbol-size);
+  padding: 0;
+  font-size: var(--tool-heading-size);
+}
+
+.tools-workspace .tool-emoji__empty {
+  padding: var(--space-3);
+  color: var(--text-muted);
+}

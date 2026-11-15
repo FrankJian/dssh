@@ -14,6 +14,7 @@ interface TextToolProps {
   inputLabel?: string;
   inputType?: "text" | "password";
   outputLabel: string;
+  multilineOutput?: boolean;
   example?: string;
   action: string;
   options?: ReactNode;
@@ -22,7 +23,7 @@ interface TextToolProps {
   run: (input: string, other: string) => string | Promise<string>;
 }
 
-export function TextTool({ inputLabel, inputType, outputLabel, example, action, options, resultKey, secondInput, run }: TextToolProps) {
+export function TextTool({ inputLabel, inputType, outputLabel, multilineOutput = Boolean(inputLabel), example, action, options, resultKey, secondInput, run }: TextToolProps) {
   const outputId = useId();
   const [input, setInput] = useState("");
   const [other, setOther] = useState("");
@@ -108,7 +109,7 @@ export function TextTool({ inputLabel, inputType, outputLabel, example, action, 
             </Button>
           }
         >
-          {inputLabel ? (
+          {multilineOutput ? (
             <textarea id={outputId} value={output ?? ""} spellCheck={false} readOnly placeholder="运行后显示结果" />
           ) : (
             <input id={outputId} value={output ?? ""} readOnly placeholder="运行后显示结果" />

@@ -1,4 +1,5 @@
-import { lazy } from "react";
+import { createElement, lazy } from "react";
+import { ADDITIONAL_TOOLS } from "./additionalCatalog";
 
 type DeveloperPages = typeof import("./DeveloperToolPages");
 
@@ -17,6 +18,12 @@ function morePage(name: keyof MorePages) {
     return { default: pages[name] };
   });
 }
+
+const AdditionalToolPage = lazy(() => import("./AdditionalToolPage"));
+const additionalEntries = ADDITIONAL_TOOLS.map((tool) => ({
+  ...tool,
+  component: function LocalToolPage() { return createElement(AdditionalToolPage, { id: tool.id }); },
+}));
 
 export const TOOL_CATALOG = [
   { id: "json-format", label: "JSON 格式化", category: "数据与配置", keywords: "json format minify 压缩 校验 美化", component: lazy(() => import("./JsonFormatTool")) },
@@ -48,6 +55,13 @@ export const TOOL_CATALOG = [
   { id: "random-port", label: "随机端口号", category: "运维", keywords: "random port ephemeral 动态 端口 随机", component: morePage("RandomPortTool") },
   { id: "random-token", label: "随机令牌", category: "编码与生成", keywords: "random token base64url 随机 字符串 令牌", component: morePage("RandomTokenTool") },
   { id: "regex", label: "正则表达式测试", category: "文本与图片", keywords: "regex regexp regular expression pattern 正则 匹配", component: lazy(() => import("./RegexTool")) },
+  ...additionalEntries,
+  { id: "base64-file", label: "文件转 Base64", category: "编码与生成", keywords: "base64 file 文件 编码", component: lazy(() => import("./FileBase64Tool")) },
+  { id: "qr-code", label: "二维码生成", category: "文本与图片", keywords: "qrcode qr code 二维码 扫码 PNG", component: lazy(() => import("./QrTool").then(({ QrTool }) => ({ default: QrTool }))) },
+  { id: "wifi-qr", label: "Wi-Fi 二维码", category: "文本与图片", keywords: "wifi wlan qr code 二维码 无线 网络", component: lazy(() => import("./QrTool").then(({ WifiQrTool }) => ({ default: WifiQrTool }))) },
+  { id: "emoji-picker", label: "Emoji 选择器", category: "文本与图片", keywords: "emoji picker unicode 表情 符号", component: lazy(() => import("./EmojiTool")) },
+  { id: "keycode-info", label: "键盘按键信息", category: "参考与计算", keywords: "keycode keyboard event key code 按键 键盘", component: lazy(() => import("./KeyCodeTool")) },
+  { id: "stopwatch", label: "秒表", category: "参考与计算", keywords: "chronometer stopwatch timer 计时 计次", component: lazy(() => import("./StopwatchTool")) },
 ] as const;
 
 export type ToolId = typeof TOOL_CATALOG[number]["id"];

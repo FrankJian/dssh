@@ -17,6 +17,8 @@ const categoryIcons: Record<ToolCategory, IconName> = {
   "编码与生成": "code",
   "运维": "terminalTool",
   "Web 与认证": "globe",
+  "安全与密码学": "shield",
+  "参考与计算": "gauge",
 };
 const filters = [
   { id: "all", label: "全部" },
