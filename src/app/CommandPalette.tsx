@@ -77,7 +77,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
           <input
             ref={inputRef}
             className="palette__input"
-            placeholder="搜索连接、目录、标签、标签页或动作…"
+            placeholder="搜索连接、标签页、工具或动作…"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);

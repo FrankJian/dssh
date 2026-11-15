@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 
 /**
  * Backend commands reject with a serialized `AppError` (`{ code, message }`)
@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
  * otherwise miss the real reason. Normalize every rejection into an `Error`
  * carrying the backend message so callers can surface it directly.
  */
-export async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+export async function invokeCommand<T>(command: string, args?: InvokeArgs): Promise<T> {
   try {
     return await invoke<T>(command, args);
   } catch (error) {

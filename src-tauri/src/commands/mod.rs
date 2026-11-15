@@ -9,6 +9,7 @@ pub mod profiles;
 pub mod s3;
 pub mod sessions;
 pub mod sftp;
+pub mod tools;
 pub mod workspace;
 
 pub mod browser;

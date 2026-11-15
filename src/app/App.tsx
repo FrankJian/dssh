@@ -1,4 +1,6 @@
-import { DEFAULT_NAVIGATION_ICONS, parseNavigationIcons } from "./navigationPreferences";
+import { TOOL_CATALOG, type ToolId } from "../tools/catalog";
+import { ToolsWorkspace } from "../tools/ToolsWorkspace";
+import { DEFAULT_NAVIGATION_ICONS, isActivityId, parseNavigationIcons } from "./navigationPreferences";
 import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
 import { ArtifactoryWorkspace } from "../artifactory/ArtifactoryWorkspace";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
@@ -150,7 +152,7 @@ interface ForwardTarget {
 
 const SIDEBAR_COLLAPSED_KEY = "dssh.sidebar.collapsed";
 const RIGHT_PANEL_KEY = "dssh.rightPanel";
-const NAVIGATION_ICONS_KEY = "dssh.navigation.icons.v2";
+const NAVIGATION_ICONS_KEY = "dssh.navigation.icons.v3";
 const RIGHT_PANEL_WIDTH_KEY = "dssh.hosttools.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
@@ -195,8 +197,9 @@ function loadRightPanel(): RightPanelId | null {
 function loadNavigationIcons(): NavigationIconId[] {
   try {
     const saved = localStorage.getItem(NAVIGATION_ICONS_KEY);
-    const raw = saved ?? localStorage.getItem("dssh.navigation.icons");
-    return parseNavigationIcons(raw);
+    if (saved !== null) return parseNavigationIcons(saved);
+    const legacy = localStorage.getItem("dssh.navigation.icons.v2") ?? localStorage.getItem("dssh.navigation.icons");
+    return parseNavigationIcons(legacy, true);
   } catch {
     return DEFAULT_NAVIGATION_ICONS;
   }
@@ -226,6 +229,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const closingWindowRef = useRef(false);
 
   const [activeActivity, setActiveActivity] = useState<ActivityId>("sessions");
+  const [toolId, setToolId] = useState<ToolId>("json-format");
+  const [toolsVisited, setToolsVisited] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
   );
@@ -341,10 +346,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     localStorage.setItem(NAVIGATION_ICONS_KEY, JSON.stringify(navigationIcons));
   }, [navigationIcons]);
   useEffect(() => {
-    if (!navigationIcons.includes(activeActivity)) {
-      const fallback = navigationIcons.find(
-        (item): item is ActivityId => item === "sessions" || item === "connections" || item === "sftp" || item === "s3" || item === "artifactory",
-      );
+    if (activeActivity !== "tools" && !navigationIcons.includes(activeActivity)) {
+      const fallback = navigationIcons.find((item) => isActivityId(item) && item !== "tools");
       if (fallback) {
         setActiveActivity(fallback);
         setSidebarCollapsed(false);
@@ -675,6 +678,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const isS3 = activeActivity === "s3";
   const isArtifactory = activeActivity === "artifactory";
   const isConnections = activeActivity === "connections";
+  const isTools = activeActivity === "tools";
   const isSftpActive = activeSftpId != null && sftpTabs.some((tab) => tab.id === activeSftpId);
   const activeSftpTab = sftpTabs.find((tab) => tab.id === activeSftpId) ?? null;
   const openSshProfileIds = new Set(sessions.filter(isOpenSshTerminal).map((session) => session.profileId));
@@ -683,7 +687,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // alive while the user temporarily switches to a terminal or another tab.
   const sftpTabSurfaces = sftpTabs
     .map((tab) => {
-      const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !isArtifactory && !appLock.status?.locked;
+      const isActive = isSftpActive && tab.id === activeSftpId && !isConnections && !isS3 && !isArtifactory && !isTools && !appLock.status?.locked;
       const terminal = tab.asset ? undefined : findSftpTerminal(sessions, tab.profileId, activeSessionId);
       const profile = profiles.find((item) => item.id === tab.profileId);
       const directAsset = profile && jumpServerSftpTarget(profile.username);
@@ -1343,14 +1347,26 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
+  function openTools(id?: ToolId) {
+    if (id) setToolId(id);
+    setToolsVisited(true);
+    setActiveActivity("tools");
+    setZenMode(false);
+    setTerminalFullscreenPaneId(null);
+  }
+
   function handleSelectActivity(next: ActivityId) {
     if (next === activeActivity) {
-      if (next === "connections") {
+      if (next === "connections" || next === "tools") {
         setActiveActivity("sessions");
         setSidebarCollapsed(true);
         return;
       }
       setSidebarCollapsed((collapsed) => !collapsed);
+      return;
+    }
+    if (next === "tools") {
+      openTools();
       return;
     }
     setActiveActivity(next);
@@ -1405,6 +1421,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     if (rightClick === "menu" && target instanceof Element && target.closest(".terminal-view")) {
       return;
     }
+    if (target instanceof Element && target.closest(".tools-workspace textarea, .tools-workspace input")) return;
     event.preventDefault();
   }
 
@@ -1444,7 +1461,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       } else if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
         setIsPaletteOpen((open) => !open);
-      } else if (isTerminalFullscreenShortcut(event)) {
+      } else if (!isTools && isTerminalFullscreenShortcut(event)) {
         event.preventDefault();
         toggleTerminalFullscreen();
       } else if (isFocusModeExitShortcut(event) && terminalFullscreenPaneId) {
@@ -1615,7 +1632,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
-  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isArtifactory && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
+  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isArtifactory && !isTools && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
   const currentWorkspaceTab = workspaceTabs.find((tab) => tab.active);
   function switchWorkspaceTab(step: number) {
     const id = cycleItem(workspaceTabs.map((tab) => tab.id), currentWorkspaceTab?.id ?? null, step);
@@ -1650,9 +1667,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     nextPane: terminalShortcutsAvailable && activePaneLayout ? () => switchPane(1) : undefined,
     previousPane: terminalShortcutsAvailable && activePaneLayout ? () => switchPane(-1) : undefined,
     closePane: terminalShortcutsAvailable && activeSession ? () => handleClosePane(activeSession.id) : undefined,
-    nextTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(1) : undefined,
-    previousTab: workspaceTabs.length > 1 ? () => switchWorkspaceTab(-1) : undefined,
-    closeTab: !isConnections && !isS3 && !isArtifactory && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
+    nextTab: !isTools && workspaceTabs.length > 1 ? () => switchWorkspaceTab(1) : undefined,
+    previousTab: !isTools && workspaceTabs.length > 1 ? () => switchWorkspaceTab(-1) : undefined,
+    closeTab: !isConnections && !isS3 && !isArtifactory && !isTools && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
   }, appLock.status?.locked);
 
   windowCloseRef.current = async () => {
@@ -1741,7 +1758,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   const sidebarContent =
-    sidebarCollapsed || isConnections || isArtifactory ? null : activeActivity === "sftp" ? (
+    sidebarCollapsed || isConnections || isArtifactory || isTools ? null : activeActivity === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
           openSshProfileIds={openSshProfileIds}
           onOpen={handleOpenSftpFromTerminal} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
@@ -1862,7 +1879,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   );
 
   let mainSurface: ReactNode;
-  if (isConnections) {
+  if (isTools) {
+    mainSurface = null;
+  } else if (isConnections) {
     mainSurface = jumpServerOpen ? (
       <JumpServerWorkspace profile={jumpservers.profiles.find((p) => p.id === jumpServerOpen) ?? null}
         loading={jumpservers.loading} error={jumpservers.error}
@@ -2038,6 +2057,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       { id: "act:theme-light", label: "主题：浅色", hint: "外观", icon: "sun", keywords: "theme light", run: () => setThemeMode("light") },
       { id: "act:theme-system", label: "主题：跟随系统", hint: "外观", icon: "system", keywords: "theme system", run: () => setThemeMode("system") },
     ];
+    items.push(
+      { id: "act:tools", label: "打开工具箱", icon: "toolbox", keywords: "tools toolbox", run: () => openTools() },
+      ...TOOL_CATALOG.map((tool): PaletteItem => ({
+        id: `tool:${tool.id}`, label: tool.label, hint: "工具箱", icon: "toolbox",
+        keywords: tool.keywords, run: () => openTools(tool.id),
+      })),
+    );
     items.push(...connectionActionPaletteItems(managedProfiles, { onOpen: connectManagedProfile, onEdit: editManagedProfile }));
     items.push(...connectionGroupPaletteItems(managedProfiles, openConnectionGroup));
     for (const category of SETTINGS_CATEGORIES) {
@@ -2073,7 +2099,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         run: () => void appLock.lock(),
       });
     }
-    if (activeSession) {
+    if (activeSession && !isTools) {
       items.push({
         id: "act:focus-active-terminal",
         label: "聚焦当前终端",
@@ -2329,7 +2355,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                 <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />
               </div>
             )}
-            {isS3 || isConnections || isArtifactory ? null : (
+            {isS3 || isConnections || isArtifactory || isTools ? null : (
               <div className="titlebar__workspace">
                 <WorkspaceTabStrip
                   tabs={workspaceTabs}
@@ -2350,7 +2376,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
               </div>
             )}
             <div className="titlebar__drag" data-tauri-drag-region />
-            {!isS3 && !isConnections && !isArtifactory ? (
+            {!isS3 && !isConnections && !isArtifactory && !isTools ? (
               <>
                 <button
                   className="tab-action titlebar__new-terminal"
@@ -2434,8 +2460,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             />
           )
         }
-        main={<>{mainSurface}{sftpTabSurfaces}{browserTabs.map((tab) => {
-          const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !isArtifactory && !appLock.status?.locked;
+        main={<>{mainSurface}{toolsVisited ? (
+          <ToolsWorkspace active={isTools && !appLock.status?.locked} selected={toolId} onSelect={setToolId} />
+        ) : null}{sftpTabSurfaces}{browserTabs.map((tab) => {
+          const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !isArtifactory && !isTools && !appLock.status?.locked;
           return <div className="browser-tab" hidden={!visible} key={tab.id}><BrowserWorkspace tab={tab} visible={visible} /></div>;
         })}</>}
       />

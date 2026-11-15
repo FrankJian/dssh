@@ -168,6 +168,47 @@
   --tab-content-offset-y: 2px;
   --titlebar-height: 36px;
 
+  /* Toolbox */
+  --tool-catalog-min-width: 12rem;
+  --tool-catalog-max-width: 15.5rem;
+  --tool-catalog-max-stacked-height: 13rem;
+  --tool-content-max-width: 80rem;
+  --tool-page-padding: clamp(var(--space-4), 3vw, calc(var(--space-6) * 2));
+  --tool-editor-height: clamp(13rem, 43vh, 28rem);
+  --tool-editor-compact-height: 12rem;
+  --tool-preview-max-height: 28rem;
+  --tool-heading-size: 1.55rem;
+  --tool-catalog-heading-size: 1.15rem;
+  --tool-caption-size: .75rem;
+  --tool-control-height: 2rem;
+  --tool-panel-header-height: 2.75rem;
+  --tool-menu-min-width: 6rem;
+  --tool-short-input-width: 4.5rem;
+  --tool-symbol-size: 2.75rem;
+  --tool-title-input-width: 9rem;
+  --tool-code-dark-surface: #172220;
+  --tool-code-dark-header: #23302d;
+  --tool-code-dark-border: #3b514b;
+  --tool-code-dark-text: #e5eee9;
+  --tool-code-dark-line-number: #8eaaa0;
+  --tool-code-dark-keyword: #c1acf2;
+  --tool-code-dark-string: #a7d6a2;
+  --tool-code-dark-number: #f2c78a;
+  --tool-code-dark-comment: #90a89d;
+  --tool-code-dark-type: #97d3e5;
+  --tool-code-light-surface: #f8fbf8;
+  --tool-code-light-header: #e8f0eb;
+  --tool-code-light-border: #cad9d0;
+  --tool-code-light-text: #263831;
+  --tool-code-light-line-number: #587067;
+  --tool-code-light-keyword: #6548a2;
+  --tool-code-light-string: #276942;
+  --tool-code-light-number: #8b5119;
+  --tool-code-light-comment: #566f65;
+  --tool-code-light-type: #205e83;
+  --tool-image-bg: #f3f6f2;
+  --tool-image-fg: #202b27;
+
   /* Monospace stack for terminals, code, paths */
   --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono", Menlo, Consolas,
     monospace;

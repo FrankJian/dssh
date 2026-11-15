@@ -134,6 +134,9 @@ export function SelectMenu({
     };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (rootRef.current?.contains(document.activeElement)) {
+          triggerRef.current?.focus({ preventScroll: true });
+        }
         setOpen(false);
       }
     };
@@ -155,7 +158,7 @@ export function SelectMenu({
     // prevents that synchronous update from leaving the popover mounted.
     setOpen(false);
     setSearchQuery("");
-    if (selectOnArrowKeys) triggerRef.current?.focus({ preventScroll: true });
+    triggerRef.current?.focus({ preventScroll: true });
     onChange(option.value);
   }
 
@@ -173,30 +176,46 @@ export function SelectMenu({
 
   function handleTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
     if (!canOpen) return;
-    if (event.key === "ArrowDown") {
+    if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
-      if (open || selectOnArrowKeys) {
-        moveSelection(1);
-      } else {
-        setOpen(true);
-      }
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (open || selectOnArrowKeys) {
-        moveSelection(-1);
-      } else {
-        setOpen(true);
-      }
+      if (selectOnArrowKeys) moveSelection(event.key === "ArrowDown" ? 1 : -1);
+      else setOpen(true);
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       setOpen((current) => !current);
-    } else if (event.key === "Escape") {
-      setOpen(false);
+    }
+  }
+
+  function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!open || event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" && event.target === searchRef.current) {
+      const option = filteredOptions.find((item) => !item.disabled);
+      if (option) {
+        event.preventDefault();
+        selectOption(option);
+      }
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>(".select-menu__option:enabled") ?? []);
+      if (!buttons.length) return;
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const index = current < 0
+        ? (direction === 1 ? 0 : buttons.length - 1)
+        : (current + direction + buttons.length) % buttons.length;
+      buttons[index].focus();
     }
   }
 
   return (
-    <div className={`select-menu${className ? ` ${className}` : ""}`} ref={rootRef}>
+    <div
+      className={`select-menu${className ? ` ${className}` : ""}`}
+      ref={rootRef}
+      onKeyDown={handleMenuKeyDown}
+      onBlur={(event) => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
       <button
         aria-controls={listId}
         aria-expanded={open}

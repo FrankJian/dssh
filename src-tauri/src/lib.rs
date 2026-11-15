@@ -25,7 +25,8 @@ use tauri::Manager;
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
 
     // The updater and process plugins are desktop-only.
     #[cfg(desktop)]
@@ -46,6 +47,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(browser::guard(tauri::generate_handler![
+            commands::tools::save_tool_png,
+            commands::tools::hash_tool_text,
             commands::artifactory::list_artifactory_profiles,
             commands::artifactory::save_artifactory_profile,
             commands::artifactory::delete_artifactory_profile,

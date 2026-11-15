@@ -1,3 +1,4 @@
+import { isActivityId } from "../app/navigationPreferences";
 import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { BrowserLinkSettings } from "./BrowserLinkSettings";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -163,10 +164,11 @@ const themeOptions: Array<{
 const NAVIGATION_ICON_OPTIONS: Array<{
   id: NavigationIconId;
   label: string;
-  icon: "folder" | "sessions" | "connections" | "bucket" | "database" | "globe" | "bot" | "terminalTool";
+  icon: "folder" | "sessions" | "connections" | "bucket" | "database" | "globe" | "bot" | "terminalTool" | "toolbox";
 }> = [
   { id: "sessions", label: "活动会话", icon: "sessions" },
   { id: "connections", label: "连接管理", icon: "connections" },
+  { id: "tools", label: "工具箱", icon: "toolbox" },
   { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "browser", label: "浏览器", icon: "globe" },
   { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
@@ -597,12 +599,10 @@ export function SettingsDialog({
                 <div className="settings-control-group" role="group" aria-label="导航入口">
                   {NAVIGATION_ICON_OPTIONS.map((option) => {
                     const checked = navigationIcons.includes(option.id);
-                    const visibleActivityCount = navigationIcons.filter(
-                      (item) => item === "sessions" || item === "connections" || item === "s3" || item === "artifactory" || item === "sftp",
-                    ).length;
+                    const visibleActivityCount = navigationIcons.filter(isActivityId).length;
                     const disableLastActivity =
                       checked &&
-                      (option.id === "sessions" || option.id === "connections" || option.id === "s3" || option.id === "artifactory" || option.id === "sftp") &&
+                      isActivityId(option.id) &&
                       visibleActivityCount === 1;
                     return (
                       <label className="settings-control-row" key={option.id}>
