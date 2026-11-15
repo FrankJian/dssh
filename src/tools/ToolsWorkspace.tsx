@@ -137,8 +137,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
     return tools.map((tool) => (
       <button className="tools-workspace__item" key={tool.id} type="button"
         aria-current={selected === tool.id ? "page" : undefined} onClick={() => onSelect(tool.id)}>
-        <span>{tool.label}</span>
-        {selected === tool.id ? <Icon name="chevron-right" /> : null}
+        {tool.label}
       </button>
     ));
   }
