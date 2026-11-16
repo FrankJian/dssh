@@ -1757,6 +1757,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
+  const managedProfiles: ConnectionProfile[] = [...profiles, ...rdp.profiles, ...smbProfiles.map(smbConnectionProfile), ...jumpservers.profiles.map(jumpServerConnectionProfile)];
+  const recentProfiles = recentIds
+    .map((id) => managedProfiles.find((profile) => profile.id === id))
+    .filter((profile): profile is ConnectionProfile => Boolean(profile))
+    .slice(0, recentConnectionsLimit);
+
   const sidebarContent =
     sidebarCollapsed || isConnections || isArtifactory || isTools ? null : activeActivity === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
@@ -1796,6 +1802,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           activeSessionId={activeSessionId}
           activeSftpId={isSftpActive ? activeSftpId : null}
           profiles={profiles}
+          recentProfiles={recentProfiles}
+          onConnectRecent={connectManagedProfile}
           onFocusTerminal={handleFocusTerminal}
           onNewTerminal={handleNewTerminalForNode}
           onOpenSftp={handleOpenSftpFromTerminal}
@@ -1845,12 +1853,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       ? (profiles.find((profile) => profile.id === activeSession.profileId) ?? null)
       : null;
   const isLocalFileTree = fileTreeSession?.kind === "local";
-  const managedProfiles: ConnectionProfile[] = [...profiles, ...rdp.profiles, ...smbProfiles.map(smbConnectionProfile), ...jumpservers.profiles.map(jumpServerConnectionProfile)];
-  const recentProfiles = recentIds
-    .map((id) => managedProfiles.find((profile) => profile.id === id))
-    .filter((profile): profile is ConnectionProfile => Boolean(profile))
-    .slice(0, recentConnectionsLimit);
-
   const terminalSurface = (
     <TerminalWorkspace
       activeSession={activeSession}

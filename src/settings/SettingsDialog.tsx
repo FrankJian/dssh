@@ -557,30 +557,33 @@ export function SettingsDialog({
 
           <div className="settings-content">
             {category === "appearance" ? (
-              <section className="settings-section" aria-label="主题">
-                <div className="settings-section__head">
-                  <h3>主题</h3>
-                </div>
-                <div className="settings-theme" role="group" aria-label="应用主题">
-                  {themeOptions.map((option) => (
-                    <button
-                      aria-pressed={themeMode === option.mode}
-                      className={`settings-theme__option ${
-                        themeMode === option.mode ? "is-active" : ""
-                      }`.trim()}
-                      key={option.mode}
-                      onClick={() => onThemeChange(option.mode)}
-                      type="button"
-                    >
-                      <Icon name={option.icon} height="18" width="18" />
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
+              <section className="settings-section appearance-settings" aria-label="外观">
+                <div className="appearance-settings__top">
+                  <section className="appearance-settings__theme" aria-label="主题">
+                    <div className="settings-section__head">
+                      <h3>主题</h3>
+                    </div>
+                    <div className="settings-theme" role="group" aria-label="应用主题">
+                      {themeOptions.map((option) => (
+                        <button
+                          aria-pressed={themeMode === option.mode}
+                          className={`settings-theme__option ${
+                            themeMode === option.mode ? "is-active" : ""
+                          }`.trim()}
+                          key={option.mode}
+                          onClick={() => onThemeChange(option.mode)}
+                          type="button"
+                        >
+                          <Icon name={option.icon} height="18" width="18" />
+                          <span>{option.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                  <AppPaletteSettings color={appPaletteColor} onChange={onAppPaletteColorChange} />
                 </div>
 
-                <AppPaletteSettings color={appPaletteColor} onChange={onAppPaletteColorChange} />
-
-                <label className="settings-field settings-field--short" title={`默认 ${RECENT_CONNECTIONS_DEFAULT_LIMIT} 个，调整后立即生效，不会删除连接记录。`}>
+                <div className="appearance-settings__recent" title={`默认 ${RECENT_CONNECTIONS_DEFAULT_LIMIT} 个，调整后立即生效，不会删除连接记录。`}>
                   <span className="settings-field__label">最近连接显示数量</span>
                   <SelectMenu
                     ariaLabel="最近连接显示数量"
@@ -591,12 +594,12 @@ export function SettingsDialog({
                     })}
                     onChange={(value) => onRecentConnectionsLimitChange(Number(value))}
                   />
-                </label>
+                </div>
 
                 <div className="settings-section__head">
                   <h3>左侧导航栏</h3>
                 </div>
-                <div className="settings-control-group" role="group" aria-label="导航入口">
+                <div className="appearance-settings__navigation" role="group" aria-label="左侧导航栏">
                   {NAVIGATION_ICON_OPTIONS.map((option) => {
                     const checked = navigationIcons.includes(option.id);
                     const visibleActivityCount = navigationIcons.filter(isActivityId).length;
@@ -608,7 +611,7 @@ export function SettingsDialog({
                       <label className="settings-control-row" key={option.id}>
                         <span className="settings-control-row__label">
                           <Icon name={option.icon} height="16" width="16" />
-                          {option.label}
+                          <span>{option.label}</span>
                         </span>
                         <SettingsSwitch
                           checked={checked}

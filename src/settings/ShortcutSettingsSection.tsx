@@ -66,7 +66,7 @@ function ShortcutRecorder({
 
   return (
     <button
-      aria-label={`修改快捷键：${definition.label}`}
+      aria-label={`修改快捷键：${definition.label}，当前 ${formatShortcut(binding)}`}
       className={`shortcut-recorder${recording ? " is-recording" : ""}`}
       onClick={onStart}
       title={recording
@@ -79,7 +79,7 @@ function ShortcutRecorder({
         : (
           <span className="shortcut-recorder__keys">
             {shortcutDisplayParts(binding).map((key, index) => (
-              <span className="shortcut-recorder__key" key={`${key}-${index}`}>{key}</span>
+              <kbd className="shortcut-recorder__key" key={`${key}-${index}`}>{key}</kbd>
             ))}
           </span>
         )}
@@ -87,7 +87,10 @@ function ShortcutRecorder({
   );
 }
 
-const categories = ["全局", "工作区", "分屏", "终端"] as const;
+const categoryColumns = [
+  ["全局", "工作区"],
+  ["分屏", "终端"],
+] as const;
 
 export function ShortcutSettingsSection() {
   const [bindings, setBindings] = useState(getShortcutBindings);
@@ -123,54 +126,57 @@ export function ShortcutSettingsSection() {
   return (
     <section className="settings-section" aria-label="快捷键设置">
       <div className="settings-section__head shortcuts-section__head">
-        <div>
-          <h3>快捷键</h3>
-        </div>
-        <Button className="shortcuts-reset-all" onClick={resetAll} title="恢复全部默认快捷键" variant="ghost">
+        <h3>快捷键</h3>
+        <Button onClick={resetAll} title="恢复全部默认快捷键" variant="ghost">
           <Icon name="refresh" height="14" width="14" />
           <span>恢复默认</span>
         </Button>
       </div>
       {message ? <p className="shortcut-settings__message" role="status">{message}</p> : null}
 
-      {categories.map((category) => {
-        const items = definitions.filter((definition) => definition.category === category);
-        return (
-          <div className="shortcut-group" key={category}>
-            <h4>{category}</h4>
-            <div className="shortcut-group__list">
-              {items.map((definition) => {
-                const binding = bindings[definition.id];
-                return (
-                  <div className="shortcut-row" key={definition.id}>
-                    <div className="shortcut-row__info">
-                      <span className="shortcut-row__label" title={definition.description}>{definition.label}</span>
-                    </div>
-                    <div className="shortcut-row__actions">
-                      <ShortcutRecorder
-                        binding={binding}
-                        definition={definition}
-                        recording={recordingId === definition.id}
-                        onChange={(next) => updateBinding(definition.id, next)}
-                        onStart={() => setRecordingId(definition.id)}
-                        onStop={() => setRecordingId(null)}
-                      />
-                      <button
-                        aria-label={`恢复默认快捷键：${definition.label}`}
-                        className="shortcut-reset"
-                        onClick={() => resetBinding(definition.id)}
-                        type="button"
-                      >
-                        重置
-                      </button>
-                    </div>
+      <div className="shortcuts-section__groups">
+        {categoryColumns.map((categories) => (
+          <div className="shortcuts-section__column" key={categories[0]}>
+            {categories.map((category) => {
+              const items = definitions.filter((definition) => definition.category === category);
+              return (
+                <div className="shortcut-group" key={category}>
+                  <h4>{category}</h4>
+                  <div>
+                    {items.map((definition) => {
+                      const binding = bindings[definition.id];
+                      return (
+                        <div className="shortcut-row" key={definition.id}>
+                          <span className="shortcut-row__label" title={definition.description}>{definition.label}</span>
+                          <div className="shortcut-row__actions">
+                            <ShortcutRecorder
+                              binding={binding}
+                              definition={definition}
+                              recording={recordingId === definition.id}
+                              onChange={(next) => updateBinding(definition.id, next)}
+                              onStart={() => setRecordingId(definition.id)}
+                              onStop={() => setRecordingId(null)}
+                            />
+                            <button
+                              aria-label={`恢复默认快捷键：${definition.label}`}
+                              className="shortcut-reset"
+                              onClick={() => resetBinding(definition.id)}
+                              title="恢复默认快捷键"
+                              type="button"
+                            >
+                              <Icon name="refresh" height="13" width="13" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        ))}
+      </div>
     </section>
   );
 }

@@ -82,8 +82,8 @@ function TabTitle({ value }: { value: string }) {
 
 /**
  * Unified top tab strip: terminal sessions (ssh/local) and SFTP tabs render
- * together, each with its configured icon, title, and close affordance. The active tab
- * gets the 2px accent top border from `.tab.is-active`. Middle-click closes.
+ * together, each with its configured icon, title, and close affordance.
+ * Middle-click closes the tab.
  */
 export function WorkspaceTabStrip({
   tabs,

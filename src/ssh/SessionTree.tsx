@@ -1,4 +1,5 @@
 import { ConnectionAddress } from "./ConnectionAddress";
+import { CONNECTION_TYPE_OPTIONS, connectionTypeForProfile, type ConnectionProfile } from "./connectionTypes";
 import { profileIconName, sftpConnectionIconName } from "./profileIcons";
 import { isJumpServerSource } from "../models/jumpserver";
 import { useMemo, useState, type ReactNode } from "react";
@@ -88,6 +89,8 @@ interface SessionTreeProps {
   activeSftpId: string | null;
   activeAssetProfileId?: string;
   profiles: SshProfile[];
+  recentProfiles: ConnectionProfile[];
+  onConnectRecent: (profile: ConnectionProfile) => void;
   onFocusTerminal: (sessionId: string) => void;
   onNewTerminal: (node: SessionNode) => void;
   onOpenSftp: (profile: SshProfile) => void;
@@ -104,7 +107,7 @@ interface SessionTreeProps {
   onOpenConnections: () => void;
 }
 
-/** Live sessions only; the saved-connection library is opened via the footer. */
+/** Active sessions and shortcuts to recently used connections. */
 export function SessionTree({
   remoteDesktops,
   sessions,
@@ -116,6 +119,8 @@ export function SessionTree({
   activeSftpId,
   activeAssetProfileId,
   profiles,
+  recentProfiles,
+  onConnectRecent,
   onFocusTerminal,
   onNewTerminal,
   onOpenSftp,
@@ -132,6 +137,7 @@ export function SessionTree({
   onOpenConnections,
 }: SessionTreeProps) {
   const nodes = buildNodes(sessions, profiles, sftpTabs);
+  const hasSessions = nodes.length > 0 || Boolean(remoteDesktops);
   const [expandedNodes, setExpandedNodes] = useState(new Map<string, boolean>());
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -474,9 +480,39 @@ export function SessionTree({
           </div>
         </div>
       )}
+      {hasSessions && recentProfiles.length > 0 ? (
+        <section aria-label="最近连接" className="session-recent">
+          <div className="session-tree__section-head">
+            <span className="session-tree__eyebrow">最近连接</span>
+          </div>
+          <ul className="session-recent__list">
+            {recentProfiles.map((profile) => {
+              const type = connectionTypeForProfile(profile);
+              const option = CONNECTION_TYPE_OPTIONS.find((item) => item.id === type);
+              const icon = type === "ssh" && "icon" in profile ? profileIconName(profile.icon) : option?.icon ?? "connections";
+              const action = type === "jumpserver" ? "打开资产" : type === "sftp" ? "打开 SFTP" : "连接";
+              return (
+                <li key={profile.id}>
+                  <button
+                    aria-label={`${action} ${profile.name}（${option?.label ?? type}，${profile.host}）`}
+                    className="session-child session-recent__action"
+                    onClick={() => onConnectRecent(profile)}
+                    title={`${profile.name} · ${option?.label ?? type}\n${profile.host}`}
+                    type="button"
+                  >
+                    <Icon name={icon} height="16" width="16" />
+                    <span className="session-recent__name">{profile.name}</span>
+                    <Icon name="arrowRight" height="13" width="13" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       </div>
 
-      {nodes.length > 0 || remoteDesktops ? <div className="session-sidebar__footer">
+      {hasSessions ? <div className="session-sidebar__footer">
         <button className="session-sidebar__all" onClick={onOpenConnections} type="button">
           <Icon name="connections" height="14" width="14" />
           <span>全部连接</span>

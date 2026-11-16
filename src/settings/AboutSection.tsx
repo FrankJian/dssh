@@ -90,7 +90,7 @@ export function AboutSection() {
       })
       .catch(() => {
         if (!cancelled) {
-          setInfo({ name: "dssh", version: "未知", tauriVersion: "未知" });
+          setInfo({ name: "Duo SSH", version: "未知", tauriVersion: "未知" });
         }
       });
     return () => {
@@ -100,7 +100,6 @@ export function AboutSection() {
 
   const platform = detectPlatform();
   const rows: Array<{ label: string; value: string }> = [
-    { label: "版本", value: info?.version ?? "…" },
     { label: "Tauri 运行时", value: info?.tauriVersion ?? "…" },
     { label: "运行平台", value: platform },
   ];
@@ -188,121 +187,132 @@ export function AboutSection() {
     update.phase === "installing";
 
   return (
-    <section className="settings-section" aria-label="关于">
-      <div className="about-hero">
-        <img className="about-hero__logo" src="/icon.png" alt="dssh" width={44} height={44} />
-        <div className="about-hero__meta">
-          <h3 className="about-hero__name">{(info?.name ?? "dssh").toUpperCase()}</h3>
-        </div>
-      </div>
-
-      <dl className="about-info">
-        {rows.map((row) => (
-          <div className="about-info__row" key={row.label}>
-            <dt className="about-info__label">{row.label}</dt>
-            <dd className="about-info__value">{row.value}</dd>
+    <section className="settings-section about-settings" aria-label="关于">
+      <header className="about-hero">
+        <div className="about-hero__identity">
+          <img className="about-hero__logo" src="/icon.png" alt="" width={64} height={64} />
+          <div className="about-hero__meta">
+            <h3 className="about-hero__name">{info?.name ?? "Duo SSH"}</h3>
+            <p className="about-hero__version">版本 <span>{info?.version ?? "…"}</span></p>
           </div>
-        ))}
-      </dl>
+        </div>
 
-      <div className="settings-section__head"><h3>软件更新</h3></div>
-      <div className="settings-control-group">
-        <label className="settings-control-row">
+        <dl className="about-info">
+          {rows.map((row) => (
+            <div className="about-info__row" key={row.label}>
+              <dt className="about-info__label">{row.label}</dt>
+              <dd className="about-info__value">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+
+      <section className="about-updates" aria-label="软件更新">
+        <header className="about-updates__header">
+          <h3><Icon name="download" height="16" width="16" />软件更新</h3>
+          <Button
+            disabled={isWorking}
+            onClick={handleCheckUpdate}
+            variant={update.phase === "available" ? "ghost" : "primary"}
+          >
+            <Icon name="refresh" height="14" width="14" />
+            {update.phase === "checking" ? "检查中…" : "检查更新"}
+          </Button>
+        </header>
+
+        {update.phase === "uptodate" ? (
+          <div className="about-update about-update--ok" role="status"><Icon name="check" height="15" width="15" />已是最新版本。</div>
+        ) : null}
+
+        {update.phase === "available" ? (
+          <div className="about-update">
+            <div className="about-update__head">
+              <span className="about-update__title">发现新版本 {update.update.version}</span>
+              <Button onClick={() => void handleInstall(update.update)} variant="primary">
+                下载并安装
+              </Button>
+            </div>
+            {update.update.body ? (
+              <p className="about-update__notes">{update.update.body}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {update.phase === "downloading" ? (
+          <div className="about-update">
+            <div className="about-update__title">正在下载 {update.version}…</div>
+            <div className="about-update__track">
+              <div
+                className="about-update__bar"
+                data-indeterminate={update.total == null}
+                style={
+                  update.total
+                    ? { width: `${Math.min(100, Math.round((update.downloaded / update.total) * 100))}%` }
+                    : undefined
+                }
+              />
+            </div>
+            <div className="about-update__meta">
+              {formatSize(update.downloaded)}
+              {update.total != null ? ` / ${formatSize(update.total)}` : ""}
+            </div>
+          </div>
+        ) : null}
+
+        {update.phase === "installing" ? (
+          <div className="about-update about-update--ok" role="status"><Icon name="check" height="15" width="15" />安装完成，正在重启应用…</div>
+        ) : null}
+
+        {update.phase === "error" ? (
+          <div className="about-update about-update--error" role="alert">
+            <div>检查或安装更新失败：{update.message}</div>
+            {update.attempts?.length ? (
+              <ul className="about-update__attempts">
+                {update.attempts.map((attempt) => (
+                  <li key={attempt.url}>
+                    <code>{attempt.url}</code>
+                    <span>{attempt.error ?? "可访问，但更新清单未能通过校验。"}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
+        <label className="about-updates__startup">
           <span>启动时自动检查更新</span>
           <SettingsSwitch
             checked={checkOnStartup}
             onChange={(event) => setCheckOnStartup(event.currentTarget.checked)}
           />
         </label>
-      </div>
 
-      <div className="settings-config__actions">
-        <Button disabled={isWorking} onClick={handleCheckUpdate} variant="primary">
-          {update.phase === "checking" ? "检查中…" : "检查更新"}
-        </Button>
+        <label className="settings-field about-update__proxy">
+          <span className="settings-field__label">更新代理（可选）</span>
+          <input
+            className="settings-number"
+            disabled={isWorking}
+            onChange={(event) => setProxy(event.currentTarget.value)}
+            placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+            spellCheck={false}
+            type="text"
+            value={proxy}
+          />
+          <span className="settings-field__hint">
+            留空直连；代理同时用于检查和下载更新。
+          </span>
+        </label>
+      </section>
+
+      <footer className="about-settings__actions">
         <Button disabled={isWorking} onClick={handleCopy} variant="ghost">
-          <Icon name="copy" height="16" width="16" />
+          <Icon name={copied ? "check" : "copy"} height="15" width="15" />
           {copied ? "已复制" : "复制版本信息"}
         </Button>
         <Button onClick={handleReportIssue} variant="ghost" title="在 GitHub Issues 报告问题">
-          <Icon name="externalWindow" height="16" width="16" />报告问题
+          <Icon name="externalWindow" height="15" width="15" />报告问题
         </Button>
-      </div>
-
-      <label className="settings-field about-proxy">
-        <span className="settings-field__label">更新代理（可选）</span>
-        <input
-          className="settings-number"
-          disabled={isWorking}
-          onChange={(event) => setProxy(event.currentTarget.value)}
-          placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
-          spellCheck={false}
-          type="text"
-          value={proxy}
-        />
-        <span className="settings-field__hint">
-          留空直连；代理同时用于检查和下载更新。
-        </span>
-      </label>
-
-      {update.phase === "uptodate" ? (
-        <div className="about-update about-update--ok">已是最新版本。</div>
-      ) : null}
-
-      {update.phase === "available" ? (
-        <div className="about-update">
-          <div className="about-update__head">
-            <span className="about-update__title">发现新版本 {update.update.version}</span>
-            <Button onClick={() => void handleInstall(update.update)} variant="primary">
-              下载并安装
-            </Button>
-          </div>
-          {update.update.body ? (
-            <p className="about-update__notes">{update.update.body}</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {update.phase === "downloading" ? (
-        <div className="about-update">
-          <div className="about-update__title">正在下载 {update.version}…</div>
-          <div className="about-update__track">
-            <div
-              className="about-update__bar"
-              data-indeterminate={update.total == null}
-              style={
-                update.total
-                  ? { width: `${Math.min(100, Math.round((update.downloaded / update.total) * 100))}%` }
-                  : undefined
-              }
-            />
-          </div>
-          <div className="about-update__meta">
-            {formatSize(update.downloaded)}
-            {update.total != null ? ` / ${formatSize(update.total)}` : ""}
-          </div>
-        </div>
-      ) : null}
-
-      {update.phase === "installing" ? (
-        <div className="about-update about-update--ok">安装完成，正在重启应用…</div>
-      ) : null}
-
-      {update.phase === "error" ? (
-        <div className="about-update about-update--error" role="alert">
-          <div>检查或安装更新失败：{update.message}</div>
-          {update.attempts?.length ? (
-            <ul className="about-update__attempts">
-              {update.attempts.map((attempt) => (
-                <li key={attempt.url}>
-                  <code>{attempt.url}</code>
-                  <span>{attempt.error ?? "可访问，但更新清单未能通过校验。"}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
+      </footer>
     </section>
   );
 }
