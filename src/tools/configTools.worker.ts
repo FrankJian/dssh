@@ -1,6 +1,6 @@
 import type { SqlLanguage } from "sql-formatter";
 import {
-  convertToToml, convertToml, jsonToXml, markdownToHtml, prettifySql, prettifyXml, prettifyYaml, xmlToJson,
+  convertToToml, convertToml, jsonToXml, prettifySql, prettifyXml, prettifyYaml, xmlToJson,
 } from "./configConversions";
 import { dockerRunToCompose } from "./dockerCompose";
 import { receiveLocalTool } from "./localToolWorker";
@@ -16,7 +16,6 @@ receiveLocalTool(({ id, input, option }) => {
     case "xml-format": return prettifyXml(input);
     case "yaml-format": return prettifyYaml(input);
     case "sql-format": return prettifySql(input, option as SqlLanguage);
-    case "markdown-html": return markdownToHtml(input);
     case "docker-compose": return dockerRunToCompose(input);
     default: throw new Error("未知的转换操作。");
   }

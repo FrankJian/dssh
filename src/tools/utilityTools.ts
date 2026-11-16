@@ -1,5 +1,4 @@
 import Decimal from "decimal.js";
-import jsep from "jsep";
 import { decodeHTML, encodeHTML } from "entities";
 
 const UPPER_BOUND = 1e6;
@@ -20,36 +19,60 @@ function printDecimal(value: Decimal): string {
   return value.toString();
 }
 
-function arithmetic(node: jsep.Expression, depth = 0): Decimal {
-  if (depth > 64) throw new Error("表达式嵌套过深。");
-  if (node.type === "Literal") {
-    const literal = node as jsep.Literal;
-    if (typeof literal.value === "number") return decimal(literal.raw);
-  }
-  if (node.type === "UnaryExpression") {
-    const { argument, operator } = node as jsep.UnaryExpression;
-    if (operator === "+" || operator === "-") {
-      const value = arithmetic(argument, depth + 1);
-      return operator === "-" ? value.negated() : value;
-    }
-  }
-  if (node.type === "BinaryExpression") {
-    const { left, right, operator } = node as jsep.BinaryExpression;
-    const a = arithmetic(left, depth + 1);
-    const b = arithmetic(right, depth + 1);
-    if (operator === "+") return a.plus(b);
-    if (operator === "-") return a.minus(b);
-    if (operator === "*") return a.times(b);
-    if (operator === "/") return a.dividedBy(b);
-    if (operator === "%") return a.modulo(b);
-    if (operator === "**" && b.abs().lte(10_000)) return a.pow(b);
-  }
-  throw new Error("只支持数字、括号和 + - * / % **，指数绝对值最多 10,000。");
-}
-
 export function calculateExpression(input: string): string {
-  if (input.length > 512 || !/^[\d.eE+*/%()\s-]+$/.test(input.trim())) throw new Error("请输入不超过 512 个字符的算术表达式。");
-  return printDecimal(arithmetic(jsep(input)));
+  const text = input.trim();
+  if (!text || text.length > 512) throw new Error("请输入不超过 512 个字符的算术表达式。");
+  const pattern = /\*\*|[+*/%()-]|(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|\s+/iy;
+  const tokens: string[] = [];
+  while (pattern.lastIndex < text.length) {
+    const match = pattern.exec(text);
+    if (!match) throw new Error("表达式包含不支持的字符。");
+    if (match[0].trim()) tokens.push(match[0]);
+  }
+  let cursor = 0;
+  function unary(depth: number): Decimal {
+    if (depth > 64) throw new Error("表达式嵌套过深。");
+    const token = tokens[cursor++];
+    if (token === "+") return unary(depth + 1);
+    if (token === "-") return unary(depth + 1).negated();
+    let base: Decimal;
+    if (token === "(") {
+      base = sum(depth + 1);
+      if (tokens[cursor++] !== ")") throw new Error("表达式的括号不匹配。");
+    } else {
+      if (!token || !/^[0-9.]/.test(token)) throw new Error("表达式缺少数字。");
+      base = decimal(token);
+    }
+    if (tokens[cursor] !== "**") return base;
+    cursor++;
+    const exponent = unary(depth + 1);
+    if (exponent.abs().gt(10_000)) throw new Error("指数绝对值最多 10,000。");
+    return base.pow(exponent);
+  }
+  function product(depth: number): Decimal {
+    let result = unary(depth);
+    while (["*", "/", "%"].includes(tokens[cursor])) {
+      const operator = tokens[cursor++];
+      const right = unary(depth);
+      if (operator === "*") result = result.times(right);
+      else if (operator === "/") result = result.div(right);
+      else result = result.modulo(right);
+      if (!result.isFinite()) throw new Error("无法除以零，或结果超出支持的范围。");
+    }
+    return result;
+  }
+  function sum(depth: number): Decimal {
+    let result = product(depth);
+    while (tokens[cursor] === "+" || tokens[cursor] === "-") {
+      const operator = tokens[cursor++];
+      const right = product(depth);
+      result = operator === "+" ? result.plus(right) : result.minus(right);
+    }
+    return result;
+  }
+  const result = sum(0);
+  if (cursor !== tokens.length) throw new Error("表达式中缺少运算符，或括号不匹配。");
+  return printDecimal(result);
 }
 
 export function calculatePercentage(input: string, other: string, operation: string): string {
@@ -146,6 +169,7 @@ export function normalizeEmail(input: string, gmail: boolean): string {
   if (!parts || parts[1].startsWith(".") || parts[1].endsWith(".") || parts[1].includes("..")) {
     throw new Error("请输入常见的 name@example.com 格式邮箱。");
   }
+  if (!/^[\p{L}\p{N}\p{M}.-]+$/u.test(parts[2])) throw new Error("邮箱域名格式无效。");
   const domain = new URL(`https://${parts[2]}`).hostname.toLowerCase();
   if (!domain.includes(".") || !domain.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
     throw new Error("邮箱域名格式无效。");

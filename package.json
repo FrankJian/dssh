@@ -45,7 +45,6 @@
     "entities": "^9.0.0",
     "figlet": "^1.12.0",
     "ibantools": "^4.5.4",
-    "jsep": "^1.6.0",
     "jsonc-parser": "^3.3.1",
     "libphonenumber-js": "^1.13.16",
     "mermaid": "^11.16.0",
@@ -61,8 +60,8 @@
     "saxes": "^6.0.0",
     "smol-toml": "^1.9.1",
     "sql-formatter": "^15.9.0",
+    "toml-eslint-parser": "^1.0.3",
     "unicode-emoji-json": "^0.9.0",
-    "xml-formatter": "^3.7.0",
     "yaml": "^2.9.1",
     "zxcvbn": "^4.4.2"
   },

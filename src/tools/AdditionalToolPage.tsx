@@ -5,7 +5,8 @@ import { ToolSelect } from "./ToolControls";
 import { runLocalTool } from "./localToolWorker";
 import ConfigWorker from "./configTools.worker?worker";
 import CryptoWorker from "./cryptoTools.worker?worker";
-import GeneratorWorker from "./generatorTools.worker?worker";
+import RsaWorker from "./rsaKeys.worker?worker";
+import PasswordWorker from "./passwordStrength.worker?worker";
 import { maskText, openGraphTags, searchMemo } from "./advancedReferenceTools";
 import { convertColor, svgPlaceholder } from "./colorTools";
 import type { Digest } from "./cryptoTools";
@@ -47,11 +48,11 @@ const pages: Record<AdditionalToolId, PageSpec> = {
   },
   "toml-json": {
     inputLabel: "TOML 输入", outputLabel: "JSON 结果", example: TOML,
-    note: "日期和时间转换为字符串。", run: config("toml-json"),
+    note: "日期和时间转换为字符串，保留原有偏移和小数秒。", run: config("toml-json"),
   },
   "toml-yaml": {
     inputLabel: "TOML 输入", outputLabel: "YAML 结果", example: TOML,
-    note: "日期和时间转换为字符串。", run: config("toml-yaml"),
+    note: "日期和时间转换为字符串，保留原有偏移和小数秒。", run: config("toml-yaml"),
   },
   "json-toml": { inputLabel: "JSON 输入", outputLabel: "TOML 结果", example: JSON_CONFIG, run: config("json-toml") },
   "yaml-toml": {
@@ -60,12 +61,13 @@ const pages: Record<AdditionalToolId, PageSpec> = {
   },
   "xml-format": {
     action: "格式化", inputLabel: "XML 输入", outputLabel: "XML 结果", example: XML,
-    note: "含文本或 CDATA 的 XML 保留原有排版，以保留字符数据。", run: config("xml-format"),
+    note: "保留混合内容、CDATA 和 xml:space 指定的空白。", run: config("xml-format"),
   },
   "xml-json": { inputLabel: "XML 输入", outputLabel: "JSON 结果", example: XML, run: config("xml-json") },
   "json-xml": {
-    inputLabel: "XML 转 JSON 生成的结构", outputLabel: "XML 结果",
-    example: '{"nodes":[{"name":"host","attributes":{"port":"22"},"children":["dev"]}]}', run: config("json-xml"),
+    inputLabel: "JSON 对象", outputLabel: "XML 结果",
+    example: '{"hosts":{"host":[{"_attributes":{"port":22},"_text":"dev"},{"_attributes":{"port":2200},"_text":"qa"}]}}',
+    note: "支持单根对象和 XML 转 JSON 生成的有序节点结构。普通对象可用 _attributes、_text、_cdata 表示 XML 内容。", run: config("json-xml"),
   },
   "sql-format": {
     action: "格式化", inputLabel: "SQL 输入", outputLabel: "SQL 结果",
@@ -75,7 +77,7 @@ const pages: Record<AdditionalToolId, PageSpec> = {
   },
   "markdown-html": {
     inputLabel: "Markdown 输入", outputLabel: "HTML 源码", example: "# 主机清单\n\n- **dev**\n- [文档](https://example.org/)",
-    run: config("markdown-html"),
+    run: async (input) => (await import("./markdownToHtml")).markdownToHtml(input),
   },
   "docker-compose": {
     inputLabel: "Docker 命令", outputLabel: "Compose YAML",
@@ -180,7 +182,7 @@ const pages: Record<AdditionalToolId, PageSpec> = {
     action: "计算", inputLabel: "数值 A", inputType: "text", outputLabel: "计算结果", example: "25",
     secondInput: { label: "数值 B", example: "80", type: "text" },
     choice: { label: "公式", values: [["of", "B 的 A%"], ["ratio", "A 占 B 的百分比"], ["change", "从 A 到 B 的变化率"]] },
-    run: calculatePercentage,
+    note: "变化率以数值 A 的绝对值为基数。", run: calculatePercentage,
   },
   temperature: {
     inputLabel: "温度", inputType: "text", outputLabel: "温度换算", example: "32",
@@ -202,12 +204,12 @@ const pages: Record<AdditionalToolId, PageSpec> = {
   },
   "password-strength": {
     action: "估算", inputLabel: "密码", inputType: "password", outputLabel: "强度估算", example: "demo-password",
-    run: (input) => runLocalTool(() => new GeneratorWorker(), { id: "password-strength", input, other: "", option: "" }),
+    run: (input) => runLocalTool(() => new PasswordWorker(), { id: "password-strength", input, other: "", option: "" }),
   },
   "rsa-key": {
     action: "生成 2048 位密钥对", outputLabel: "RSA PEM 密钥对", multilineOutput: true,
     note: "输出依次包含公钥和未加密的 PKCS#8 私钥。请妥善保存私钥。",
-    run: () => runLocalTool(() => new GeneratorWorker(), { id: "rsa-key", input: "", other: "", option: "" }),
+    run: () => runLocalTool(() => new RsaWorker(), { id: "rsa-key", input: "", other: "", option: "" }),
   },
   "device-info": {
     action: "读取环境", outputLabel: "运行环境", multilineOutput: true,

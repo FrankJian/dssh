@@ -31,7 +31,7 @@ function shellWords(input: string): string[] {
       word = "";
       started = false;
     } else {
-      if (/[;&|<>`$*?\[\]{}]/.test(character)) {
+      if ((!started && (character === "~" || character === "#")) || /[;&|<>`$*?\[\]{}]/.test(character)) {
         throw new Error("请先替换 Shell 展开，并为包含特殊字符的参数加引号。");
       }
       word += character;
@@ -77,7 +77,7 @@ export function dockerRunToCompose(input: string): string {
   let index = tokens[1] === "container" ? 2 : 1;
   if (tokens[index++] !== "run") throw new Error("请输入 docker run 或 docker container run 命令。");
 
-  const service: Record<string, string | boolean | string[]> = {};
+  const service: Record<string, string | boolean | string[]> = { network_mode: "bridge" };
   const volumes = new Map<string, { name: string }>();
   const networks = new Map<string, { external: true }>();
 

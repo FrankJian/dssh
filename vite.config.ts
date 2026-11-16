@@ -1,12 +1,15 @@
 import { defineConfig } from "vite";
+import { env } from "node:process";
 import react from "@vitejs/plugin-react";
 
-// @ts-expect-error process is a nodejs global
-const host = process.env.TAURI_DEV_HOST;
+const host = env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  // Dependencies reached from toolbox workers are discovered only on first run
+  // unless they are pre-bundled. Avoid reloading the workbench mid-conversion.
+  optimizeDeps: { include: ["saxes", "smol-toml", "toml-eslint-parser", "sql-formatter", "bcryptjs", "node-forge", "zxcvbn"] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

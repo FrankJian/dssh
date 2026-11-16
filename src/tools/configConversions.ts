@@ -1,9 +1,8 @@
 import { parse as parseToml, stringify as stringifyToml, TomlDate, type TomlValue } from "smol-toml";
+import { parseTOML } from "toml-eslint-parser";
 import { parseAllDocuments, stringify as stringifyYaml } from "yaml";
 import { format as formatSql, type SqlLanguage } from "sql-formatter";
 import { SaxesParser } from "saxes";
-import formatXmlSource from "xml-formatter";
-import { micromark } from "micromark";
 import { readJsonValue, yamlToJson } from "./jsonYaml.ts";
 
 type JsonValue = ReturnType<typeof readJsonValue>;
@@ -25,7 +24,20 @@ function tomlAsJson(value: TomlValue): JsonValue {
 }
 
 export function convertToml(input: string, output: "json" | "yaml"): string {
-  const value = tomlAsJson(parseToml(input, { integersAsBigInt: true, maxDepth: 128 }));
+  // Preserve temporal literals, including fractional seconds and the original offset.
+  // The token parser also validates calendar dates before the JavaScript Date fallback can roll them over.
+  const { tokens } = parseTOML(input, { tomlVersion: "1.1" });
+  const pieces: string[] = [];
+  let previous = 0;
+  for (const token of tokens) {
+    if (token.type !== "OffsetDateTime" && token.type !== "LocalDateTime" &&
+        token.type !== "LocalDate" && token.type !== "LocalTime") continue;
+    const [start, end] = token.range;
+    pieces.push(input.slice(previous, start), JSON.stringify(token.value));
+    previous = end;
+  }
+  pieces.push(input.slice(previous));
+  const value = tomlAsJson(parseToml(pieces.join(""), { integersAsBigInt: true, maxDepth: 128 }));
   return output === "json" ? JSON.stringify(value, null, 2) : stringifyYaml(value);
 }
 
@@ -48,7 +60,7 @@ export function convertToToml(input: string, from: "json" | "yaml"): string {
 
 export function prettifyYaml(input: string): string {
   if (!input.trim()) throw new Error("请输入 YAML。");
-  return parseAllDocuments(input, { keepSourceTokens: true }).map((document) => {
+  return parseAllDocuments(input).map((document) => {
     if (document.errors.length) throw new Error(`YAML 解析失败（${document.errors[0].code}）。`);
     return document.toString({ indent: 2, lineWidth: 0 });
   }).map((part, index) => index === 0 || /^---(?:\s|$)|^%/.test(part) ? part : `---\n${part}`).join("");
@@ -146,49 +158,82 @@ function xmlName(value: string): string {
   return value;
 }
 
+function scalarXmlText(value: JsonValue): string {
+  if (value === null || typeof value === "object") throw new Error("XML 文本与属性须使用字符串、数字或布尔值。");
+  return String(value);
+}
+
+function namedXmlNode(name: string, value: JsonValue, depth: number): XmlElement {
+  if (depth > 128) throw new Error("XML 最多支持 128 层嵌套。");
+  if (value === null) return { name };
+  if (!xmlObject(value)) return { name, children: [scalarXmlText(value)] };
+
+  const result: XmlElement = { name };
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "_attributes") {
+      if (!xmlObject(child)) throw new Error("_attributes 必须是对象。");
+      result.attributes = Object.fromEntries(Object.entries(child).map(([attribute, data]) => [attribute, scalarXmlText(data)]));
+    } else if (key === "_text") {
+      (result.children ??= []).push(scalarXmlText(child));
+    } else if (key === "_cdata") {
+      if (typeof child !== "string") throw new Error("_cdata 必须是字符串。");
+      (result.children ??= []).push({ cdata: child });
+    } else {
+      const values = Array.isArray(child) ? child : [child];
+      for (const item of values) (result.children ??= []).push(namedXmlNode(key, item, depth + 1));
+    }
+  }
+  return result;
+}
+
 export function jsonToXml(input: string): string {
   const value = readJsonValue(input);
-  if (!xmlObject(value) || !Array.isArray(value.nodes)) {
-    throw new Error("请输入 XML 转 JSON 生成的对象结构，顶层需包含 nodes 数组。");
+  if (!xmlObject(value)) throw new Error("JSON 顶层须为对象。");
+  const keys = Object.keys(value);
+  let result: string;
+  if (Array.isArray(value.nodes) && keys.every((key) => key === "nodes" || key === "declaration")) {
+    result = xmlDeclaration(value.declaration) + value.nodes.map((node) => xmlNode(node, 0)).join("");
+  } else {
+    if (keys.length !== 1) throw new Error("JSON 对象需要一个 XML 根元素。");
+    result = formatXmlNode(namedXmlNode(keys[0], value[keys[0]], 0), 0);
   }
-  let declaration = "";
-  if (value.declaration !== undefined) {
-    if (!xmlObject(value.declaration) || (value.declaration.version !== "1.0" && value.declaration.version !== "1.1")) {
-      throw new Error("XML 声明的 version 必须为 1.0 或 1.1。");
-    }
-    const { version, encoding, standalone } = value.declaration;
-    if (encoding !== undefined && (typeof encoding !== "string" || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(encoding))) {
-      throw new Error("XML 声明的 encoding 无效。");
-    }
-    if (standalone !== undefined && standalone !== "yes" && standalone !== "no") throw new Error("standalone 必须是 yes 或 no。");
-    declaration = `<?xml version="${version}"${encoding ? ` encoding="${encoding}"` : ""}${standalone ? ` standalone="${standalone}"` : ""}?>\n`;
-  }
-  const result = declaration + value.nodes.map((node) => xmlNode(node, 0)).join("");
   parseXml(result);
   return result;
 }
 
-function contentSensitive(nodes: XmlNode[]): boolean {
-  for (const node of nodes) {
-    if (typeof node === "object" && "name" in node) {
-      const children = node.children ?? [];
-      if (node.attributes?.["xml:space"] === "preserve" || children.some((item) =>
-        typeof item === "string" ? item.trim().length > 0 || (children.length === 1 && item.length > 0) : "cdata" in item,
-      ) || contentSensitive(children)) return true;
-    }
+function xmlDeclaration(value: JsonValue | undefined): string {
+  if (value === undefined) return "";
+  if (!xmlObject(value) || (value.version !== "1.0" && value.version !== "1.1")) {
+    throw new Error("XML 声明的 version 必须为 1.0 或 1.1。");
   }
-  return false;
+  const { version, encoding, standalone } = value;
+  if (encoding !== undefined && (typeof encoding !== "string" || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(encoding))) {
+    throw new Error("XML 声明的 encoding 无效。");
+  }
+  if (standalone !== undefined && standalone !== "yes" && standalone !== "no") throw new Error("standalone 必须是 yes 或 no。");
+  return `<?xml version="${version}"${encoding ? ` encoding="${encoding}"` : ""}${standalone ? ` standalone="${standalone}"` : ""}?>\n`;
+}
+
+function formatXmlNode(node: XmlNode, depth: number): string {
+  const indent = "  ".repeat(depth);
+  if (typeof node !== "object" || !("name" in node) || !node.children?.length) {
+    return indent + xmlNode(node, depth);
+  }
+  const children = node.children;
+  const hasSignificantText = children.some((item) => typeof item === "string" ? Boolean(item.trim()) : "cdata" in item);
+  const hasElements = children.some((item) => typeof item === "object" && "name" in item);
+  if (node.attributes?.["xml:space"] === "preserve" || hasSignificantText || !hasElements) {
+    return indent + xmlNode(node, depth);
+  }
+  const opening = xmlNode({ name: node.name, ...(node.attributes ? { attributes: node.attributes } : {}) }, depth).slice(0, -2) + ">";
+  const nested = children.filter((item) => typeof item !== "string").map((item) => formatXmlNode(item, depth + 1));
+  return [indent + opening, ...nested, `${indent}</${node.name}>`].join("\n");
 }
 
 export function prettifyXml(input: string): string {
-  const parsed = parseXml(input);
-  // Preserve significant character data and xml:space, including nested mixed content.
-  if (contentSensitive(parsed.nodes)) return input;
-  const result = formatXmlSource(input, { indentation: "  ", strictMode: true, lineSeparator: "\n", collapseContent: true });
-  parseXml(result);
+  const { declaration, nodes } = parseXml(input);
+  const result = xmlDeclaration(declaration ? Object.fromEntries(Object.entries(declaration)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined)
+    + nodes.map((node) => formatXmlNode(node, 0)).join("\n");
   return result;
-}
-
-export function markdownToHtml(input: string): string {
-  return micromark(input);
 }

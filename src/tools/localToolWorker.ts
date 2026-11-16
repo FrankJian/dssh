@@ -28,7 +28,9 @@ export function runLocalTool(createWorker: () => Worker, job: LocalToolJob): Pro
 export function receiveLocalTool(run: (job: LocalToolJob) => string) {
   self.onmessage = ({ data }: MessageEvent<LocalToolJob>) => {
     try {
-      self.postMessage({ result: run(data) });
+      const result = run(data);
+      if (result.length > 2 * 1024 * 1024) throw new Error("输出过大，请分批处理。");
+      self.postMessage({ result });
     } catch (error) {
       self.postMessage({ error: error instanceof Error ? error.message : "输入无法处理。" });
     }
