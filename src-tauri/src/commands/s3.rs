@@ -23,73 +23,90 @@ async fn client_for(state: &AppState, profile_id: &str) -> AppResult<Client> {
 }
 
 #[tauri::command]
-pub fn list_s3_profiles(state: State<'_, AppState>) -> AppResult<Vec<S3Profile>> {
-    state.profiles.list_s3_profiles()
+pub async fn list_s3_profiles(state: State<'_, AppState>) -> AppResult<Vec<S3Profile>> {
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.list_s3_profiles()).await
 }
 
 #[tauri::command]
-pub fn create_s3_profile(
+pub async fn create_s3_profile(
     state: State<'_, AppState>,
     request: CreateS3ProfileRequest,
 ) -> AppResult<S3Profile> {
-    state.profiles.create_s3_profile(request)
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.create_s3_profile(request)).await
 }
 
 #[tauri::command]
-pub fn update_s3_profile(
+pub async fn update_s3_profile(
     state: State<'_, AppState>,
     request: UpdateS3ProfileRequest,
 ) -> AppResult<S3Profile> {
-    let id = request.id.clone();
-    let profile = state.profiles.update_s3_profile(request)?;
-    state.s3.drop_client(&id);
-    Ok(profile)
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        let id = request.id.clone();
+        let profile = owned.profiles.update_s3_profile(request)?;
+        owned.s3.drop_client(&id);
+        Ok(profile)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_s3_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.profiles.delete_s3_profile(&id)?;
-    state.s3.drop_client(&id);
-    Ok(())
+pub async fn delete_s3_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        owned.profiles.delete_s3_profile(&id)?;
+        owned.s3.drop_client(&id);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_s3_profile_favorite(
+pub async fn set_s3_profile_favorite(
     state: State<'_, AppState>,
     id: String,
     favorite: bool,
 ) -> AppResult<S3Profile> {
-    state.profiles.set_s3_profile_favorite(&id, favorite)
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.set_s3_profile_favorite(&id, favorite)).await
 }
 
 #[tauri::command]
-pub fn list_s3_bookmarks(
+pub async fn list_s3_bookmarks(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> AppResult<Vec<S3Bookmark>> {
-    state.profiles.list_s3_bookmarks(&profile_id)
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.list_s3_bookmarks(&profile_id)).await
 }
 
 #[tauri::command]
-pub fn create_s3_bookmark(
+pub async fn create_s3_bookmark(
     state: State<'_, AppState>,
     profile_id: String,
     name: String,
     bucket: String,
     prefix: String,
 ) -> AppResult<S3Bookmark> {
-    state
-        .profiles
-        .create_s3_bookmark(&profile_id, name, bucket, prefix)
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        owned
+            .profiles
+            .create_s3_bookmark(&profile_id, name, bucket, prefix)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_s3_bookmark(
+pub async fn delete_s3_bookmark(
     state: State<'_, AppState>,
     profile_id: String,
     id: String,
 ) -> AppResult<()> {
-    state.profiles.delete_s3_bookmark(&profile_id, &id)
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.delete_s3_bookmark(&profile_id, &id)).await
 }
 
 #[tauri::command]

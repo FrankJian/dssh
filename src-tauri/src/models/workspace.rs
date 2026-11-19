@@ -36,6 +36,8 @@ pub struct DetachedTerminalWorkspace {
     /// changes inside a split layout.
     pub tab_session_id: String,
     pub session_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_session_ids: Option<Vec<String>>,
     #[serde(default)]
     pub auto_title: bool,
     /// Serialized pane layout owned by the renderer. Keeping the shape opaque
@@ -93,6 +95,8 @@ pub struct UpdateDetachedWorkspaceRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DetachedWorkbench {
     pub session_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_session_ids: Option<Vec<String>>,
     pub layouts: Vec<Value>,
     pub terminal_names: HashMap<String, String>,
     pub pane_names: HashMap<String, String>,
@@ -100,4 +104,38 @@ pub struct DetachedWorkbench {
     pub sftp_tabs: Vec<Value>,
     pub tab_order: Vec<String>,
     pub s3_profile_ids: Vec<String>,
+}
+
+#[cfg(test)]
+mod activity_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_window_state_is_unknown_but_known_idle_survives_roundtrip() {
+        let legacy: DetachedTerminalWorkspace = serde_json::from_value(serde_json::json!({
+            "tabSessionId":"pty", "sessionIds":["pty"], "layout":null
+        }))
+        .unwrap();
+        assert!(legacy.running_session_ids.is_none());
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("runningSessionIds")
+                .is_none()
+        );
+        let known = DetachedTerminalWorkspace {
+            running_session_ids: Some(vec![]),
+            ..legacy
+        };
+        let restored: DetachedTerminalWorkspace =
+            serde_json::from_value(serde_json::to_value(known).unwrap()).unwrap();
+        assert_eq!(restored.running_session_ids, Some(vec![]));
+        let workbench = DetachedWorkbench {
+            running_session_ids: Some(vec!["pty".into()]),
+            ..Default::default()
+        };
+        let restored: DetachedWorkbench =
+            serde_json::from_value(serde_json::to_value(workbench).unwrap()).unwrap();
+        assert_eq!(restored.running_session_ids, Some(vec!["pty".into()]));
+    }
 }

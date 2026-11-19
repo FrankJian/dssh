@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import type { TerminalSession, TerminalSize } from "../models";
 import type { RightClickAction } from "../settings/settings";
 import { LazyTerminalView } from "./LazyTerminalView";
@@ -56,14 +56,22 @@ export function PaneGrid({
   hasWallpaper,
   onFontSizeChange,
 }: PaneGridProps) {
+  const cleanupDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => cleanupDrag.current?.(), []);
+
   function startDrag(split: PaneSplit, event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
     event.preventDefault();
+    cleanupDrag.current?.();
     const grid = event.currentTarget.parentElement;
     if (!grid) {
       return;
     }
     const rect = grid.getBoundingClientRect();
     const total = split.dir === "h" ? rect.width : rect.height;
+    if (total <= 0) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
     const startPos = split.dir === "h" ? event.clientX : event.clientY;
     const startRatios = [...split.ratios] as [number, number];
     const minRatio = Math.min(MIN_RATIO, Math.min(...startRatios) / 2);
@@ -95,7 +103,12 @@ export function PaneGrid({
         frame = requestAnimationFrame(applyPending);
       }
     };
+    let finished = false;
     const handleUp = () => {
+      if (finished) return;
+      finished = true;
+      cleanupDrag.current = null;
+      window.removeEventListener("blur", handleUp);
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
       if (frame !== null) {
@@ -103,11 +116,13 @@ export function PaneGrid({
         frame = null;
       }
       applyPending();
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
       // Releases the terminals to fit against their final size.
       endPaneDrag();
     };
+    cleanupDrag.current = handleUp;
+    window.addEventListener("blur", handleUp);
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
     document.body.style.cursor = split.dir === "h" ? "col-resize" : "row-resize";
@@ -164,9 +179,24 @@ export function PaneGrid({
           {renderNode(node.children[0])}
         </div>
         <div
+          aria-label="调整终端分屏大小"
+          aria-valuemin={Math.round(MIN_RATIO * 100)}
+          aria-valuemax={Math.round((1 - MIN_RATIO) * 100)}
+          aria-valuenow={Math.round(node.ratios[0] * 100)}
           aria-orientation={node.dir === "h" ? "vertical" : "horizontal"}
           className="pane-divider"
           data-dir={node.dir}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            const decrease = node.dir === "h" ? "ArrowLeft" : "ArrowUp";
+            const increase = node.dir === "h" ? "ArrowRight" : "ArrowDown";
+            if (![decrease, increase, "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const value = event.key === "Home" ? MIN_RATIO : event.key === "End" ? 1 - MIN_RATIO
+              : node.ratios[0] + (event.key === decrease ? -1 : 1) * (event.shiftKey ? 0.1 : 0.02);
+            const first = Math.max(MIN_RATIO, Math.min(1 - MIN_RATIO, value));
+            onRatios(node.id, [first, 1 - first]);
+          }}
           onMouseDown={(event) => startDrag(node, event)}
           role="separator"
         />

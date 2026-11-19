@@ -1,3 +1,4 @@
+import { restoreTerminalCursor } from "./terminalRegistry";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TerminalSession } from "../models";
@@ -24,6 +25,7 @@ export function TerminalSessionMenu({ session, onReconnect, onCancelReconnect,
   items.push(reconnecting
     ? { label: "取消重连", icon: "stop", run: onCancelReconnect }
     : { label: "重新连接", icon: "refresh", run: onReconnect });
+  items.push({ label: "恢复终端光标", icon: "refresh", run: () => restoreTerminalCursor(session.id) });
   if (onOpenPortForward) items.push({ label: "端口转发", icon: "forward", run: onOpenPortForward });
 
   useEffect(() => { setOpen(false); }, [session.id]);

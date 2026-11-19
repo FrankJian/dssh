@@ -3,7 +3,9 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { listDetachedWorkspaces } from "../services/workspaceService";
 import { workspaceSessionIds } from "../models/workspace";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
-import { RETAINED_OUTPUT_CHARS } from "../settings/settings";
+import { createBacklog, appendToBacklog, readBacklog, type SessionBacklog } from "./sessionBacklog";
+import { TerminalOutputStream } from "./terminalOutputStream";
+import { OFFLINE_TERMINAL_MODES } from "./terminalRecovery";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
 import { TerminalTargetTracker, type JumpServerSftpTarget } from "./terminalTarget";
 import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
@@ -14,13 +16,12 @@ import {
   closeSshSession,
   cancelReconnect as cancelReconnectCommand,
   listSshSessions,
-  onTerminalOutput,
   onTerminalInputObserved,
-  onTerminalStatus,
   onTerminalTransferPrompt,
   onTerminalTransferConflict,
   onTerminalTransferStatus,
-  readSshSessionOutput,
+  subscribeTerminalOutput,
+  unsubscribeTerminalOutput,
   reconnectSshSession,
   respondZmodemPrompt,
   respondZmodemConflict,
@@ -28,6 +29,7 @@ import {
   startLocalSession as startLocalSessionCommand,
   startSshSession,
   writeSshSession,
+  type TerminalStatusEvent,
   type TerminalTransferStatusEvent,
   type TerminalTransferConflictEvent,
 } from "../services/sshSessionService";
@@ -44,59 +46,18 @@ const RECONNECT_ON_INPUT_STATUSES = new Set<TerminalSession["status"]>([
   "failed",
 ]);
 
-// Leave the previous PTY's alternate screen and disable its mouse/focus reporting.
-const OFFLINE_TERMINAL_MODES = "\x1b[?1049l\x1b[?1000;1002;1003;1004;1006l";
-
 function reconnectHint(session: TerminalSession): string {
   return session.kind === "ssh" ? "按任意键重新连接。" : "按任意键重新打开本地终端。";
-}
-
-/**
- * Retained output for one session, kept as the chunks we received instead of
- * one growing string. Appending is O(1) and trimming drops whole chunks, so a
- * sustained flood no longer copies the entire backlog on every event.
- */
-interface SessionBacklog {
-  chunks: string[];
-  length: number;
-}
-
-function createBacklog(initial?: string): SessionBacklog {
-  return initial ? { chunks: [initial], length: initial.length } : { chunks: [], length: 0 };
-}
-
-function appendToBacklog(backlog: SessionBacklog, data: string) {
-  backlog.chunks.push(data);
-  backlog.length += data.length;
-
-  // Drop whole chunks only. Slicing inside one could cut a surrogate pair or an
-  // ANSI escape sequence in half, which corrupts the replay when a terminal
-  // mounts. Trimming stops while removing the oldest chunk would take the
-  // backlog under the retention target, so it stays at or above it.
-  while (backlog.chunks.length > 1) {
-    const oldest = backlog.chunks[0];
-    if (oldest === undefined || backlog.length - oldest.length < RETAINED_OUTPUT_CHARS) {
-      break;
-    }
-    backlog.chunks.shift();
-    backlog.length -= oldest.length;
-  }
-}
-
-/** Collapse to a single string; mounting a terminal is rare next to appending. */
-function readBacklog(backlog: SessionBacklog): string {
-  if (backlog.chunks.length > 1) {
-    backlog.chunks = [backlog.chunks.join("")];
-  }
-  return backlog.chunks[0] ?? "";
 }
 
 export function useTerminalSessions(
   initialSessionIds: string[] | undefined,
   onCommandCompleted: (sessionId: string) => void,
+  initialRunningSessionIds?: string[],
 ) {
   const commandCompleted = useEffectEvent(onCommandCompleted);
   const initialSessionIdsRef = useRef(initialSessionIds);
+  const initialRunningRef = useRef(initialRunningSessionIds);
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSessionsLoaded, setIsSessionsLoaded] = useState(false);
@@ -110,9 +71,8 @@ export function useTerminalSessions(
   const manualReconnectsRef = useRef(new Set<string>());
   const activityTrackersRef = useRef(new Map<string, TerminalCommandActivityTracker>());
   const targetTrackersRef = useRef(new Map<string, TerminalTargetTracker>());
-  // A local PTY can become ready before `start_local_session` resolves in the
-  // WebView. Keep that early event so adding the returned session cannot put
-  // the sidebar permanently in the "connecting" state.
+  // Status and output now share a channel. Retain status received while a
+  // subscription is being attached, before its React session row exists.
   const latestSessionStatusesRef = useRef(new Map<string, TerminalSession["status"]>());
 
   // Mirror of `sessions` so async callbacks (e.g. reconnect) can read the
@@ -126,6 +86,7 @@ export function useTerminalSessions(
   // terminal exactly once through registered listeners.
   const buffersRef = useRef<Map<string, SessionBacklog>>(new Map());
   const listenersRef = useRef<Map<string, Set<TerminalOutputListener>>>(new Map());
+  const outputStreamRef = useRef<TerminalOutputStream | null>(null);
 
   const updateCommandActivity = useCallback((sessionId: string, activity: CommandActivity | null) => {
     if (activity === null) {
@@ -238,15 +199,61 @@ export function useTerminalSessions(
     [],
   );
 
+  const liveOutputRef = useRef<(event: { sessionId: string; data: string }) => void>(() => {});
+  liveOutputRef.current = (event) => {
+    if (pushOutput(event.sessionId, event.data) === "idle") {
+      const status = latestSessionStatusesRef.current.get(event.sessionId);
+      if (status === undefined || status === "connected") commandCompleted(event.sessionId);
+    }
+  };
+  const statusOutputRef = useRef<(event: TerminalStatusEvent) => void>(() => {});
+  const outputStream = useCallback(() => {
+    outputStreamRef.current ??= new TerminalOutputStream({
+      subscribe: subscribeTerminalOutput,
+      unsubscribe: unsubscribeTerminalOutput,
+      token: () => crypto.randomUUID(),
+    }, (event) => liveOutputRef.current(event), (event) => statusOutputRef.current(event),
+      (error) => toast(error.message, "error"));
+    return outputStreamRef.current;
+  }, []);
+
+  const connectOutput = useCallback((sessionId: string, restoreActivity = false, activityHint?: CommandActivity) =>
+    outputStream().start(sessionId, (snapshot) => {
+      buffersRef.current.set(sessionId, createBacklog(snapshot.data));
+      const tracker = new TerminalTargetTracker();
+      targetTrackersRef.current.set(sessionId, tracker);
+      const address = tracker.observeOutput(snapshot.data);
+      setTargetAddresses((current) => address === undefined ? current : { ...current, [sessionId]: address });
+      setSftpTargets((current) => ({ ...current, [sessionId]: tracker.sftpTarget }));
+      const activity = new TerminalCommandActivityTracker();
+      activityTrackersRef.current.set(sessionId, activity);
+      updateCommandActivity(sessionId, restoreActivity
+        ? activity.restoreFromOutput(snapshot.data, activityHint) : activity.observeOutput(snapshot.data));
+      const status = snapshot.session.status;
+      latestSessionStatusesRef.current.set(sessionId, status);
+      if (RECONNECT_ON_INPUT_STATUSES.has(status) || status === "reconnecting") {
+        pushOutput(sessionId, OFFLINE_TERMINAL_MODES);
+      }
+    }), [outputStream, pushOutput, updateCommandActivity]);
+
+  useEffect(() => () => outputStreamRef.current?.stopAll(), []);
+
+  const connectCreatedOutput = useCallback(async (created: TerminalSession) => {
+    try { return await connectOutput(created.id); } catch (error) {
+      await closeSshSession(created.id).catch(() => {});
+      throw error;
+    }
+  }, [connectOutput]);
+
   const startLocalSession = useCallback(async (options?: { activate?: boolean }) => {
     const startedSession = await startLocalSessionCommand({
       size: initialSize,
     });
-    const session = withLatestStatus(startedSession);
+    const session = withLatestStatus(await connectCreatedOutput(startedSession));
     setSessions((currentSessions) => [...currentSessions, session]);
     if (options?.activate !== false) setActiveSessionId(session.id);
     return session;
-  }, [withLatestStatus]);
+  }, [connectCreatedOutput, withLatestStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -256,44 +263,29 @@ export function useTerminalSessions(
         if (!mounted) return;
         const initialIds = initialSessionIdsRef.current;
         const detached = initialIds ? [] : await listDetachedWorkspaces();
+        if (!mounted) return;
         const otherIds = new Set(detached.flatMap(workspaceSessionIds));
         const loadedSessions = allSessions.filter((session) => initialIds ? initialIds.includes(session.id) : !otherIds.has(session.id));
 
-        // A second window attaches to an existing Rust-side session. Hydrate its
-        // renderer from the retained backend scrollback before future global
-        // `terminal-output` events fan in.
-        const snapshots = await Promise.all(
-          loadedSessions.map(async (session) => ({
-            sessionId: session.id,
-            output: await readSshSessionOutput(session.id).catch(() => ""),
-          })),
-        );
+        // Register after the listener is ready; each atomic snapshot is joined
+        // with sequenced events even if they arrive before the invoke response.
+        const results = await Promise.allSettled(loadedSessions.map((session) => connectOutput(session.id, true,
+          initialRunningRef.current === undefined ? undefined : initialRunningRef.current.includes(session.id) ? "running" : "idle")));
+        const hydratedSessions = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
         if (!mounted) return;
-        for (const snapshot of snapshots) {
-          if (snapshot.output) {
-            buffersRef.current.set(snapshot.sessionId, createBacklog(snapshot.output));
-            targetTrackerForSession(snapshot.sessionId).observeOutput(snapshot.output);
-          }
+        if (results.some((result) => result.status === "rejected")) {
+          toast("部分终端未能恢复显示，请从连接库重新打开。", "error");
         }
-        const hydratedAddresses = Object.fromEntries(snapshots.flatMap(({ sessionId }) => {
-          const address = targetTrackerForSession(sessionId).address;
-          return address === undefined ? [] : [[sessionId, address]];
-        }));
-        setTargetAddresses((current) => ({ ...hydratedAddresses, ...current }));
-        setSftpTargets((current) => ({
-          ...Object.fromEntries(snapshots.map(({ sessionId }) => [sessionId, targetTrackerForSession(sessionId).sftpTarget])),
-          ...current,
-        }));
 
-        if (loadedSessions.length > 0) {
-          const currentSessions = loadedSessions.map(withLatestStatus);
+        if (hydratedSessions.length > 0) {
+          const currentSessions = hydratedSessions.map(withLatestStatus);
           for (const session of currentSessions) {
             if (RECONNECT_ON_INPUT_STATUSES.has(session.status)) {
               pushOutput(session.id, `${OFFLINE_TERMINAL_MODES}\r\n${reconnectHint(session)}\r\n`);
             }
           }
           setSessions(currentSessions);
-          setActiveSessionId(loadedSessions[0]?.id ?? null);
+          setActiveSessionId(hydratedSessions[0]?.id ?? null);
           return;
         }
         // Do not create a local terminal automatically at startup. A local shell
@@ -314,65 +306,62 @@ export function useTerminalSessions(
     return () => {
       mounted = false;
     };
-  }, [pushOutput, targetTrackerForSession, withLatestStatus]);
+  }, [connectOutput, pushOutput, withLatestStatus]);
+
+  statusOutputRef.current = (event) => {
+    if (!outputStreamRef.current?.has(event.sessionId)) return;
+    latestSessionStatusesRef.current.set(event.sessionId, event.status);
+    if (event.status === "reconnecting") {
+      const address = targetTrackerForSession(event.sessionId).resetConnection();
+      setTargetAddresses((current) => {
+        const next = { ...current };
+        if (address === undefined) delete next[event.sessionId];
+        else next[event.sessionId] = address;
+        return next;
+      });
+      setSftpTargets((current) => ({ ...current, [event.sessionId]: undefined }));
+    }
+    setSessions((currentSessions) =>
+      currentSessions.map((session) =>
+        session.id === event.sessionId ? { ...session, status: event.status } : session,
+      ),
+    );
+    if (event.status !== "connected") {
+      // Keep the parser and public activity set in sync across transport
+      // recovery; otherwise a stale "running" tracker suppresses the next start.
+      activityTrackersRef.current.delete(event.sessionId);
+      updateCommandActivity(event.sessionId, "idle");
+      setTerminalConflicts((current) => current.filter((item) => item.sessionId !== event.sessionId));
+    }
+    const offline = RECONNECT_ON_INPUT_STATUSES.has(event.status);
+    if (offline || event.status === "reconnecting") {
+      pushOutput(event.sessionId, OFFLINE_TERMINAL_MODES);
+    }
+    const session = sessionsRef.current.find((item) => item.id === event.sessionId);
+    const message = event.message ?? (event.status === "reconnecting" && session
+      ? session.kind === "ssh" ? "正在重新连接…" : "正在重新打开本地终端…"
+      : undefined);
+    if (message) {
+      const color =
+        event.status === "reconnecting" ? "33" : event.status === "connected" ? "32" : "31";
+      pushOutput(event.sessionId, `\r\n\x1b[${color}m${message}\x1b[0m\r\n`);
+    }
+    if (session && offline) {
+      pushOutput(event.sessionId, `\r\n${reconnectHint(session)}\r\n`);
+    }
+  };
 
   useEffect(() => {
     const inputPromise = onTerminalInputObserved((event) => {
+      if (!outputStreamRef.current?.has(event.sessionId)) return;
       updateCommandActivity(event.sessionId, trackerForSession(event.sessionId).observeInput(event.data));
       targetTrackerForSession(event.sessionId).observeInput(event.data);
     });
-    const outputPromise = onTerminalOutput((event) => {
-      if (pushOutput(event.sessionId, event.data) === "idle") {
-        const status = latestSessionStatusesRef.current.get(event.sessionId);
-        if (status === undefined || status === "connected") commandCompleted(event.sessionId);
-      }
-    });
-    const statusPromise = onTerminalStatus((event) => {
-      latestSessionStatusesRef.current.set(event.sessionId, event.status);
-      if (event.status === "reconnecting") {
-        const address = targetTrackerForSession(event.sessionId).resetConnection();
-        setTargetAddresses((current) => {
-          const next = { ...current };
-          if (address === undefined) delete next[event.sessionId];
-          else next[event.sessionId] = address;
-          return next;
-        });
-        setSftpTargets((current) => ({ ...current, [event.sessionId]: undefined }));
-      }
-      setSessions((currentSessions) =>
-        currentSessions.map((session) =>
-          session.id === event.sessionId ? { ...session, status: event.status } : session,
-        ),
-      );
-      if (event.status !== "connected") {
-        // Keep the parser and public activity set in sync across transport
-        // recovery; otherwise a stale "running" tracker suppresses the next start.
-        activityTrackersRef.current.delete(event.sessionId);
-        updateCommandActivity(event.sessionId, "idle");
-        setTerminalConflicts((current) => current.filter((item) => item.sessionId !== event.sessionId));
-      }
-      const offline = RECONNECT_ON_INPUT_STATUSES.has(event.status);
-      if (offline) pushOutput(event.sessionId, OFFLINE_TERMINAL_MODES);
-      const session = sessionsRef.current.find((item) => item.id === event.sessionId);
-      const message = event.message ?? (event.status === "reconnecting" && session
-        ? session.kind === "ssh" ? "正在重新连接…" : "正在重新打开本地终端…"
-        : undefined);
-      if (message) {
-        const color =
-          event.status === "reconnecting" ? "33" : event.status === "connected" ? "32" : "31";
-        pushOutput(event.sessionId, `\r\n\x1b[${color}m${message}\x1b[0m\r\n`);
-      }
-      if (session && offline) {
-        pushOutput(event.sessionId, `\r\n${reconnectHint(session)}\r\n`);
-      }
-    });
 
     return () => {
-      void outputPromise.then((unlisten) => unlisten());
       void inputPromise.then((unlisten) => unlisten());
-      void statusPromise.then((unlisten) => unlisten());
     };
-  }, [pushOutput, targetTrackerForSession, trackerForSession, updateCommandActivity]);
+  }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   useEffect(() => {
     const promptPromise = onTerminalTransferPrompt((event) => {
@@ -440,24 +429,23 @@ export function useTerminalSessions(
       size,
       waitForInitialResize: options?.waitForInitialResize,
     });
-    const session = withLatestStatus(startedSession);
+    const session = withLatestStatus(await connectCreatedOutput(startedSession));
     setSessions((currentSessions) => [...currentSessions, session]);
     if (options?.activate !== false) setActiveSessionId(session.id);
     return session;
-  }, [withLatestStatus]);
+  }, [connectCreatedOutput, withLatestStatus]);
 
   const attachSession = useCallback(async (session: TerminalSession) => {
-    const output = await readSshSessionOutput(session.id).catch(() => "");
-    buffersRef.current.set(session.id, createBacklog(output));
-    const tracker = targetTrackerForSession(session.id);
-    const address = tracker.observeOutput(output);
-    const target = tracker.sftpTarget;
-    setSftpTargets((current) => ({ ...current, [session.id]: target }));
-    if (address !== undefined) setTargetAddresses((current) => ({ ...current, [session.id]: address }));
-    updateCommandActivity(session.id, trackerForSession(session.id).restoreFromOutput(output));
-    setSessions((previous) => previous.some((item) => item.id === session.id) ? previous : [...previous, withLatestStatus(session)]);
+    // An existing renderer already has an exact live stream. Resubscribing
+    // would replace its backlog without replaying the gap into that renderer.
+    if (outputStreamRef.current?.has(session.id) && sessionsRef.current.some((item) => item.id === session.id)) {
+      setActiveSessionId(session.id);
+      return;
+    }
+    const attached = await connectOutput(session.id, true);
+    setSessions((previous) => previous.some((item) => item.id === session.id) ? previous : [...previous, withLatestStatus(attached)]);
     setActiveSessionId(session.id);
-  }, [targetTrackerForSession, trackerForSession, updateCommandActivity, withLatestStatus]);
+  }, [connectOutput, withLatestStatus]);
 
   const reconnectSession = useCallback(async (sessionId: string) => {
     if (manualReconnectsRef.current.has(sessionId)) return;
@@ -521,10 +509,8 @@ export function useTerminalSessions(
     [activeSessionId, targetTrackerForSession, trackerForSession, updateCommandActivity],
   );
 
-  // Per-session I/O. Terminal surfaces target the session they render rather
-  // than the "active" one: in a detached window those differ, because this hook
-  // is seeded from the backend's global session list while the window only
-  // shows the sessions in its own descriptor.
+  // Per-session I/O targets the pane being rendered, including non-active
+  // panes in the same terminal tab and sessions in detached workbenches.
   const writeToSession = useCallback(async (sessionId: string, data: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     if (!session) {
@@ -544,6 +530,7 @@ export function useTerminalSessions(
   }, []);
 
   const forgetSession = useCallback((sessionId: string) => {
+    outputStreamRef.current?.stop(sessionId);
     terminalSizesRef.current.delete(sessionId);
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);

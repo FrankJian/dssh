@@ -151,6 +151,8 @@ pub fn run() {
             commands::config::read_image_data_url,
             commands::sessions::list_ssh_sessions,
             commands::sessions::read_ssh_session_output,
+            commands::sessions::subscribe_terminal_output,
+            commands::sessions::unsubscribe_terminal_output,
             commands::sessions::start_local_session,
             commands::sessions::start_ssh_session,
             commands::sessions::write_ssh_session,
@@ -233,6 +235,9 @@ pub fn run() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app.state::<app::AppState>()
+                    .sessions
+                    .remove_output_window(&label);
                 app.state::<app::AppState>().rdp.close_owner(Some(&label));
                 app.state::<app::AppState>().jumpserver.cancel_owner(&label);
                 let state = app.state::<app::AppState>().inner().clone();

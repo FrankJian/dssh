@@ -17,12 +17,15 @@ fn trusted(app: &AppHandle, webview: &Webview) -> AppResult<()> {
     Ok(())
 }
 #[tauri::command]
-pub fn list_jumpserver_profiles(
+pub async fn list_jumpserver_profiles(
     app: AppHandle,
     webview: Webview,
 ) -> AppResult<Vec<JumpServerProfile>> {
-    trusted(&app, &webview)?;
-    app.state::<AppState>().profiles.list_jumpserver_profiles()
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        app.state::<AppState>().profiles.list_jumpserver_profiles()
+    })
+    .await
 }
 #[tauri::command]
 pub async fn save_jumpserver_profile(
@@ -116,35 +119,41 @@ pub fn jumpserver_cancel_login(
         .cancel_password_login(&id, &challenge_id, webview.label())
 }
 #[tauri::command]
-pub fn jumpserver_open_ssh_gateway(
+pub async fn jumpserver_open_ssh_gateway(
     app: AppHandle,
     webview: Webview,
     id: String,
     size: TerminalSize,
 ) -> AppResult<TerminalSession> {
-    trusted(&app, &webview)?;
-    let state = app.state::<AppState>();
-    let (profile, _) = state.profiles.get_jumpserver_profile(&id)?;
-    let ssh_id = profile.ssh_profile_id.ok_or_else(|| {
-        AppError::new(
-            "jumpserver_ssh_missing",
-            "请先在编辑连接中关联现有 SSH 配置。",
-        )
-    })?;
-    let ssh = state
-        .profiles
-        .get_profile(&ssh_id)?
-        .ok_or_else(|| AppError::new("profile_not_found", "关联的 SSH 连接已不存在。"))?;
-    state.sessions.start_session(app.clone(), ssh, size)
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        let state = app.state::<AppState>();
+        let (profile, _) = state.profiles.get_jumpserver_profile(&id)?;
+        let ssh_id = profile.ssh_profile_id.ok_or_else(|| {
+            AppError::new(
+                "jumpserver_ssh_missing",
+                "请先在编辑连接中关联现有 SSH 配置。",
+            )
+        })?;
+        let ssh = state
+            .profiles
+            .get_profile(&ssh_id)?
+            .ok_or_else(|| AppError::new("profile_not_found", "关联的 SSH 连接已不存在。"))?;
+        state.sessions.start_session(app.clone(), ssh, size)
+    })
+    .await
 }
 #[tauri::command]
-pub fn jumpserver_identity(
+pub async fn jumpserver_identity(
     app: AppHandle,
     webview: Webview,
     id: String,
 ) -> AppResult<Option<JumpServerIdentity>> {
-    trusted(&app, &webview)?;
-    app.state::<AppState>().jumpserver.identity(&id)
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        app.state::<AppState>().jumpserver.identity(&id)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn jumpserver_list_assets(
@@ -184,16 +193,19 @@ pub async fn jumpserver_list_accounts(
         .await
 }
 #[tauri::command]
-pub fn jumpserver_open_terminal(
+pub async fn jumpserver_open_terminal(
     app: AppHandle,
     webview: Webview,
     target: JumpServerTarget,
     size: TerminalSize,
 ) -> AppResult<TerminalSession> {
-    trusted(&app, &webview)?;
-    let s = app.state::<AppState>();
-    let profile = s.jumpserver.register_target(target)?;
-    s.sessions.start_session(app.clone(), profile, size)
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        let s = app.state::<AppState>();
+        let profile = s.jumpserver.register_target(target)?;
+        s.sessions.start_session(app.clone(), profile, size)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn jumpserver_logout(app: AppHandle, webview: Webview, id: String) -> AppResult<()> {

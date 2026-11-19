@@ -26,13 +26,15 @@ use tokio::{
     sync::{Mutex as AsyncMutex, Notify, mpsc, watch},
 };
 
+use super::{output_delivery::OutputDelivery, retained_output::RetainedOutput};
 use crate::{
     error::{AppError, AppResult},
     models::{
         ssh_profile::{AuthMethod, SshProfile, SshProxy},
         terminal::{
-            SessionStatus, TerminalOutputEvent, TerminalSession, TerminalSessionKind, TerminalSize,
-            TerminalStatusEvent, TerminalTransferConflictEvent, TerminalTransferPromptEvent,
+            SessionStatus, TerminalOutputEvent, TerminalOutputSubscription, TerminalSession,
+            TerminalSessionKind, TerminalSize, TerminalStatusEvent, TerminalStreamEvent,
+            TerminalTransferConflictEvent, TerminalTransferPromptEvent,
             TerminalTransferStatusEvent,
         },
     },
@@ -44,18 +46,13 @@ use crate::{
     },
     ssh::{ChannelOwner, SshConnectionPool},
 };
+
 use zmodem2::{
     Action as ZmodemAction, Event as ZmodemEvent, FileInfo as ZmodemFileInfo, Position,
     Receiver as ZmodemReceiver, Sender as ZmodemSender,
 };
 
-const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 const TERMINAL_STATUS_EVENT: &str = "terminal-status";
-/// Upper bound (in bytes) for the per-session scrollback we retain server-side
-/// so the AI agent can read what is currently on screen. Older output is
-/// dropped from the front once this is exceeded.
-const MAX_SESSION_BUFFER_BYTES: usize = 200_000;
-
 /// How long output may sit buffered before it must be emitted. Kept well under
 /// one frame so coalescing is not perceptible.
 const OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(4);
@@ -106,8 +103,9 @@ struct SessionHandle {
     closing: bool,
     /// Accumulated terminal output (with ANSI sequences), capped in size, used
     /// to answer AI `read_terminal` requests about the visible session.
-    output: Arc<Mutex<String>>,
+    output: Arc<Mutex<RetainedOutput>>,
     output_changed: Arc<Notify>,
+    output_delivery: Arc<Mutex<OutputDelivery>>,
     input_revision: u64,
     status: SessionStatus,
     background: Option<BackgroundOwner>,
@@ -122,6 +120,46 @@ struct BackgroundOwner {
 }
 
 impl SessionHandle {
+    fn subscribe_output(
+        &self,
+        session_id: &str,
+        window: &str,
+        subscription: &str,
+        on_output: tauri::ipc::Channel<TerminalStreamEvent>,
+        after_offset: Option<u64>,
+    ) -> AppResult<TerminalOutputSubscription> {
+        if self.hidden() {
+            return Err(AppError::new(
+                "session_not_found",
+                "终端会话不存在或已关闭。",
+            ));
+        }
+        if subscription.is_empty() || subscription.len() > 128 {
+            return Err(AppError::new("terminal_subscription", "终端订阅标识无效。"));
+        }
+        let output = self.output.lock().map_err(lock_error)?;
+        let mut delivery = self.output_delivery.lock().map_err(lock_error)?;
+        let end_offset = delivery.end_offset();
+        let data = match after_offset {
+            Some(offset) => output.snapshot_after(end_offset, offset).ok_or_else(|| {
+                AppError::new(
+                    "terminal_output_gap",
+                    "终端恢复检查点已失效，无法完整接续输出。请保留原终端。",
+                )
+            })?,
+            None => output.snapshot(),
+        };
+        // Validate before replacing the old subscriber, so a failed resume
+        // leaves the original window's ordered output stream intact.
+        delivery.subscribe(window, subscription, on_output);
+        Ok(TerminalOutputSubscription {
+            session: self.descriptor(session_id),
+            start_offset: end_offset - data.len() as u64,
+            data,
+            end_offset,
+        })
+    }
+
     fn hidden(&self) -> bool {
         self.background
             .as_ref()
@@ -211,6 +249,7 @@ impl SessionHandle {
 /// Binds an AI approval to both the output and user input observed before it.
 pub(crate) struct TerminalInputSnapshot {
     pub output: String,
+    output_revision: u64,
     input_revision: u64,
 }
 
@@ -556,8 +595,9 @@ impl SessionManager {
                 tx,
                 closed,
                 closing: false,
-                output: Arc::new(Mutex::new(String::new())),
+                output: Arc::default(),
                 output_changed: Arc::new(Notify::new()),
+                output_delivery: Arc::default(),
                 input_revision: 0,
                 status: status.clone(),
                 background,
@@ -667,8 +707,9 @@ impl SessionManager {
                 tx,
                 closed,
                 closing: false,
-                output: Arc::new(Mutex::new(String::new())),
+                output: Arc::default(),
                 output_changed: Arc::new(Notify::new()),
+                output_delivery: Arc::default(),
                 input_revision: 0,
                 status: status.clone(),
                 background: None,
@@ -724,8 +765,10 @@ impl SessionManager {
         let handle = sessions
             .get(session_id)
             .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        let output = handle.output.lock().map_err(lock_error)?;
         Ok(TerminalInputSnapshot {
-            output: handle.output.lock().map_err(lock_error)?.clone(),
+            output: output.snapshot(),
+            output_revision: output.revision(),
             input_revision: handle.input_revision,
         })
     }
@@ -964,15 +1007,20 @@ impl SessionManager {
         first_error.map_or(Ok(()), Err)
     }
 
-    fn update_status(&self, id: &str, status: SessionStatus) -> bool {
+    fn update_status(&self, event: &TerminalStatusEvent) -> bool {
         let Ok(mut sessions) = self.sessions.lock() else {
             return false;
         };
-        let Some(session) = sessions.get_mut(id) else {
+        let Some(session) = sessions.get_mut(&event.session_id) else {
             return false;
         };
-        session.status = status;
+        session.status = event.status.clone();
         session.output_changed.notify_waiters();
+        if !session.hidden()
+            && let Ok(delivery) = session.output_delivery.lock()
+        {
+            delivery.send_status(event);
+        }
         session.hidden()
     }
 
@@ -996,7 +1044,71 @@ impl SessionManager {
             )
         })?;
         let buffer = handle.output.lock().map_err(lock_error)?;
-        Ok(buffer.clone())
+        Ok(buffer.snapshot())
+    }
+
+    /// Lock order is output -> delivery, exactly as in OutputSink. No stream
+    /// can slip between the snapshot and registration or be duplicated on join.
+    pub fn subscribe_output(
+        &self,
+        session_id: &str,
+        window: &str,
+        subscription: &str,
+        on_output: tauri::ipc::Channel<TerminalStreamEvent>,
+        after_offset: Option<u64>,
+    ) -> AppResult<TerminalOutputSubscription> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端会话不存在或已关闭。"))?;
+        handle.subscribe_output(session_id, window, subscription, on_output, after_offset)
+    }
+
+    pub fn unsubscribe_output(
+        &self,
+        session_id: &str,
+        window: &str,
+        subscription: &str,
+    ) -> AppResult<()> {
+        let handle = self
+            .sessions
+            .lock()
+            .map_err(lock_error)?
+            .get(session_id)
+            .cloned();
+        if let Some(handle) = handle {
+            handle
+                .output_delivery
+                .lock()
+                .map_err(lock_error)?
+                .unsubscribe(window, subscription);
+        }
+        Ok(())
+    }
+
+    pub fn remove_output_window(&self, window: &str) {
+        // Copy handles before locking any delivery state; output workers never
+        // need the session registry while holding the output/delivery locks.
+        let deliveries: Vec<_> = match self.sessions.lock() {
+            Ok(sessions) => sessions
+                .values()
+                .map(|session| session.output_delivery.clone())
+                .collect(),
+            Err(_) => return,
+        };
+        for delivery in deliveries {
+            if let Ok(mut delivery) = delivery.lock() {
+                delivery.remove_window(window);
+            }
+        }
+    }
+
+    fn output_delivery(&self, session_id: &str) -> Option<Arc<Mutex<OutputDelivery>>> {
+        self.sessions
+            .lock()
+            .ok()?
+            .get(session_id)
+            .map(|handle| handle.output_delivery.clone())
     }
 
     fn session_tx(&self, session_id: &str) -> AppResult<mpsc::Sender<SessionCommand>> {
@@ -1019,7 +1131,7 @@ fn register_session_worker(
     id: &str,
     restart: Option<(&str, &watch::Receiver<bool>)>,
     mut handle: SessionHandle,
-) -> AppResult<Arc<Mutex<String>>> {
+) -> AppResult<Arc<Mutex<RetainedOutput>>> {
     if let Some((_, worker)) = restart {
         let previous = sessions
             .get(id)
@@ -1031,6 +1143,7 @@ fn register_session_worker(
             .ok_or_else(|| AppError::new("session_changed", "终端已关闭或正在重新连接。"))?;
         handle.output = previous.output.clone();
         handle.output_changed = previous.output_changed.clone();
+        handle.output_delivery = previous.output_delivery.clone();
         // A command approved for the previous shell cannot run in a new PTY.
         handle.input_revision = previous.input_revision.wrapping_add(1);
     }
@@ -1079,7 +1192,7 @@ async fn run_ssh_session(
     profile: SshProfile,
     startup: SshStartup,
     mut rx: mpsc::Receiver<SessionCommand>,
-    output: Arc<Mutex<String>>,
+    output: Arc<Mutex<RetainedOutput>>,
     pool: SshConnectionPool,
 ) -> AppResult<()> {
     let (status, message) = match connect_and_run(
@@ -1334,7 +1447,7 @@ async fn connect_and_run(
     profile: &SshProfile,
     mut startup: SshStartup,
     rx: &mut mpsc::Receiver<SessionCommand>,
-    output: &Arc<Mutex<String>>,
+    output: &Arc<Mutex<RetainedOutput>>,
     pool: &SshConnectionPool,
 ) -> AppResult<ConnOutcome> {
     // Resolve a fresh, asset-bound grant for every attempt. The retained source
@@ -3186,7 +3299,7 @@ fn run_local_session(
     session_id: String,
     size: TerminalSize,
     mut rx: mpsc::Receiver<SessionCommand>,
-    output: Arc<Mutex<String>>,
+    output: Arc<Mutex<RetainedOutput>>,
 ) -> AppResult<()> {
     let Some((size, pending_input)) = wait_for_initial_local_resize(size, &mut rx) else {
         emit_status(&app_handle, &session_id, SessionStatus::Disconnected, None);
@@ -3780,23 +3893,27 @@ impl PendingOutput {
 /// Cloning shares the buffer: the reader and its owner can both force a flush.
 #[derive(Clone)]
 struct OutputSink {
-    app_handle: AppHandle,
     session_id: String,
-    output: Arc<Mutex<String>>,
+    output: Arc<Mutex<RetainedOutput>>,
     output_changed: Option<Arc<Notify>>,
     pending: Arc<Mutex<PendingOutput>>,
+    delivery: Arc<Mutex<OutputDelivery>>,
 }
 
 impl OutputSink {
-    fn new(app_handle: AppHandle, session_id: String, output: Arc<Mutex<String>>) -> Self {
+    fn new(app_handle: AppHandle, session_id: String, output: Arc<Mutex<RetainedOutput>>) -> Self {
         let output_changed = app_handle
             .try_state::<crate::app::AppState>()
             .and_then(|state| state.sessions.output_signal(&session_id).ok());
+        let delivery = app_handle
+            .try_state::<crate::app::AppState>()
+            .and_then(|state| state.sessions.output_delivery(&session_id))
+            .unwrap_or_default();
         Self {
-            app_handle,
             session_id,
             output,
             output_changed,
+            delivery,
             pending: Arc::new(Mutex::new(PendingOutput::default())),
         }
     }
@@ -3840,42 +3957,34 @@ impl OutputSink {
         let Some(text) = pending.take() else {
             return;
         };
-        push_session_output(&self.output, &text);
+        // Snapshot/registration and status sends use these same locks. Keep
+        // delivery locked until IPC send so lifecycle cannot overtake output.
+        let Ok(mut output) = self.output.lock() else {
+            return;
+        };
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return;
+        };
+        output.append(&text);
+        let (start_offset, end_offset, targets) = delivery.record(text.len());
+        drop(output);
         if let Some(signal) = &self.output_changed {
             signal.notify_waiters();
         }
-        emit_output(&self.app_handle, &self.session_id, text);
-    }
-}
-
-/// Append a chunk of terminal output to the retained scrollback, dropping the
-/// oldest bytes (on a UTF-8 boundary) once the cap is exceeded.
-fn push_session_output(output: &Arc<Mutex<String>>, text: &str) {
-    if let Ok(mut buffer) = output.lock() {
-        buffer.push_str(text);
-        if buffer.len() > MAX_SESSION_BUFFER_BYTES {
-            let mut cut = buffer.len() - MAX_SESSION_BUFFER_BYTES;
-            while cut < buffer.len() && !buffer.is_char_boundary(cut) {
-                cut += 1;
-            }
-            buffer.drain(..cut);
+        for target in targets {
+            #[cfg(debug_assertions)]
+            output_metrics::record(text.len());
+            let _ = target
+                .channel
+                .send(TerminalStreamEvent::Output(TerminalOutputEvent {
+                    session_id: self.session_id.clone(),
+                    subscription_id: target.subscription_id,
+                    data: text.clone(),
+                    start_offset,
+                    end_offset,
+                }));
         }
     }
-}
-
-fn emit_output(app_handle: &AppHandle, session_id: &str, data: String) {
-    if is_background(app_handle.clone(), session_id) {
-        return;
-    }
-    #[cfg(debug_assertions)]
-    output_metrics::record(data.len());
-    let _ = app_handle.emit(
-        TERMINAL_OUTPUT_EVENT,
-        TerminalOutputEvent {
-            session_id: session_id.to_string(),
-            data,
-        },
-    );
 }
 
 /// Debug-only event-rate counter for the terminal output path. It exists so the
@@ -3924,20 +4033,20 @@ fn emit_status(
     status: SessionStatus,
     message: Option<String>,
 ) {
+    let event = TerminalStatusEvent {
+        session_id: session_id.to_string(),
+        status,
+        message,
+    };
     if app_handle
         .try_state::<crate::app::AppState>()
-        .is_some_and(|state| state.sessions.update_status(session_id, status.clone()))
+        .is_some_and(|state| state.sessions.update_status(&event))
     {
         return;
     }
-    let _ = app_handle.emit(
-        TERMINAL_STATUS_EVENT,
-        TerminalStatusEvent {
-            session_id: session_id.to_string(),
-            status,
-            message,
-        },
-    );
+    // Kept for non-renderer observers. Workbenches receive status only through
+    // their ordered subscription, alongside their PTY output.
+    let _ = app_handle.emit(TERMINAL_STATUS_EVENT, event);
 }
 
 fn is_background(app: AppHandle, id: &str) -> bool {
@@ -4190,7 +4299,10 @@ fn queue_approved_input(
 ) -> AppResult<()> {
     let output = handle.output.clone();
     let current = output.lock().map_err(lock_error)?;
-    if handle.input_revision != snapshot.input_revision || *current != snapshot.output {
+    if handle.input_revision != snapshot.input_revision
+        || current.revision() != snapshot.output_revision
+        || !current.matches(&snapshot.output)
+    {
         return Err(AppError::new(
             "terminal_changed",
             "确认期间终端已有新输入或输出，未发送内容。请重新读取终端并确认。",
@@ -4284,6 +4396,9 @@ mod tests {
     ) {
         let (tx, rx) = tokio::sync::mpsc::channel(4);
         let (closed_tx, closed) = tokio::sync::watch::channel(false);
+        let initial_output = "Welcome to JumpServer\nOpt> ";
+        let mut initial_delivery = super::OutputDelivery::default();
+        initial_delivery.record(initial_output.len());
         (
             SessionHandle {
                 kind: crate::models::terminal::TerminalSessionKind::Ssh,
@@ -4292,8 +4407,9 @@ mod tests {
                 tx,
                 closed,
                 closing: false,
-                output: Arc::new(Mutex::new("Welcome to JumpServer\nOpt> ".into())),
+                output: Arc::new(Mutex::new(initial_output.into())),
                 output_changed: Arc::new(tokio::sync::Notify::new()),
+                output_delivery: Arc::new(Mutex::new(initial_delivery)),
                 input_revision: 0,
                 status: crate::models::terminal::SessionStatus::Connected,
                 background: None,
@@ -4304,8 +4420,10 @@ mod tests {
     }
 
     fn input_snapshot(handle: &SessionHandle) -> TerminalInputSnapshot {
+        let output = handle.output.lock().unwrap();
         TerminalInputSnapshot {
-            output: handle.output.lock().unwrap().clone(),
+            output: output.snapshot(),
+            output_revision: output.revision(),
             input_revision: handle.input_revision,
         }
     }
@@ -4326,11 +4444,172 @@ mod tests {
     }
 
     #[test]
+    fn subscription_snapshot_output_and_status_use_one_ordered_stream() {
+        use crate::models::terminal::{SessionStatus, TerminalStatusEvent};
+        let (handle, _rx, _closed) = interactive_test_session();
+        *handle.output.lock().unwrap() = Default::default();
+        *handle.output_delivery.lock().unwrap() = Default::default();
+        let sink = super::OutputSink {
+            session_id: "pty".into(),
+            output: handle.output.clone(),
+            output_changed: None,
+            pending: Arc::default(),
+            delivery: handle.output_delivery.clone(),
+        };
+        sink.push("登录😀");
+        let events = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let capture = events.clone();
+        let checkpoint = handle
+            .subscribe_output(
+                "pty",
+                "main",
+                "subscription",
+                tauri::ipc::Channel::new(move |body| {
+                    let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+                        panic!("expected typed JSON");
+                    };
+                    capture
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(&json).unwrap());
+                    Ok(())
+                }),
+                None,
+            )
+            .unwrap();
+        assert_eq!(checkpoint.data, "登录😀");
+        assert_eq!(checkpoint.start_offset, 0);
+        assert_eq!(checkpoint.end_offset, 10);
+        sink.push(" shell$");
+        sink.flush();
+        handle
+            .output_delivery
+            .lock()
+            .unwrap()
+            .send_status(&TerminalStatusEvent {
+                session_id: "pty".into(),
+                status: SessionStatus::Disconnected,
+                message: None,
+            });
+        let received = events.lock().unwrap();
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[0]["type"], "output");
+        assert_eq!(received[0]["startOffset"], checkpoint.end_offset);
+        assert_eq!(received[0]["endOffset"], 17);
+        assert_eq!(received[0]["data"], " shell$");
+        assert_eq!(received[1]["type"], "status");
+        assert_eq!(received[1]["status"], "disconnected");
+        assert_eq!(received[1]["subscriptionId"], "subscription");
+        drop(received);
+        handle.output_delivery.lock().unwrap().remove_window("main");
+        sink.push("after close");
+        sink.finish();
+        assert_eq!(events.lock().unwrap().len(), 2);
+        assert!(
+            handle
+                .output
+                .lock()
+                .unwrap()
+                .snapshot()
+                .ends_with("after close")
+        );
+    }
+
+    #[test]
+    fn hidden_background_output_cannot_be_subscribed_before_takeover() {
+        let (mut handle, _rx, _closed) = background_test_session();
+        let subscribe = |handle: &SessionHandle, token: &str| {
+            handle.subscribe_output(
+                "pty",
+                "main",
+                token,
+                tauri::ipc::Channel::new(|_| Ok(())),
+                None,
+            )
+        };
+        assert!(subscribe(&handle, "subscription").is_err());
+        handle.take_over("chat-a").unwrap();
+        assert!(subscribe(&handle, "subscription").is_ok());
+        assert!(subscribe(&handle, "").is_err());
+    }
+
+    #[test]
+    fn failed_checkpoint_resume_keeps_original_subscriber_and_valid_resume_joins_live_output() {
+        let (handle, _rx, _closed) = interactive_test_session();
+        let sink = super::OutputSink {
+            session_id: "pty".into(),
+            output: handle.output.clone(),
+            output_changed: None,
+            pending: Arc::default(),
+            delivery: handle.output_delivery.clone(),
+        };
+        let events = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let capture = events.clone();
+        let initial = handle
+            .subscribe_output(
+                "pty",
+                "main",
+                "original",
+                tauri::ipc::Channel::new(move |body| {
+                    let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+                        panic!("expected typed JSON")
+                    };
+                    capture
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(&json).unwrap());
+                    Ok(())
+                }),
+                None,
+            )
+            .unwrap();
+        sink.push(&"x".repeat(crate::ssh::retained_output::RETAINED_OUTPUT_BYTES + 1));
+        sink.flush();
+        let error = handle
+            .subscribe_output(
+                "pty",
+                "main",
+                "invalid",
+                tauri::ipc::Channel::new(|_| Ok(())),
+                Some(initial.end_offset),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "terminal_output_gap");
+        sink.push("\x1b[");
+        sink.flush();
+        let checkpoint = handle.output_delivery.lock().unwrap().end_offset();
+        sink.push("?25h中😀");
+        sink.flush();
+        let resumed = handle
+            .subscribe_output(
+                "pty",
+                "detached-1",
+                "resumed",
+                tauri::ipc::Channel::new(|_| Ok(())),
+                Some(checkpoint),
+            )
+            .unwrap();
+        assert_eq!(resumed.start_offset, checkpoint);
+        assert_eq!(resumed.data, "?25h中😀");
+        assert_eq!(resumed.end_offset, checkpoint + resumed.data.len() as u64);
+        sink.push("still live");
+        sink.finish();
+        let events = events.lock().unwrap();
+        assert_eq!(events.last().unwrap()["data"], "still live");
+        assert!(
+            events
+                .iter()
+                .all(|event| event["subscriptionId"] == "original")
+        );
+    }
+
+    #[test]
     fn finished_terminal_keeps_its_id_and_scrollback_for_manual_restart() {
         let (mut handle, _rx, closed) = interactive_test_session();
         handle.status = crate::models::terminal::SessionStatus::Exited;
         let old_worker = handle.closed.clone();
         let old_output = handle.output.clone();
+        let old_delivery = handle.output_delivery.clone();
         let sessions = Mutex::new(std::collections::HashMap::from([("pty".into(), handle)]));
         super::finish_session_worker(&sessions, "pty", closed);
 
@@ -4348,6 +4627,7 @@ mod tests {
         let output =
             super::register_session_worker(&mut sessions, "pty", restart, replacement).unwrap();
         assert!(Arc::ptr_eq(&output, &old_output));
+        assert!(Arc::ptr_eq(&sessions["pty"].output_delivery, &old_delivery));
         assert_eq!(sessions.len(), 1);
         assert_ne!(
             input_snapshot(&sessions["pty"]).input_revision,
@@ -4419,7 +4699,7 @@ mod tests {
         }
         assert!(handle.hidden());
         assert!(handle.ai_access("chat-a", false).is_ok());
-        assert!(handle.output.lock().unwrap().contains("/root"));
+        assert!(handle.output.lock().unwrap().snapshot().contains("/root"));
     }
 
     #[test]
@@ -4502,20 +4782,33 @@ mod tests {
                 } => assert_eq!(data, format!("{input}\r")),
                 _ => panic!("selection must use PTY input"),
             }
-            handle.output.lock().unwrap().push_str(output);
+            handle.output.lock().unwrap().append(output);
         }
         assert_eq!(handle.input_revision, 3);
+    }
+
+    #[test]
+    fn new_output_invalidates_approval_even_when_retained_text_is_identical() {
+        let (mut handle, mut rx, _closed) = interactive_test_session();
+        let repeated = "x".repeat(super::super::retained_output::RETAINED_OUTPUT_BYTES);
+        *handle.output.lock().unwrap() = repeated.as_str().into();
+        let snapshot = input_snapshot(&handle);
+        handle.output.lock().unwrap().append("x");
+        assert_eq!(snapshot.output, handle.output.lock().unwrap().snapshot());
+        assert_eq!(
+            queue_approved_input(&mut handle, &snapshot, "approved\r".into(), || {})
+                .unwrap_err()
+                .code,
+            "terminal_changed"
+        );
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn approved_input_rejects_changed_output_and_user_input_even_without_echo() {
         let (mut handle, mut rx, _closed_tx) = interactive_test_session();
         let snapshot = input_snapshot(&handle);
-        handle
-            .output
-            .lock()
-            .unwrap()
-            .push_str("Connection changed\n");
+        handle.output.lock().unwrap().append("Connection changed\n");
         assert_eq!(
             queue_approved_input(&mut handle, &snapshot, "10.20.30.40\r".into(), || {})
                 .unwrap_err()

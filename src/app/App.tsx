@@ -218,6 +218,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const windowLabel = getCurrentWindow().label;
   const initialState = useRef<DetachedWorkbench>(initialWorkspace?.workbench ?? {
     sessionIds: initialWorkspace?.terminal?.sessionIds ?? [],
+    runningSessionIds: initialWorkspace?.terminal?.runningSessionIds,
     layouts: initialWorkspace?.terminal?.layout ? [initialWorkspace.terminal.layout] : [],
     terminalNames: initialWorkspace?.terminal && !initialWorkspace.terminal.autoTitle
       ? { [initialWorkspace.terminal.tabSessionId]: initialWorkspace.title } : {},
@@ -456,7 +457,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     attachSession,
     subscribeOutput,
     writeToSession,
-  } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined, handleCommandCompleted);
+  } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined, handleCommandCompleted, initialState.runningSessionIds);
   const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
   const bulkClosingRef = useRef(false);
   const windowCloseRef = useRef<() => Promise<boolean>>(async () => false);
@@ -548,6 +549,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   const workbench: DetachedWorkbench = {
     sessionIds: sessions.map((session) => session.id),
+    runningSessionIds: sessions.filter((session) => commandActivity.has(session.id)).map((session) => session.id),
     layouts: panes.layouts.filter((layout) => paneSessionIds(layout).some((id) => sessions.some((session) => session.id === id))),
     terminalNames, paneNames, terminalSnapshots: {}, sftpTabs, tabOrder, s3ProfileIds: s3TabProfileIds,
   };
@@ -1761,6 +1763,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         terminal: {
           tabSessionId: tab.id,
           sessionIds,
+          runningSessionIds: sessionIds.filter((id) => commandActivity.has(id)),
           layout,
           autoTitle: !terminalNames[tab.id],
         },

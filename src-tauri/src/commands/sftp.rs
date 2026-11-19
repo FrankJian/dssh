@@ -211,6 +211,20 @@ pub async fn sftp_local_home() -> AppResult<String> {
     Ok(local_display_path(&local_home_path()?))
 }
 
+#[cfg(any(windows, test))]
+fn windows_drive_roots(drives: u32) -> Vec<LocalRoot> {
+    (0..26)
+        .filter(|index| drives & (1 << index) != 0)
+        .map(|index| {
+            let letter = char::from(b'A' + index as u8);
+            LocalRoot {
+                label: format!("{letter} 盘"),
+                path: format!("{letter}:\\"),
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn sftp_local_roots() -> AppResult<Vec<LocalRoot>> {
     let home = local_home_path()?;
@@ -221,15 +235,20 @@ pub async fn sftp_local_roots() -> AppResult<Vec<LocalRoot>> {
 
     #[cfg(windows)]
     {
-        for letter in b'A'..=b'Z' {
-            let path = format!("{}:\\", char::from(letter));
-            if std::fs::metadata(&path).is_ok() {
-                roots.push(LocalRoot {
-                    label: format!("{} 盘", char::from(letter)),
-                    path,
-                });
-            }
+        // A mount bitmap does not touch disconnected network volumes.
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetLogicalDrives() -> u32;
         }
+        // SAFETY: this API takes no pointers and has no preconditions.
+        let drives = unsafe { GetLogicalDrives() };
+        if drives == 0 {
+            return Err(AppError::new(
+                "local_roots_error",
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        roots.extend(windows_drive_roots(drives));
     }
 
     #[cfg(not(windows))]
@@ -747,6 +766,16 @@ pub async fn sftp_disconnect(state: State<'_, AppState>, profile_id: String) -> 
 
 #[cfg(test)]
 mod path_tests {
+    #[test]
+    fn drive_bitmap_lists_only_mounted_letters_without_probing_paths() {
+        let roots = super::windows_drive_roots((1 << 2) | (1 << 25));
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].path, "C:\\");
+        assert_eq!(roots[1].path, "Z:\\");
+        assert!(super::windows_drive_roots(0).is_empty());
+        assert!(super::windows_drive_roots(1 << 30).is_empty());
+    }
+
     use super::*;
 
     #[test]

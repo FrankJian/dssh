@@ -107,3 +107,18 @@ test("reconnection clears an old JumpServer asset while keeping the gateway hidd
   assert.equal(tracker.resetConnection(), null);
   assert.equal(tracker.address, null);
 });
+
+test("large log runs never promote arbitrary printed IPs and still recognise the following prompt", () => {
+  const tracker = new TerminalTargetTracker();
+  assert.equal(tracker.observeOutput("log 10.8.0.12 " + "日志😀".repeat(100_000) + "\r\n"), undefined);
+  assert.equal(tracker.observeOutput("root@10.8.0.13:~# "), "10.8.0.13");
+});
+
+test("a retained menu prefix does not split a supplementary character at the cap", () => {
+  const tracker = new TerminalTargetTracker();
+  tracker.observeOutput("x".repeat(511) + "😀" + "ignored".repeat(10_000));
+  assert.equal(tracker.line.length, 513);
+  assert.ok(tracker.line.endsWith("😀"));
+  tracker.observeOutput("\r\n\x1b]0;root@10.8.0.");
+  assert.equal(tracker.observeOutput("14:~\x07"), "10.8.0.14");
+});

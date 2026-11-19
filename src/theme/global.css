@@ -2827,6 +2827,7 @@ button {
   height: 1px;
 }
 
+.pane-divider:focus-visible::before,
 .pane-divider:hover::before,
 .pane-divider:active::before {
   background: var(--text-faint);

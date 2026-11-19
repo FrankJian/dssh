@@ -116,11 +116,8 @@
 ### 4. 终端吞吐、生命周期与显示保真
 
 - 标签批量关闭与运行任务确认、后端关闭完成回执、本地前台进程组清理已实现；macOS 真实 PTY 前台任务终止回归通过。Windows 进程树终止、真实 SSH / JumpServer 挂断行为仍需验收；`nohup`、`tmux` 等主动脱离终端的任务遵循其自身生命周期。
-- 终端输出目前每个 SSH 数据包 emit 一次事件且广播到所有窗口，前端缓冲用字符串拼接，切标签会销毁并重建
-  xterm 实例并重放被截断的 backlog（后者同时是性能问题和 alt screen 画面错乱的正确性问题）。需要按
-  基线 → 输出合并 → 缓冲与反压 → 实例常驻 → 定向投递的顺序推进，并补上 Windows ConPTY 提示与字符宽度
-  修正。完整审计与指标门槛见 [`features/terminal-performance.md`](features/terminal-performance.md)，
-  分阶段实施清单见 [`tasks.md`](tasks.md#终端吞吐生命周期与显示保真)。
+- 输出合并、xterm 实例常驻、ConPTY 提示和拖拽节流已实现。2026-11 审计进一步修复了前端缓冲头部移动、重连隐藏光标、分屏失焦清理、同步配置/连接库操作与 Windows 盘符探测；锁屏（含 RDP 显隐等待）、AI/S3/SMB/JumpServer 配置和 SSH 创建的其他同步入口也已后台化，原生线程调整验收待完成；详见 [性能与可靠性审计](docs/performance-reliability-audit-2026-11.md)。
+- 跨窗口输出已改为按窗口订阅的 typed IPC Channel，并补上历史/实时序号及状态交接；新增可选检查点增量订阅与缺口拒绝，尚未接入完整屏幕移窗。Rust 历史保留已改为分块队列，两类前端输出追踪器已按文本段批量解析。尚需解决：IPC/xterm 洪水队列上限，以及移窗屏幕快照/TUI 恢复；历史保留上限不能保证整个通路内存有界。Windows 正式包、GPU/驱动、真实 SSH/TUI 与多 DPI 性能验收仍待完成。原规格及指标见 [`features/terminal-performance.md`](features/terminal-performance.md)。
 
 ### 智能助手多协议与模型配置
 

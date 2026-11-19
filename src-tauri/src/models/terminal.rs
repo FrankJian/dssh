@@ -67,7 +67,37 @@ pub struct ResizeSshSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutputEvent {
     pub session_id: String,
+    pub subscription_id: String,
     pub data: String,
+    pub start_offset: u64,
+    pub end_offset: u64,
+}
+
+/// Registering a subscriber and reading this checkpoint is atomic with output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputSubscription {
+    pub session: TerminalSession,
+    pub data: String,
+    pub start_offset: u64,
+    pub end_offset: u64,
+}
+
+/// Output and lifecycle share one ordered window-bound channel. A delayed
+/// payload fetch must not put a disconnect/reset before the last PTY output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TerminalStreamEvent {
+    Output(TerminalOutputEvent),
+    Status(TerminalStatusDelivery),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatusDelivery {
+    pub subscription_id: String,
+    #[serde(flatten)]
+    pub status: TerminalStatusEvent,
 }
 
 /// Already-sent AI input, observed by renderers for command and asset tracking.

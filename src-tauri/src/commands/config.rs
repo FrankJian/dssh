@@ -343,43 +343,53 @@ fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
 /// Secrets are masked so the view and any clipboard copy stay safe; use
 /// [`export_profiles_encrypted`] to produce a restorable artifact.
 #[tauri::command]
-pub fn export_profiles_yaml(state: State<'_, AppState>) -> AppResult<String> {
-    build_document_yaml(&state.profiles, true)
+pub async fn export_profiles_yaml(state: State<'_, AppState>) -> AppResult<String> {
+    let profiles = state.profiles.clone();
+    super::blocking(move || build_document_yaml(&profiles, true)).await
 }
 
 /// Encrypt every stored profile (secrets included) into a single portable,
 /// password-protected string.
 #[tauri::command]
-pub fn export_profiles_encrypted(
+pub async fn export_profiles_encrypted(
     state: State<'_, AppState>,
     password: String,
 ) -> AppResult<String> {
     if password.trim().is_empty() {
         return Err(AppError::new("validation_error", "请输入导出密码。"));
     }
-    let yaml = build_document_yaml(&state.profiles, false)?;
-    crypto::encrypt(&yaml, &password)
+    let profiles = state.profiles.clone();
+    super::blocking(move || {
+        let yaml = build_document_yaml(&profiles, false)?;
+        crypto::encrypt(&yaml, &password)
+    })
+    .await
 }
 
 /// Parse a YAML document and create the described profiles, returning the newly
 /// created records. Kept for importing plaintext files (e.g. legacy exports).
 #[tauri::command]
-pub fn import_profiles_yaml(
+pub async fn import_profiles_yaml(
     state: State<'_, AppState>,
     yaml: String,
 ) -> AppResult<Vec<SshProfile>> {
-    import_document(&state.profiles, &yaml)
+    let profiles = state.profiles.clone();
+    super::blocking(move || import_document(&profiles, &yaml)).await
 }
 
 /// Decrypt a password-protected export and create the described profiles.
 #[tauri::command]
-pub fn import_profiles_encrypted(
+pub async fn import_profiles_encrypted(
     state: State<'_, AppState>,
     blob: String,
     password: String,
 ) -> AppResult<Vec<SshProfile>> {
-    let yaml = crypto::decrypt(&blob, &password)?;
-    import_document(&state.profiles, &yaml)
+    let profiles = state.profiles.clone();
+    super::blocking(move || {
+        let yaml = crypto::decrypt(&blob, &password)?;
+        import_document(&profiles, &yaml)
+    })
+    .await
 }
 
 fn has_masked_auth(auth: &AuthEntry) -> bool {
@@ -528,15 +538,17 @@ fn legacy_port(endpoint: Option<&str>) -> u16 {
 
 /// Read the contents of a user-selected text file (used for importing).
 #[tauri::command]
-pub fn read_text_file(path: String) -> AppResult<String> {
-    std::fs::read_to_string(&path)
+pub async fn read_text_file(path: String) -> AppResult<String> {
+    tokio::fs::read_to_string(&path)
+        .await
         .map_err(|error| AppError::new("file_read_error", error.to_string()))
 }
 
 /// Write text to a user-selected path (used for exporting).
 #[tauri::command]
-pub fn write_text_file(path: String, contents: String) -> AppResult<()> {
-    std::fs::write(&path, contents)
+pub async fn write_text_file(path: String, contents: String) -> AppResult<()> {
+    tokio::fs::write(&path, contents)
+        .await
         .map_err(|error| AppError::new("file_write_error", error.to_string()))
 }
 
@@ -544,11 +556,15 @@ pub fn write_text_file(path: String, contents: String) -> AppResult<()> {
 /// terminal background image. Going through a command (instead of the asset
 /// protocol) keeps this working regardless of asset-scope configuration.
 #[tauri::command]
-pub fn read_image_data_url(path: String) -> AppResult<String> {
+pub async fn read_image_data_url(path: String) -> AppResult<String> {
+    super::blocking(move || image_data_url(&path)).await
+}
+
+fn image_data_url(path: &str) -> AppResult<String> {
     /// Wallpapers are decoded into memory and inlined into CSS, so cap the size.
     const MAX_BYTES: u64 = 12 * 1024 * 1024;
 
-    let metadata = std::fs::metadata(&path)
+    let metadata = std::fs::metadata(path)
         .map_err(|error| AppError::new("file_read_error", error.to_string()))?;
     if metadata.len() > MAX_BYTES {
         return Err(AppError::new(
@@ -557,7 +573,7 @@ pub fn read_image_data_url(path: String) -> AppResult<String> {
         ));
     }
 
-    let mime = match std::path::Path::new(&path)
+    let mime = match std::path::Path::new(path)
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase)
@@ -576,8 +592,8 @@ pub fn read_image_data_url(path: String) -> AppResult<String> {
         }
     };
 
-    let bytes = std::fs::read(&path)
-        .map_err(|error| AppError::new("file_read_error", error.to_string()))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| AppError::new("file_read_error", error.to_string()))?;
     Ok(format!(
         "data:{mime};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)

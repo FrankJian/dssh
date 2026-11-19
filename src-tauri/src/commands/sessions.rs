@@ -30,19 +30,55 @@ pub fn read_ssh_session_output(
 }
 
 #[tauri::command]
-pub fn start_ssh_session(
+pub fn subscribe_terminal_output(
+    state: State<'_, AppState>,
+    webview: Webview,
+    session_id: String,
+    subscription_id: String,
+    on_output: tauri::ipc::Channel<crate::models::terminal::TerminalStreamEvent>,
+    after_offset: Option<u64>,
+) -> AppResult<crate::models::terminal::TerminalOutputSubscription> {
+    crate::browser::trusted(&webview)?;
+    state.sessions.subscribe_output(
+        &session_id,
+        webview.label(),
+        &subscription_id,
+        on_output,
+        after_offset,
+    )
+}
+
+#[tauri::command]
+pub fn unsubscribe_terminal_output(
+    state: State<'_, AppState>,
+    webview: Webview,
+    session_id: String,
+    subscription_id: String,
+) -> AppResult<()> {
+    crate::browser::trusted(&webview)?;
+    state
+        .sessions
+        .unsubscribe_output(&session_id, webview.label(), &subscription_id)
+}
+
+#[tauri::command]
+pub async fn start_ssh_session(
     app_handle: AppHandle,
     state: State<'_, AppState>,
     request: StartSshSessionRequest,
     webview: Webview,
 ) -> AppResult<TerminalSession> {
-    let profile = resolve_ssh_profile(&state, &webview, &request.profile_id)?;
-    state.sessions.start_session_with_initial_fit(
-        app_handle,
-        profile,
-        request.size,
-        request.wait_for_initial_resize,
-    )
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        let profile = resolve_ssh_profile(&owned, &webview, &request.profile_id)?;
+        owned.sessions.start_session_with_initial_fit(
+            app_handle,
+            profile,
+            request.size,
+            request.wait_for_initial_resize,
+        )
+    })
+    .await
 }
 
 fn resolve_ssh_profile(

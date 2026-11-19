@@ -15,45 +15,54 @@ fn trusted(app: &AppHandle, webview: &Webview) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn list_smb_profiles(app: AppHandle, webview: Webview) -> AppResult<Vec<SmbProfile>> {
-    trusted(&app, &webview)?;
-    app.state::<AppState>().profiles.list_smb_profiles()
+pub async fn list_smb_profiles(app: AppHandle, webview: Webview) -> AppResult<Vec<SmbProfile>> {
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        app.state::<AppState>().profiles.list_smb_profiles()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_smb_profile(
+pub async fn save_smb_profile(
     app: AppHandle,
     webview: Webview,
     mut profile: SmbProfile,
 ) -> AppResult<SmbProfile> {
-    trusted(&app, &webview)?;
-    profile.normalize_and_validate()?;
-    #[cfg(target_os = "macos")]
-    crate::models::smb::finder_share_url(&profile.share_path)?;
-    let repo = &app.state::<AppState>().profiles;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .to_string();
-    if profile.id.is_empty() {
-        profile.id = format!("smb:{:032x}", rand::random::<u128>());
-        profile.created_at = now.clone();
-    } else {
-        let existing = repo
-            .get_smb_profile(&profile.id)?
-            .ok_or_else(|| AppError::new("smb_missing", "网络共享配置已不存在。"))?;
-        profile.created_at = existing.created_at;
-    }
-    profile.updated_at = now;
-    repo.save_smb_profile(&profile)?;
-    Ok(profile)
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        profile.normalize_and_validate()?;
+        #[cfg(target_os = "macos")]
+        crate::models::smb::finder_share_url(&profile.share_path)?;
+        let repo = &app.state::<AppState>().profiles;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string();
+        if profile.id.is_empty() {
+            profile.id = format!("smb:{:032x}", rand::random::<u128>());
+            profile.created_at = now.clone();
+        } else {
+            let existing = repo
+                .get_smb_profile(&profile.id)?
+                .ok_or_else(|| AppError::new("smb_missing", "网络共享配置已不存在。"))?;
+            profile.created_at = existing.created_at;
+        }
+        profile.updated_at = now;
+        repo.save_smb_profile(&profile)?;
+        Ok(profile)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_smb_profile(app: AppHandle, webview: Webview, id: String) -> AppResult<()> {
-    trusted(&app, &webview)?;
-    app.state::<AppState>().profiles.delete_smb_profile(&id)
+pub async fn delete_smb_profile(app: AppHandle, webview: Webview, id: String) -> AppResult<()> {
+    super::blocking(move || {
+        trusted(&app, &webview)?;
+        app.state::<AppState>().profiles.delete_smb_profile(&id)
+    })
+    .await
 }
 
 #[tauri::command]

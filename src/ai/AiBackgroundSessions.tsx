@@ -19,12 +19,17 @@ export function AiBackgroundSessions({ conversationId, onTakeOver }: {
   useEffect(() => {
     let cancelled = false;
     setSessions([]); setError(null);
+    let inFlight = false;
     async function refresh() {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
         const items = await listAiBackgroundSessions(conversationId);
-        if (!cancelled) setSessions(items);
+        if (!cancelled) { setSessions(items); setError(null); }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : "后台会话读取失败。");
+      } finally {
+        inFlight = false;
       }
     }
     void refresh();

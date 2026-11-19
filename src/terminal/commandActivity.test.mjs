@@ -142,3 +142,41 @@ test("a nested shell without integration can fall back after an integrated paren
   assert.equal(tracker.observeInput("sleep 30\r"), "running");
   assert.equal(tracker.observeOutput("\r\nchild@host:~$ "), "idle");
 });
+
+test("window handoff preserves known activity for custom prompts without overriding newer OSC completion", () => {
+  const idle = new TerminalCommandActivityTracker();
+  assert.equal(idle.restoreFromOutput("➜  ~ ", "idle"), "idle");
+  const busy = new TerminalCommandActivityTracker();
+  assert.equal(busy.restoreFromOutput("a progress display", "running"), "running");
+  const completed = new TerminalCommandActivityTracker();
+  assert.equal(completed.restoreFromOutput("\x1b]133;D;0\x07\x1b]133;A\x07➜  ~ ", "running"), "idle");
+  const legacy = new TerminalCommandActivityTracker();
+  assert.equal(legacy.restoreFromOutput("unknown screen"), "running");
+});
+
+test("large Unicode log lines retain the custom prompt completion fallback", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  const prompt = "operator 🌊 » ";
+  tracker.observeOutput(prompt);
+  assert.equal(tracker.observeInput("long-task\r"), "running");
+  assert.equal(tracker.observeOutput("日志😀".repeat(100_000) + "\r\n" + prompt), "idle");
+});
+
+test("a flood of tabs cannot grow the prompt tracker without a bound", () => {
+  const tracker = new TerminalCommandActivityTracker();
+  tracker.observeOutput("\t".repeat(100_000));
+  // This is a retained-memory invariant, not just the returned activity.
+  assert.ok(tracker.currentLine.length <= 240);
+  assert.equal(tracker.observeInput("work\r"), "running");
+  assert.equal(tracker.observeOutput("\r\nhost$ "), "idle");
+});
+
+test("control sequences and Unicode retain the same final activity across packet boundaries", () => {
+  const transcript = "\x1b]133;C\x07\r\n日志😀\x1b[31mred\x1b[0m\r\n\x1b]133;D;0\x1b\\\x1b]133;A\x07host$ ";
+  for (let split = 0; split <= transcript.length; split++) {
+    const tracker = new TerminalCommandActivityTracker();
+    tracker.observeOutput(transcript.slice(0, split));
+    tracker.observeOutput(transcript.slice(split));
+    assert.equal(tracker.restoreFromOutput(""), "idle");
+  }
+});

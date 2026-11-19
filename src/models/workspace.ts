@@ -6,6 +6,8 @@ export type DetachedWorkspaceKind = "terminal" | "sftp" | "workbench";
 export interface DetachedTerminalWorkspace {
   tabSessionId: string;
   sessionIds: string[];
+  /** Known command state from the source window; absent in older descriptors. */
+  runningSessionIds?: string[];
   layout: PaneLayout | null;
   /** Keep the label in sync with the connected host unless the user renamed it. */
   autoTitle?: boolean;
@@ -43,6 +45,7 @@ export interface OpenDetachedSftpRequest extends DetachedSftpWorkspace {
 
 export interface DetachedWorkbench {
   sessionIds: string[];
+  runningSessionIds?: string[];
   layouts: PaneLayout[];
   terminalNames: Record<string, string>;
   paneNames: Record<string, string>;

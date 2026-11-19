@@ -18,104 +18,116 @@ fn check_profile_access(state: &AppState, webview: &tauri::Webview) -> AppResult
 }
 
 #[tauri::command]
-pub fn list_ssh_credentials(
+pub async fn list_ssh_credentials(
     state: State<'_, AppState>,
     webview: tauri::Webview,
 ) -> AppResult<Vec<SshCredential>> {
     check_profile_access(&state, &webview)?;
-    state.profiles.list_ssh_credentials()
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.list_ssh_credentials()).await
 }
 
 #[tauri::command]
-pub fn save_ssh_credential(
+pub async fn save_ssh_credential(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     id: Option<String>,
     request: SaveSshCredentialRequest,
 ) -> AppResult<SshCredential> {
     check_profile_access(&state, &webview)?;
-    state.profiles.save_ssh_credential(id.as_deref(), request)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.save_ssh_credential(id.as_deref(), request)).await
 }
 
 #[tauri::command]
-pub fn delete_ssh_credential(
+pub async fn delete_ssh_credential(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     id: String,
 ) -> AppResult<()> {
     check_profile_access(&state, &webview)?;
-    state.profiles.delete_ssh_credential(&id)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.delete_ssh_credential(&id)).await
 }
 
 #[tauri::command]
-pub fn list_ssh_profiles(state: State<'_, AppState>) -> AppResult<Vec<SshProfile>> {
-    state.profiles.list_profiles()
+pub async fn list_ssh_profiles(state: State<'_, AppState>) -> AppResult<Vec<SshProfile>> {
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.list_profiles()).await
 }
 
 #[tauri::command]
-pub fn create_ssh_profile(
+pub async fn create_ssh_profile(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     request: CreateSshProfileRequest,
 ) -> AppResult<SshProfile> {
     check_profile_access(&state, &webview)?;
-    state.profiles.create_profile(request)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.create_profile(request)).await
 }
 
 #[tauri::command]
-pub fn clone_ssh_profile(
+pub async fn clone_ssh_profile(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     source_id: String,
     request: CreateSshProfileRequest,
 ) -> AppResult<SshProfile> {
     check_profile_access(&state, &webview)?;
-    state.profiles.clone_profile(&source_id, request)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.clone_profile(&source_id, request)).await
 }
 
 #[tauri::command]
-pub fn update_ssh_profile(
+pub async fn update_ssh_profile(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     request: UpdateSshProfileRequest,
 ) -> AppResult<SshProfile> {
     check_profile_access(&state, &webview)?;
-    state.profiles.update_profile(request)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.update_profile(request)).await
 }
 
 #[tauri::command]
-pub fn delete_ssh_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.profiles.delete_profile(&id)
+pub async fn delete_ssh_profile(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.delete_profile(&id)).await
 }
 
 #[tauri::command]
-pub fn rename_ssh_tag(
+pub async fn rename_ssh_tag(
     state: State<'_, AppState>,
     old_tag: String,
     new_tag: String,
 ) -> AppResult<Vec<SshProfile>> {
-    state.profiles.rename_ssh_tag(&old_tag, &new_tag)?;
-    state.profiles.list_profiles()
+    let profiles = state.profiles.clone();
+    super::blocking(move || {
+        profiles.rename_ssh_tag(&old_tag, &new_tag)?;
+        profiles.list_profiles()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_ssh_profile_favorite(
+pub async fn set_ssh_profile_favorite(
     state: State<'_, AppState>,
     id: String,
     favorite: bool,
 ) -> AppResult<SshProfile> {
-    state.profiles.set_favorite(&id, favorite)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.set_favorite(&id, favorite)).await
 }
 
 #[tauri::command]
-pub fn rename_connection_folder(
+pub async fn rename_connection_folder(
     state: State<'_, AppState>,
     webview: tauri::Webview,
     old_path: String,
     new_name: String,
 ) -> AppResult<()> {
     check_profile_access(&state, &webview)?;
-    state
-        .profiles
-        .rename_connection_folder(&old_path, &new_name)
+    let profiles = state.profiles.clone();
+    super::blocking(move || profiles.rename_connection_folder(&old_path, &new_name)).await
 }

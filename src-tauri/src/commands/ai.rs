@@ -11,21 +11,24 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn ai_load_providers(state: State<'_, AppState>) -> AppResult<Vec<AiProviderConfig>> {
-    state.profiles.list_ai_providers()
+pub async fn ai_load_providers(state: State<'_, AppState>) -> AppResult<Vec<AiProviderConfig>> {
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.list_ai_providers()).await
 }
 
 #[tauri::command]
-pub fn ai_save_provider(
+pub async fn ai_save_provider(
     state: State<'_, AppState>,
     provider: AiProviderConfig,
 ) -> AppResult<AiProviderConfig> {
-    state.profiles.save_ai_provider(provider)
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.save_ai_provider(provider)).await
 }
 
 #[tauri::command]
-pub fn ai_delete_provider(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.profiles.delete_ai_provider(&id)
+pub async fn ai_delete_provider(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.delete_ai_provider(&id)).await
 }
 
 /// Test the unsaved draft; only resolve an existing key when no replacement was supplied.
@@ -96,7 +99,7 @@ pub async fn ai_list_models(
 /// Start a ReAct agent run. Events are streamed back over the `ai-event`
 /// channel; the run is identified by `request.run_id`.
 #[tauri::command]
-pub fn ai_send_message(
+pub async fn ai_send_message(
     window: WebviewWindow,
     state: State<'_, AppState>,
     request: AiSendMessageRequest,
@@ -104,43 +107,55 @@ pub fn ai_send_message(
     if request.run_id.is_empty() || request.run_id.len() > 128 {
         return Err(AppError::new("ai_run", "无效的 AI 运行标识。"));
     }
-    let handles =
-        state
-            .ai
-            .reserve_conversation(window.label(), &request.conversation_id, &request.run_id)?;
-    state
-        .profiles
-        .require_ai_conversation(window.label(), &request.conversation_id)?;
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn(run_agent(window, state, request, handles));
-    Ok(())
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        let handles = owned.ai.reserve_conversation(
+            window.label(),
+            &request.conversation_id,
+            &request.run_id,
+        )?;
+        owned
+            .profiles
+            .require_ai_conversation(window.label(), &request.conversation_id)?;
+        tauri::async_runtime::spawn(run_agent(window, owned, request, handles));
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn ai_background_sessions(
+pub async fn ai_background_sessions(
     window: WebviewWindow,
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> AppResult<Vec<crate::models::terminal::TerminalSession>> {
-    state
-        .profiles
-        .require_ai_conversation(window.label(), &conversation_id)?;
-    state.sessions.background_sessions(&conversation_id)
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        owned
+            .profiles
+            .require_ai_conversation(window.label(), &conversation_id)?;
+        owned.sessions.background_sessions(&conversation_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn ai_take_over_session(
+pub async fn ai_take_over_session(
     window: WebviewWindow,
     state: State<'_, AppState>,
     conversation_id: String,
     session_id: String,
 ) -> AppResult<crate::models::terminal::TerminalSession> {
-    state
-        .profiles
-        .require_ai_conversation(window.label(), &conversation_id)?;
-    state
-        .sessions
-        .take_over_background(&session_id, &conversation_id)
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        owned
+            .profiles
+            .require_ai_conversation(window.label(), &conversation_id)?;
+        owned
+            .sessions
+            .take_over_background(&session_id, &conversation_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -202,30 +217,36 @@ pub fn ai_cancel_run(
 }
 
 #[tauri::command]
-pub fn ai_list_conversations(
+pub async fn ai_list_conversations(
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AiConversation>> {
-    state.profiles.list_ai_conversations(window.label())
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.list_ai_conversations(window.label())).await
 }
 
 #[tauri::command]
-pub fn ai_create_conversation(
+pub async fn ai_create_conversation(
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> AppResult<AiConversation> {
-    state.profiles.create_ai_conversation(window.label())
+    let owned = state.inner().clone();
+    super::blocking(move || owned.profiles.create_ai_conversation(window.label())).await
 }
 
 #[tauri::command]
-pub fn ai_save_conversation(
+pub async fn ai_save_conversation(
     window: WebviewWindow,
     state: State<'_, AppState>,
     conversation: AiConversation,
 ) -> AppResult<()> {
-    state
-        .profiles
-        .save_ai_conversation(window.label(), conversation)
+    let owned = state.inner().clone();
+    super::blocking(move || {
+        owned
+            .profiles
+            .save_ai_conversation(window.label(), conversation)
+    })
+    .await
 }
 
 #[tauri::command]

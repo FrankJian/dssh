@@ -35,10 +35,13 @@ export class TerminalCommandActivityTracker {
   private osc = "";
 
   /** A newly attached PTY may already be running a command whose input was hidden. */
-  restoreFromOutput(data: string): CommandActivity {
+  restoreFromOutput(data: string, knownActivity?: CommandActivity): CommandActivity {
     this.observeOutput(data);
     if (!this.hasShellIntegration) {
-      this.activity = looksLikeShellPrompt(this.currentLine) ? "idle" : "running";
+      // A moved window knows more than prompt-shape heuristics (custom zsh,
+      // PowerShell and gateways need not end with $, # or %). OSC markers still
+      // win if the command finished while the window was opening.
+      this.activity = knownActivity ?? (looksLikeShellPrompt(this.currentLine) ? "idle" : "running");
     }
     this.sawLineBreakSinceCommand = true;
     return this.activity;
@@ -81,7 +84,29 @@ export class TerminalCommandActivityTracker {
     let changed: CommandActivity | null = null;
     let sawVisibleOutput = false;
 
-    for (const char of data) {
+    const controls = /[\x00-\x1f]/g;
+    let offset = 0;
+    while (offset < data.length) {
+      if (this.parserState === "text") {
+        // Ordinary output is usually a whole text run. Keep only its bounded
+        // tail once, rather than allocating/slicing a 240-character string
+        // for every character of a log line or a large unbroken response.
+        controls.lastIndex = offset;
+        const end = controls.exec(data)?.index ?? data.length;
+        if (end > offset) {
+          const tail = data.slice(Math.max(offset, end - MAX_LINE_LENGTH), end);
+          this.currentLine = end - offset >= MAX_LINE_LENGTH
+            ? tail : (this.currentLine + tail).slice(-MAX_LINE_LENGTH);
+          sawVisibleOutput = true;
+          offset = end;
+          if (offset === data.length) break;
+        }
+      }
+      // Control strings can contain Unicode. Preserve the old code-point
+      // iteration, including the OSC limit and split escape parser state.
+      const point = data.codePointAt(offset)!;
+      const char = String.fromCodePoint(point);
+      offset += char.length;
       switch (this.parserState) {
         case "escape":
           this.parserState = char === "[" ? "csi"
@@ -120,13 +145,7 @@ export class TerminalCommandActivityTracker {
           } else if (char === "\b") {
             this.currentLine = this.currentLine.slice(0, -1);
           } else if (char === "\t") {
-            this.currentLine += " ";
-            sawVisibleOutput = true;
-          } else if (char >= " ") {
-            this.currentLine += char;
-            if (this.currentLine.length > MAX_LINE_LENGTH) {
-              this.currentLine = this.currentLine.slice(-MAX_LINE_LENGTH);
-            }
+            this.currentLine = (this.currentLine + " ").slice(-MAX_LINE_LENGTH);
             sawVisibleOutput = true;
           }
           break;

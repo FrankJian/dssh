@@ -104,7 +104,27 @@ export class TerminalTargetTracker {
 
   observeOutput(data: string): string | null | undefined {
     const before = this.target;
-    for (const char of data) {
+    const controls = /[\x00-\x1f]/g;
+    let offset = 0;
+    while (offset < data.length) {
+      if (this.escape === "text") {
+        controls.lastIndex = offset;
+        const end = controls.exec(data)?.index ?? data.length;
+        if (end > offset) {
+          // This tracker keeps the start of a menu/prompt line, unlike the
+          // command tracker which keeps its tail. Preserve that distinction.
+          let keepEnd = Math.min(end, offset + Math.max(0, 512 - this.line.length));
+          if (keepEnd > offset && keepEnd < end
+            && data.charCodeAt(keepEnd - 1) >= 0xd800 && data.charCodeAt(keepEnd - 1) <= 0xdbff
+            && data.charCodeAt(keepEnd) >= 0xdc00 && data.charCodeAt(keepEnd) <= 0xdfff) keepEnd++;
+          this.line += data.slice(offset, keepEnd);
+          offset = end;
+          if (offset === data.length) break;
+        }
+      }
+      const point = data.codePointAt(offset)!;
+      const char = String.fromCodePoint(point);
+      offset += char.length;
       switch (this.escape) {
         case "escape":
           this.escape = char === "]" ? "osc" : char === "[" ? "csi" : "text";
@@ -128,7 +148,6 @@ export class TerminalTargetTracker {
             this.finishLine();
             this.line = "";
           } else if (char === "\b") this.line = this.line.slice(0, -1);
-          else if (char >= " " && this.line.length < 512) this.line += char;
           break;
       }
     }
@@ -207,7 +226,7 @@ export class TerminalTargetTracker {
   }
 
   private inspectPrompt(line: string): void {
-    if (!SHELL_PROMPT.test(line)) return;
+    if (!line.includes("@") || !SHELL_PROMPT.test(line)) return;
     if (this.jumpServer) {
       const account = this.pendingAccount ?? /(?:^|\s|\[)([\w.-]+)@/.exec(line)?.[1];
       const ip = /[\w.-]+@((?:\d{1,3}\.){3}\d{1,3})/.exec(line)?.[1];

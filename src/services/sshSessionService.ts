@@ -1,3 +1,4 @@
+import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { SessionStatus, TerminalSession, TerminalSize } from "../models";
 import { invokeCommand } from "./tauri";
@@ -24,8 +25,21 @@ export interface ResizeSshSessionRequest {
 
 export interface TerminalOutputEvent {
   sessionId: string;
+  subscriptionId: string;
   data: string;
+  startOffset: number;
+  endOffset: number;
 }
+
+export interface TerminalOutputSubscription {
+  session: TerminalSession;
+  data: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+export type TerminalStreamEvent = (TerminalOutputEvent & { type: "output" })
+  | (TerminalStatusEvent & { type: "status"; subscriptionId: string });
 
 export interface TerminalInputEvent {
   sessionId: string;
@@ -68,6 +82,15 @@ export function listSshSessions() {
 
 export function readSshSessionOutput(sessionId: string) {
   return invokeCommand<string>("read_ssh_session_output", { sessionId });
+}
+
+export function subscribeTerminalOutput(sessionId: string, subscriptionId: string, handler: (event: TerminalStreamEvent) => void, afterOffset?: number) {
+  const onOutput = new Channel<TerminalStreamEvent>(handler);
+  return invokeCommand<TerminalOutputSubscription>("subscribe_terminal_output", { sessionId, subscriptionId, onOutput, afterOffset });
+}
+
+export function unsubscribeTerminalOutput(sessionId: string, subscriptionId: string) {
+  return invokeCommand<void>("unsubscribe_terminal_output", { sessionId, subscriptionId });
 }
 
 export function startSshSession(request: StartSshSessionRequest) {
@@ -177,10 +200,6 @@ export function onSshAuthPromptClosed(handler: (event: { promptId: string }) => 
 
 export function onSshTransportStatus(handler: (event: SshTransportStatusEvent) => void) {
   return listen<SshTransportStatusEvent>("ssh://transport-status", (event) => handler(event.payload));
-}
-
-export function onTerminalOutput(handler: (event: TerminalOutputEvent) => void) {
-  return listen<TerminalOutputEvent>("terminal-output", (event) => handler(event.payload));
 }
 
 /** Observe input already sent by Rust; never send it a second time. */

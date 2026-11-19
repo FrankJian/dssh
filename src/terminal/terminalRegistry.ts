@@ -1,3 +1,4 @@
+import { RESTORE_CURSOR } from "./terminalRecovery";
 import { openTerminalLink } from "../services/terminalLinkService";
 import { toast } from "../ui/ToastHost";
 import { FitAddon } from "@xterm/addon-fit";
@@ -150,6 +151,17 @@ export function hasTerminalInstance(sessionId: string): boolean {
 
 export function focusTerminalSession(sessionId: string) {
   instances.get(sessionId)?.handle.focus();
+}
+
+/** Restore display locally; never send a reset command to the remote shell. */
+export function restoreTerminalCursor(sessionId: string) {
+  const entry = instances.get(sessionId);
+  if (!entry) return;
+  entry.handle.terminal.write(RESTORE_CURSOR, () => {
+    entry.applyCursor();
+    entry.handle.terminal.refresh(0, entry.handle.terminal.rows - 1);
+    entry.handle.focus();
+  });
 }
 
 export function terminalSize(sessionId: string): TerminalSize | null {
