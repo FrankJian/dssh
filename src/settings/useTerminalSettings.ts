@@ -18,6 +18,7 @@ import {
   parseBoolean,
   type RightClickAction,
   terminalCopyOnSelectKey,
+  terminalCommandNotificationsKey,
   terminalFontFamilyKey,
   terminalFontSizeKey,
   terminalGpuKey,
@@ -67,6 +68,23 @@ function getStoredS3TransferConcurrency(key: string): number {
 
 export function useTerminalSettings() {
   const [commandCompletion, setCommandCompletionState] = useState(commandCompletionEnabled);
+  const [commandNotifications, setCommandNotificationsState] = useState(() =>
+    parseBoolean(localStorage.getItem(terminalCommandNotificationsKey), true),
+  );
+  const setCommandNotifications = useCallback((enabled: boolean) => {
+    localStorage.setItem(terminalCommandNotificationsKey, String(enabled));
+    setCommandNotificationsState(enabled);
+  }, []);
+
+  useEffect(() => {
+    function syncCommandNotifications(event: StorageEvent) {
+      if (event.key === terminalCommandNotificationsKey || event.key === null) {
+        setCommandNotificationsState(parseBoolean(event.newValue, true));
+      }
+    }
+    window.addEventListener("storage", syncCommandNotifications);
+    return () => window.removeEventListener("storage", syncCommandNotifications);
+  }, []);
   const [commandHistoryLimit, setCommandHistoryLimitState] = useState(getCommandHistoryLimit);
   const [fontSize, setFontSizeState] = useState<number>(() => getStoredFontSize());
   const [fontFamily, setFontFamilyState] = useState<string>(() => getStoredFontFamily());
@@ -287,6 +305,8 @@ export function useTerminalSettings() {
   }, []);
 
   return {
+    commandNotifications,
+    setCommandNotifications,
     commandCompletion,
     setCommandCompletion,
     commandHistoryLimit,

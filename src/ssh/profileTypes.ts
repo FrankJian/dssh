@@ -1,21 +1,19 @@
-import type { AuthMethod, SshProfile, SshProfileIcon } from "../models";
+import type { SshProfile, SshProfileIcon } from "../models";
+import { createAuthDraft, type SshAuthDraft } from "./authDraft.ts";
+
+export const embeddedAuth = "embedded";
+export const newCredentialAuth = "new";
 
 export type ProfileEditorMode = "create" | "edit";
 
-export interface ProfileDraft {
+export interface ProfileDraft extends SshAuthDraft {
   connectionType: "ssh" | "sftp";
   name: string;
   folder: string;
   host: string;
   port: string;
-  username: string;
-  authType: AuthMethod["type"];
-  password: string;
-  // Freshly uploaded key contents, empty when the stored key is kept as-is.
-  keyData: string;
-  // File name of the key: either the stored one (edit) or the uploaded one.
-  keyName: string;
-  passphrase: string;
+  authSource: string;
+  credentialName: string;
   useProxy: boolean;
   proxyType: "socks5" | "http";
   proxyHost: string;
@@ -35,12 +33,9 @@ export function createEmptyProfileDraft(): ProfileDraft {
     folder: "",
     host: "",
     port: "22",
-    username: "root",
-    authType: "password",
-    password: "",
-    keyData: "",
-    keyName: "",
-    passphrase: "",
+    ...createAuthDraft(),
+    authSource: embeddedAuth,
+    credentialName: "",
     useProxy: false,
     proxyType: "socks5",
     proxyHost: "",
@@ -61,12 +56,9 @@ export function profileToDraft(profile: SshProfile): ProfileDraft {
     folder: profile.folder ?? "",
     host: profile.host,
     port: String(profile.port),
-    username: profile.username,
-    authType: profile.authMethod.type,
-    password: "",
-    keyData: "",
-    keyName: profile.authMethod.type === "privateKey" ? (profile.authMethod.keyName ?? "") : "",
-    passphrase: "",
+    ...createAuthDraft(profile.username, profile.credentialId ? undefined : profile.authMethod),
+    authSource: profile.credentialId ?? embeddedAuth,
+    credentialName: "",
     useProxy: Boolean(profile.proxy),
     proxyType: profile.proxy?.proxyType ?? "socks5",
     proxyHost: profile.proxy?.host ?? "",

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useId, useRef, useState } from "react";
-import { Button } from "../ui/Button";
+import { ToolAction } from "./ToolControls";
 import { IconButton } from "../ui/IconButton";
 import { Icon, type IconName } from "../ui/Icon";
 import { TOOL_CATALOG, type ToolId } from "./catalog";
@@ -21,9 +21,9 @@ const categoryIcons: Record<ToolCategory, IconName> = {
   "参考与计算": "gauge",
 };
 const filters = [
-  { id: "all", label: "全部" },
-  { id: "favorites", label: "收藏" },
-  { id: "recent", label: "最近" },
+  { id: "all", label: "全部工具", icon: "toolbox" },
+  { id: "favorites", label: "收藏", icon: "star" },
+  { id: "recent", label: "最近使用", icon: "clock" },
 ] as const;
 type Filter = typeof filters[number]["id"];
 interface ToolPreferences {
@@ -62,6 +62,10 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchId = useId();
+  const [searchHovered, setSearchHovered] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchExpanded = searchHovered || searchFocused || Boolean(query);
   const groupId = useId();
   const [collapsedCategories, setCollapsedCategories] = useState(loadCollapsedCategories);
   const [visited, setVisited] = useState<ToolId[]>([selected]);
@@ -149,25 +153,36 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
       <div className="tools-workspace__layout">
         <nav className="tools-workspace__catalog" aria-label="工具目录">
           <div className="tools-workspace__catalog-head">
-            <h1>工具箱</h1>
-            <div className="tools-workspace__search">
-              <Icon name="search" />
-              <input ref={searchRef} type="text" role="searchbox" aria-label="搜索工具" placeholder="搜索工具"
-                autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Escape" && query) clearSearch(); }} />
-              {query ? <IconButton label="清除搜索" onClick={clearSearch}><Icon name="close" /></IconButton> : null}
+            <div className="tools-workspace__catalog-top" data-search-expanded={searchExpanded}>
+              <h1>工具箱</h1>
+              <div className="tools-workspace__search" data-expanded={searchExpanded}
+                onMouseEnter={() => setSearchHovered(true)} onMouseLeave={() => setSearchHovered(false)}
+                onFocusCapture={() => setSearchFocused(true)}
+                onBlurCapture={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setSearchFocused(false);
+                }}>
+                <IconButton label="搜索工具" aria-expanded={searchExpanded} aria-controls={searchId}
+                  onClick={() => searchRef.current?.focus()}><Icon name="search" /></IconButton>
+                <input ref={searchRef} id={searchId} type="text" role="searchbox" aria-label="搜索工具" placeholder="搜索工具"
+                  tabIndex={searchExpanded ? 0 : -1} aria-hidden={!searchExpanded}
+                  autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.stopPropagation();
+                    if (query) clearSearch();
+                    else event.currentTarget.blur();
+                  }} />
+                {query ? <IconButton label="清除搜索" onClick={clearSearch}><Icon name="close" /></IconButton> : null}
+              </div>
             </div>
             <div className="tools-workspace__filters" role="group" aria-label="筛选工具">
-              {filters.map(({ id, label }) => (
-                <Button variant="ghost" key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>
-                  {label}
-                </Button>
+              {filters.map(({ id, label, icon }) => (
+                <ToolAction variant="ghost" key={id} label={label} icon={icon} aria-pressed={filter === id} onClick={() => setFilter(id)} />
               ))}
             </div>
           </div>
           <div className="tools-workspace__groups">
             {!filtered.length ? <p className="tools-workspace__empty" role="status">{emptyMessage}</p>
-              : filter !== "all" ? <div className="tools-workspace__group">{toolRows(filtered)}</div>
               : categories.map((category, index) => {
                 const group = filtered.filter((tool) => tool.category === category);
                 if (!group.length) return null;
@@ -185,7 +200,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
                           type="button"
                           aria-expanded={expanded}
                           aria-controls={itemsId}
-                          data-current={!expanded && current.category === category}
+                          data-current={!expanded && group.some((tool) => tool.id === selected)}
                           onClick={() => toggleCategory(category)}
                         >
                           {heading}
@@ -209,9 +224,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
                   <h2>{current.label}</h2>
                 </div>
               </div>
-              <Button variant="ghost" aria-pressed={favorite} onClick={toggleFavorite}>
-                <Icon name="star" /> {favorite ? "已收藏" : "收藏"}
-              </Button>
+              <ToolAction variant="ghost" label={favorite ? "取消收藏" : "收藏工具"} icon="star" aria-pressed={favorite} onClick={toggleFavorite} />
             </header>
             {TOOL_CATALOG.filter((tool) => visited.includes(tool.id)).map(({ id, component: ToolPage }) => (
               <div key={id} hidden={id !== selected}>

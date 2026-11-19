@@ -1,11 +1,11 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde_json::Value;
 
 use crate::{
@@ -17,10 +17,23 @@ use crate::{
         CreateS3ProfileRequest, S3Bookmark, S3Credentials, S3Profile, UpdateS3ProfileRequest,
     },
     models::ssh_profile::{
-        AuthMethod, CreateSshProfileRequest, DEFAULT_SSH_PROFILE_ICON, SshProfile, SshProxy,
-        UpdateSshProfileRequest,
+        AuthMethod, CreateSshProfileRequest, DEFAULT_SSH_PROFILE_ICON, SaveSshCredentialRequest,
+        SshCredential, SshProfile, SshProxy, UpdateSshProfileRequest,
     },
 };
+
+use super::ssh_credentials::{
+    auth_from_columns, get_credential, list_credentials, load_key_file, save_credential,
+};
+
+const PROFILE_QUERY: &str = "SELECT p.id, p.name, p.host, p.port, COALESCE(c.username, p.username),
+            COALESCE(c.auth_type, p.auth_type), COALESCE(c.secret_ref, p.secret_ref),
+            COALESCE(c.key_data, p.key_data), COALESCE(c.key_name, p.key_name),
+            COALESCE(c.passphrase_ref, p.passphrase_ref), p.description, p.favorite,
+            p.tags, p.created_at, p.updated_at, p.proxy_type, p.proxy_host, p.proxy_port,
+            p.proxy_username, p.proxy_password, p.icon, p.folder, p.connection_type,
+            p.credential_id, c.revision
+     FROM ssh_profiles p LEFT JOIN ssh_credentials c ON p.credential_id = c.id";
 
 const INIT_MIGRATION: &str = include_str!("../../migrations/001_init.sql");
 const S3_MIGRATION: &str = include_str!("../../migrations/002_s3_profiles.sql");
@@ -48,78 +61,84 @@ impl ProfileRepository {
     }
 
     pub fn list_profiles(&self) -> AppResult<Vec<SshProfile>> {
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
-                    key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                    proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
-             FROM ssh_profiles
-             ORDER BY favorite DESC, name COLLATE NOCASE ASC",
-        )?;
-        let rows = statement.query_map([], map_profile_row)?;
-        let profiles = rows.collect::<Result<Vec<_>, _>>()?;
-        Ok(profiles)
+        list_profiles(&self.connection()?)
+    }
+
+    pub fn export_ssh_profiles(&self) -> AppResult<(Vec<SshProfile>, Vec<SshCredential>)> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let profiles = list_profiles(&transaction)?;
+        let credentials = list_credentials(&transaction)?;
+        transaction.commit()?;
+        Ok((profiles, credentials))
+    }
+
+    pub fn import_ssh_profiles(
+        &self,
+        credentials: Vec<(String, SaveSshCredentialRequest)>,
+        profiles: Vec<CreateSshProfileRequest>,
+    ) -> AppResult<Vec<SshProfile>> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut imported_ids = HashMap::new();
+        for (id, request) in credentials {
+            let credential = save_credential(&transaction, None, request)?;
+            if imported_ids.insert(id, credential.id).is_some() {
+                return Err(AppError::new(
+                    "import_error",
+                    "备份中存在重复的 SSH 凭据标识。",
+                ));
+            }
+        }
+        let mut created = Vec::with_capacity(profiles.len());
+        for mut request in profiles {
+            if let Some(id) = &request.credential_id {
+                request.credential_id = Some(imported_ids.get(id).cloned().ok_or_else(|| {
+                    AppError::new("import_error", "备份缺少连接引用的 SSH 凭据。")
+                })?);
+            }
+            created.push(create_profile(&transaction, request, None)?);
+        }
+        transaction.commit()?;
+        Ok(created)
     }
 
     pub fn create_profile(&self, request: CreateSshProfileRequest) -> AppResult<SshProfile> {
-        let now = timestamp();
-        let id = create_id();
-        let profile = SshProfile {
-            id,
-            name: request.name.trim().to_string(),
-            folder: normalize_folder(&request.folder)?,
-            connection_type: request.connection_type,
-            host: request.host.trim().to_string(),
-            port: request.port,
-            username: request.username.trim().to_string(),
-            auth_method: request.auth_method,
-            proxy: normalize_proxy(request.proxy)?,
-            description: normalize_optional(request.description),
-            favorite: request.favorite,
-            icon: normalize_profile_icon(request.icon)?,
-            tags: normalize_tags(request.tags),
-            created_at: now.clone(),
-            updated_at: now,
-        };
-
-        validate_profile(&profile)?;
-
-        let connection = self.connection()?;
-        insert_profile(&connection, &profile)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let profile = create_profile(&transaction, request, None)?;
+        transaction.commit()?;
         Ok(profile)
     }
 
     pub fn clone_profile(
         &self,
         source_id: &str,
-        mut request: CreateSshProfileRequest,
+        request: CreateSshProfileRequest,
     ) -> AppResult<SshProfile> {
-        let source = self
-            .get_profile(source_id)?
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let source = get_profile(&transaction, source_id)?
             .ok_or_else(|| AppError::new("profile_not_found", "原连接已删除，无法克隆。"))?;
-        // Resolve credentials only here; cloning never sends saved secrets to the UI.
-        // A newly uploaded key must not inherit a different key's passphrase.
-        if !matches!(
-            &request.auth_method,
-            AuthMethod::PrivateKey {
-                key_data: Some(_),
-                ..
-            }
-        ) {
-            request.auth_method = merge_auth_method(source.auth_method, request.auth_method);
-        }
-        request.proxy = merge_proxy(source.proxy, request.proxy)?;
-        self.create_profile(request)
+        let profile = create_profile(&transaction, request, Some(source))?;
+        transaction.commit()?;
+        Ok(profile)
     }
 
     pub fn update_profile(&self, request: UpdateSshProfileRequest) -> AppResult<SshProfile> {
-        let existing = self.get_profile(&request.id)?.ok_or_else(|| {
-            AppError::new(
-                "profile_not_found",
-                format!("SSH profile '{}' does not exist.", request.id),
-            )
-        })?;
-
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing = get_profile(&transaction, &request.id)?
+            .ok_or_else(|| AppError::new("profile_not_found", "此连接已删除。"))?;
+        let (credential_id, username, auth_method) = resolve_profile_auth(
+            &transaction,
+            request.credential_id,
+            request.new_credential,
+            request.username,
+            request.auth_method,
+            request.key_file_path.as_deref(),
+            PreviousProfile::Edited(&existing),
+        )?;
         let profile = SshProfile {
             id: existing.id,
             name: request.name.trim().to_string(),
@@ -127,8 +146,10 @@ impl ProfileRepository {
             connection_type: request.connection_type,
             host: request.host.trim().to_string(),
             port: request.port,
-            username: request.username.trim().to_string(),
-            auth_method: merge_auth_method(existing.auth_method, request.auth_method),
+            username,
+            auth_method,
+            credential_id,
+            credential_revision: None,
             proxy: merge_proxy(existing.proxy, request.proxy)?,
             description: normalize_optional(request.description),
             favorite: request.favorite,
@@ -137,12 +158,11 @@ impl ProfileRepository {
             created_at: existing.created_at,
             updated_at: timestamp(),
         };
-
         validate_profile(&profile)?;
-
-        let connection = self.connection()?;
-        update_profile(&connection, &profile)?;
-        Ok(profile)
+        update_profile(&transaction, &profile)?;
+        let saved = get_profile(&transaction, &profile.id)?.expect("updated profile exists");
+        transaction.commit()?;
+        Ok(saved)
     }
 
     pub fn delete_profile(&self, id: &str) -> AppResult<()> {
@@ -201,36 +221,20 @@ impl ProfileRepository {
     }
 
     pub fn set_favorite(&self, id: &str, favorite: bool) -> AppResult<SshProfile> {
-        let profile = self.get_profile(id)?.ok_or_else(|| {
-            AppError::new(
-                "profile_not_found",
-                format!("SSH profile '{id}' does not exist."),
-            )
-        })?;
-        let updated_profile = SshProfile {
-            favorite,
-            updated_at: timestamp(),
-            ..profile
-        };
-        let connection = self.connection()?;
-        update_profile(&connection, &updated_profile)?;
-        Ok(updated_profile)
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "UPDATE ssh_profiles SET favorite = ?1, updated_at = ?2 WHERE id = ?3",
+            params![bool_to_i64(favorite), timestamp(), id],
+        )?;
+        let profile = get_profile(&transaction, id)?
+            .ok_or_else(|| AppError::new("profile_not_found", "此连接已删除。"))?;
+        transaction.commit()?;
+        Ok(profile)
     }
 
     pub fn get_profile(&self, id: &str) -> AppResult<Option<SshProfile>> {
-        let connection = self.connection()?;
-        let profile = connection
-            .query_row(
-                "SELECT id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
-                        key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-                        proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
-                 FROM ssh_profiles
-                 WHERE id = ?1",
-                params![id],
-                map_profile_row,
-            )
-            .optional()?;
-        Ok(profile)
+        get_profile(&self.connection()?, id)
     }
 
     pub fn list_s3_profiles(&self) -> AppResult<Vec<S3Profile>> {
@@ -559,7 +563,7 @@ impl ProfileRepository {
     }
 
     fn migrate(&self) -> AppResult<()> {
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
         connection.execute_batch(INIT_MIGRATION)?;
         connection.execute_batch(S3_MIGRATION)?;
         connection.execute_batch(S3_BOOKMARKS_MIGRATION)?;
@@ -596,6 +600,16 @@ impl ProfileRepository {
             ))?;
         }
         ensure_columns(&connection)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let has_credential_id: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('ssh_profiles') WHERE name = 'credential_id')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_credential_id {
+            transaction.execute_batch(include_str!("../../migrations/018_ssh_credentials.sql"))?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -974,25 +988,153 @@ impl ProfileRepository {
     }
 
     pub(super) fn connection(&self) -> AppResult<Connection> {
-        Ok(Connection::open(&self.db_path)?)
+        let connection = Connection::open(&self.db_path)?;
+        connection.pragma_update(None, "foreign_keys", true)?;
+        Ok(connection)
     }
 }
 
+fn list_profiles(connection: &Connection) -> AppResult<Vec<SshProfile>> {
+    let mut statement = connection.prepare(&format!(
+        "{PROFILE_QUERY} ORDER BY p.favorite DESC, p.name COLLATE NOCASE"
+    ))?;
+    Ok(statement
+        .query_map([], map_profile_row)?
+        .collect::<Result<_, _>>()?)
+}
+
+fn get_profile(connection: &Connection, id: &str) -> AppResult<Option<SshProfile>> {
+    Ok(connection
+        .query_row(
+            &format!("{PROFILE_QUERY} WHERE p.id = ?1"),
+            [id],
+            map_profile_row,
+        )
+        .optional()?)
+}
+
+fn create_profile(
+    connection: &Connection,
+    request: CreateSshProfileRequest,
+    source: Option<SshProfile>,
+) -> AppResult<SshProfile> {
+    let (credential_id, username, auth_method) = resolve_profile_auth(
+        connection,
+        request.credential_id,
+        request.new_credential,
+        request.username,
+        request.auth_method,
+        request.key_file_path.as_deref(),
+        source
+            .as_ref()
+            .map_or(PreviousProfile::New, PreviousProfile::Cloned),
+    )?;
+    let now = timestamp();
+    let profile = SshProfile {
+        id: format!("profile-{:032x}", rand::random::<u128>()),
+        name: request.name.trim().to_string(),
+        folder: normalize_folder(&request.folder)?,
+        connection_type: request.connection_type,
+        host: request.host.trim().to_string(),
+        port: request.port,
+        username,
+        auth_method,
+        credential_id,
+        credential_revision: None,
+        proxy: merge_proxy(source.and_then(|profile| profile.proxy), request.proxy)?,
+        description: normalize_optional(request.description),
+        favorite: request.favorite,
+        icon: normalize_profile_icon(request.icon)?,
+        tags: normalize_tags(request.tags),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    validate_profile(&profile)?;
+    insert_profile(connection, &profile)?;
+    Ok(get_profile(connection, &profile.id)?.expect("inserted profile exists"))
+}
+
+enum PreviousProfile<'a> {
+    New,
+    Edited(&'a SshProfile),
+    Cloned(&'a SshProfile),
+}
+
+fn resolve_profile_auth(
+    connection: &Connection,
+    credential_id: Option<String>,
+    new_credential: Option<SaveSshCredentialRequest>,
+    username: String,
+    auth_method: Option<AuthMethod>,
+    key_file_path: Option<&str>,
+    previous: PreviousProfile<'_>,
+) -> AppResult<(Option<String>, String, AuthMethod)> {
+    let credential = match (credential_id, new_credential) {
+        (Some(_), Some(_)) => {
+            return Err(AppError::new("validation_error", "请选择一种认证来源。"));
+        }
+        (Some(id), None) => Some(get_credential(connection, &id)?),
+        (None, Some(request)) => Some(save_credential(connection, None, request)?),
+        (None, None) => None,
+    };
+    if let Some(credential) = credential {
+        return Ok((
+            Some(credential.id),
+            credential.username,
+            credential.auth_method,
+        ));
+    }
+
+    let auth = auth_method.ok_or_else(|| AppError::new("validation_error", "请选择认证方式。"))?;
+    let mut auth = load_key_file(auth, key_file_path)?;
+    let existing = match previous {
+        PreviousProfile::Edited(profile) | PreviousProfile::Cloned(profile) => Some(profile),
+        PreviousProfile::New => None,
+    };
+    if let Some(existing) = existing {
+        // Switching away from a shared credential requires new authentication material.
+        if existing.credential_id.is_some() {
+            match &auth {
+                AuthMethod::Password { secret_ref }
+                    if secret_ref.as_ref().is_none_or(|value| value.is_empty()) =>
+                {
+                    return Err(AppError::new("validation_error", "请输入连接密码。"));
+                }
+                AuthMethod::PrivateKey { key_data, .. }
+                    if key_data
+                        .as_ref()
+                        .is_none_or(|value| value.trim().is_empty()) =>
+                {
+                    return Err(AppError::new("validation_error", "请选择连接密钥文件。"));
+                }
+                _ => {}
+            }
+        } else {
+            auth = merge_auth_method(
+                existing.auth_method.clone(),
+                auth,
+                matches!(previous, PreviousProfile::Edited(_)),
+            );
+        }
+    }
+    Ok((None, username.trim().to_string(), auth))
+}
+
 fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()> {
-    let auth_fields = AuthFields::from(&profile.auth_method);
+    let auth_fields = AuthFields::for_profile(profile);
     let proxy_fields = ProxyFields::from(profile.proxy.as_ref());
     connection.execute(
         "INSERT INTO ssh_profiles (
             id, name, host, port, username, auth_type, secret_ref, key_path, key_data,
             key_name, passphrase_ref, description, favorite, tags, created_at, updated_at,
-            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            proxy_type, proxy_host, proxy_port, proxy_username, proxy_password, icon, folder, connection_type, credential_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             profile.id,
             profile.name,
             profile.host,
             profile.port,
-            profile.username,
+            if profile.credential_id.is_some() { "" } else { &profile.username },
             auth_fields.auth_type,
             auth_fields.secret_ref,
             auth_fields.key_path,
@@ -1012,13 +1154,14 @@ fn insert_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             profile.icon,
             profile.folder,
             profile.connection_type.as_str(),
+            profile.credential_id,
         ],
     )?;
     Ok(())
 }
 
 fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()> {
-    let auth_fields = AuthFields::from(&profile.auth_method);
+    let auth_fields = AuthFields::for_profile(profile);
     let proxy_fields = ProxyFields::from(profile.proxy.as_ref());
     connection.execute(
         "UPDATE ssh_profiles
@@ -1026,14 +1169,14 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
              secret_ref = ?7, key_path = ?8, key_data = ?9, key_name = ?10,
              passphrase_ref = ?11, description = ?12, favorite = ?13, tags = ?14,
              updated_at = ?15, proxy_type = ?16, proxy_host = ?17, proxy_port = ?18,
-             proxy_username = ?19, proxy_password = ?20, icon = ?21, folder = ?22, connection_type = ?23
+             proxy_username = ?19, proxy_password = ?20, icon = ?21, folder = ?22, connection_type = ?23, credential_id = ?24
          WHERE id = ?1",
         params![
             profile.id,
             profile.name,
             profile.host,
             profile.port,
-            profile.username,
+            if profile.credential_id.is_some() { "" } else { &profile.username },
             auth_fields.auth_type,
             auth_fields.secret_ref,
             auth_fields.key_path,
@@ -1052,35 +1195,30 @@ fn update_profile(connection: &Connection, profile: &SshProfile) -> AppResult<()
             profile.icon,
             profile.folder,
             profile.connection_type.as_str(),
+            profile.credential_id,
         ],
     )?;
     Ok(())
 }
 
 fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
-    let auth_type: String = row.get(5)?;
-    let secret_ref: Option<String> = row.get(6)?;
-    let _key_path: Option<String> = row.get(7)?;
-    let key_data: Option<String> = row.get(8)?;
-    let key_name: Option<String> = row.get(9)?;
-    let passphrase_ref: Option<String> = row.get(10)?;
-    let tags: Option<String> = row.get(13)?;
-    let proxy_type: Option<String> = row.get(16)?;
-    let proxy_host: Option<String> = row.get(17)?;
-    let proxy_port: Option<u16> = row.get(18)?;
-    let proxy_username: Option<String> = row.get(19)?;
-    let proxy_password: Option<String> = row.get(20)?;
-    let icon: Option<String> = row.get(21)?;
+    let tags: Option<String> = row.get(12)?;
+    let proxy_type: Option<String> = row.get(15)?;
+    let proxy_host: Option<String> = row.get(16)?;
+    let proxy_port: Option<u16> = row.get(17)?;
+    let proxy_username: Option<String> = row.get(18)?;
+    let proxy_password: Option<String> = row.get(19)?;
+    let icon: Option<String> = row.get(20)?;
 
     Ok(SshProfile {
         id: row.get(0)?,
-        folder: row.get(22)?,
-        connection_type: match row.get::<_, String>(23)?.as_str() {
+        folder: row.get(21)?,
+        connection_type: match row.get::<_, String>(22)?.as_str() {
             "ssh" => crate::models::ssh_profile::SshConnectionType::Ssh,
             "sftp" => crate::models::ssh_profile::SshConnectionType::Sftp,
             _ => {
                 return Err(rusqlite::Error::InvalidColumnType(
-                    23,
+                    22,
                     "connection_type".into(),
                     rusqlite::types::Type::Text,
                 ));
@@ -1090,15 +1228,15 @@ fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
         host: row.get(2)?,
         port: row.get(3)?,
         username: row.get(4)?,
-        auth_method: match auth_type.as_str() {
-            "password" => AuthMethod::Password { secret_ref },
-            "privateKey" => AuthMethod::PrivateKey {
-                key_data,
-                key_name,
-                passphrase_ref,
-            },
-            _ => AuthMethod::Password { secret_ref: None },
-        },
+        auth_method: auth_from_columns(
+            row.get::<_, String>(5)?.as_str(),
+            row.get(6)?,
+            row.get(7)?,
+            row.get(8)?,
+            row.get(9)?,
+        ),
+        credential_id: row.get(23)?,
+        credential_revision: row.get(24)?,
         proxy: proxy_type.map(|proxy_type| SshProxy {
             proxy_type,
             host: proxy_host.unwrap_or_default(),
@@ -1106,12 +1244,12 @@ fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<SshProfile> {
             username: proxy_username,
             password: proxy_password,
         }),
-        description: row.get(11)?,
-        favorite: row.get::<_, i64>(12)? != 0,
+        description: row.get(10)?,
+        favorite: row.get::<_, i64>(11)? != 0,
         icon: normalize_stored_profile_icon(icon),
         tags: deserialize_tags(tags.as_deref()),
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -1252,7 +1390,11 @@ fn ensure_columns(connection: &Connection) -> AppResult<()> {
 /// that were previously stored. The frontend never receives password / key /
 /// passphrase material back, so an omitted (None) field means "unchanged"
 /// rather than "clear". Switching auth type replaces everything.
-fn merge_auth_method(existing: AuthMethod, incoming: AuthMethod) -> AuthMethod {
+pub(super) fn merge_auth_method(
+    existing: AuthMethod,
+    incoming: AuthMethod,
+    keep_previous_passphrase_with_new_key: bool,
+) -> AuthMethod {
     match (existing, incoming) {
         (
             AuthMethod::PrivateKey {
@@ -1265,11 +1407,21 @@ fn merge_auth_method(existing: AuthMethod, incoming: AuthMethod) -> AuthMethod {
                 key_name,
                 passphrase_ref,
             },
-        ) => AuthMethod::PrivateKey {
-            key_data: key_data.or(existing_data),
-            key_name: key_name.or(existing_name),
-            passphrase_ref: passphrase_ref.or(existing_passphrase),
-        },
+        ) => {
+            if key_data.is_some() && !keep_previous_passphrase_with_new_key {
+                AuthMethod::PrivateKey {
+                    key_data,
+                    key_name,
+                    passphrase_ref,
+                }
+            } else {
+                AuthMethod::PrivateKey {
+                    key_data: key_data.or(existing_data),
+                    key_name: key_name.or(existing_name),
+                    passphrase_ref: passphrase_ref.or(existing_passphrase),
+                }
+            }
+        }
         (
             AuthMethod::Password {
                 secret_ref: existing_secret,
@@ -1547,10 +1699,6 @@ fn timestamp() -> String {
     millis.to_string()
 }
 
-fn create_id() -> String {
-    create_id_with_prefix("profile")
-}
-
 fn create_id_with_prefix(prefix: &str) -> String {
     format!("{prefix}-{}", timestamp())
 }
@@ -1559,13 +1707,13 @@ fn bool_to_i64(value: bool) -> i64 {
     if value { 1 } else { 0 }
 }
 
-struct AuthFields {
-    auth_type: &'static str,
-    secret_ref: Option<String>,
-    key_path: Option<String>,
-    key_data: Option<String>,
-    key_name: Option<String>,
-    passphrase_ref: Option<String>,
+pub(super) struct AuthFields {
+    pub(super) auth_type: &'static str,
+    pub(super) secret_ref: Option<String>,
+    pub(super) key_path: Option<String>,
+    pub(super) key_data: Option<String>,
+    pub(super) key_name: Option<String>,
+    pub(super) passphrase_ref: Option<String>,
 }
 
 struct ProxyFields {
@@ -1585,6 +1733,15 @@ impl From<Option<&SshProxy>> for ProxyFields {
             username: proxy.and_then(|item| item.username.clone()),
             password: proxy.and_then(|item| item.password.clone()),
         }
+    }
+}
+
+impl AuthFields {
+    fn for_profile(profile: &SshProfile) -> Self {
+        if profile.credential_id.is_some() {
+            return Self::from(&AuthMethod::Password { secret_ref: None });
+        }
+        Self::from(&profile.auth_method)
     }
 }
 
@@ -1733,6 +1890,8 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("dssh-clone-{}", timestamp()));
         let repository = ProfileRepository::initialize(&directory, "test.sqlite3").unwrap();
         let source = SshProfile {
+            credential_id: None,
+            credential_revision: None,
             connection_type: Default::default(),
             id: "clone-source".into(),
             name: "Original".into(),
@@ -1742,16 +1901,16 @@ mod tests {
             username: "deploy".into(),
             // Generated sentinels exercise preservation without using real credential material.
             auth_method: AuthMethod::PrivateKey {
-                key_data: Some(create_id()),
+                key_data: Some(create_id_with_prefix("fixture")),
                 key_name: Some("deployment.key".into()),
-                passphrase_ref: Some(create_id()),
+                passphrase_ref: Some(create_id_with_prefix("fixture")),
             },
             proxy: Some(SshProxy {
                 proxy_type: "socks5".into(),
                 host: "proxy.example.test".into(),
                 port: 1080,
                 username: None,
-                password: Some(create_id()),
+                password: Some(create_id_with_prefix("fixture")),
             }),
             description: None,
             favorite: false,
@@ -1817,6 +1976,8 @@ mod tests {
             insert_profile(
                 &repository.connection().unwrap(),
                 &SshProfile {
+                    credential_id: None,
+                    credential_revision: None,
                     connection_type: Default::default(),
                     id: format!("tag-test-{index}"),
                     created_at: timestamp(),
@@ -2032,7 +2193,10 @@ mod tests {
                 host: "ubuntu.example.test".to_string(),
                 port: 22,
                 username: "root".to_string(),
-                auth_method: AuthMethod::Password { secret_ref: None },
+                auth_method: Some(AuthMethod::Password { secret_ref: None }),
+                credential_id: None,
+                new_credential: None,
+                key_file_path: None,
                 proxy: None,
                 description: None,
                 favorite: false,
@@ -2054,7 +2218,10 @@ mod tests {
             host: "unknown.example.test".to_string(),
             port: 22,
             username: "root".to_string(),
-            auth_method: AuthMethod::Password { secret_ref: None },
+            auth_method: Some(AuthMethod::Password { secret_ref: None }),
+            credential_id: None,
+            new_credential: None,
+            key_file_path: None,
             proxy: None,
             description: None,
             favorite: false,

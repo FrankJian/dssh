@@ -23,3 +23,4 @@ pub mod jumpserver_repository;
 
 pub mod artifactory_repository;
 mod connection_folders;
+mod ssh_credentials;

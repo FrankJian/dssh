@@ -68,6 +68,27 @@ pub struct SshProxy {
     pub password: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshCredential {
+    pub id: String,
+    pub name: String,
+    pub username: String,
+    pub auth_method: AuthMethod,
+    pub connection_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSshCredentialRequest {
+    pub name: String,
+    pub username: String,
+    pub auth_method: AuthMethod,
+    pub key_file_path: Option<String>,
+    #[serde(default)]
+    pub clear_passphrase: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshProfile {
@@ -81,6 +102,10 @@ pub struct SshProfile {
     pub port: u16,
     pub username: String,
     pub auth_method: AuthMethod,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
+    #[serde(skip)]
+    pub credential_revision: Option<i64>,
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,
@@ -102,8 +127,12 @@ pub struct CreateSshProfileRequest {
     pub folder: String,
     pub host: String,
     pub port: u16,
+    #[serde(default)]
     pub username: String,
-    pub auth_method: AuthMethod,
+    pub auth_method: Option<AuthMethod>,
+    pub credential_id: Option<String>,
+    pub new_credential: Option<SaveSshCredentialRequest>,
+    pub key_file_path: Option<String>,
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,
@@ -124,8 +153,12 @@ pub struct UpdateSshProfileRequest {
     pub folder: String,
     pub host: String,
     pub port: u16,
+    #[serde(default)]
     pub username: String,
-    pub auth_method: AuthMethod,
+    pub auth_method: Option<AuthMethod>,
+    pub credential_id: Option<String>,
+    pub new_credential: Option<SaveSshCredentialRequest>,
+    pub key_file_path: Option<String>,
     pub proxy: Option<SshProxy>,
     pub description: Option<String>,
     pub favorite: bool,

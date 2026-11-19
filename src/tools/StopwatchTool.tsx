@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../ui/Button";
-import { ToolPanel } from "./ToolControls";
+import { ToolAction, ToolPanel } from "./ToolControls";
 
 function duration(milliseconds: number): string {
   const centiseconds = Math.floor(milliseconds / 10);
@@ -38,11 +37,11 @@ export default function StopwatchTool() {
   return (
     <div className="tool-form">
       <div className="tool-form__toolbar">
-        <Button variant="primary" onClick={toggle}>{started === null ? "开始" : "暂停"}</Button>
-        <Button disabled={started === null || laps.length >= 100}
-          onClick={() => { if (started !== null) setLaps([...laps, accumulated + performance.now() - started]); }}>计次</Button>
-        <Button variant="ghost" disabled={!accumulated && started === null}
-          onClick={() => { setStarted(null); setAccumulated(0); setLaps([]); }}>重置</Button>
+        <ToolAction variant="primary" label={started === null ? "开始" : "暂停"} icon={started === null ? "play" : "pause"} onClick={toggle} />
+        <ToolAction label="计次" icon="clock" disabled={started === null || laps.length >= 100}
+          onClick={() => { if (started !== null) setLaps([...laps, accumulated + performance.now() - started]); }} />
+        <ToolAction variant="ghost" label="重置" icon="refresh" disabled={!accumulated && started === null}
+          onClick={() => { setStarted(null); setAccumulated(0); setLaps([]); }} />
       </div>
       <ToolPanel label="已用时间">
         <output ref={display} className="tool-stopwatch" aria-live="off">{duration(elapsed)}</output>

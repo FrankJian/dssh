@@ -23,8 +23,19 @@ test('clone draft copies connection settings, appends the suffix and keeps tags 
   assert.equal(draft.icon, source.icon);
   assert.equal(draft.favorite, true);
   assert.deepEqual(draft.tags, source.tags);
-  for (const field of ['password', 'keyData', 'passphrase', 'proxyPassword']) assert.equal(draft[field], '');
+  for (const field of ['password', 'keyFilePath', 'passphrase', 'proxyPassword']) assert.equal(draft[field], '');
   draft.tags.push('clone');
   assert.deepEqual(source.tags, ['production', 'api']);
   assert.equal(source.name, 'Production');
+});
+
+
+test("clone draft keeps the shared credential reference", () => {
+  const draft = profileToCloneDraft({
+    name: "Upload", host: "files.test", port: 22, username: "deploy",
+    credentialId: "ssh-credential:team", authMethod: { type: "privateKey", keyName: "team.key" },
+  });
+  assert.equal(draft.authSource, "ssh-credential:team");
+  assert.equal(draft.keyName, "");
+  assert.equal(draft.keyFilePath, "");
 });

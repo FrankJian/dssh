@@ -1,5 +1,6 @@
 import { emit } from "@tauri-apps/api/event";
 import type { AuthMethod, SshProfile, SshProfileIcon, SshProxy } from "../models";
+import type { SaveSshCredentialRequest } from "../models/sshCredential";
 import { invokeCommand } from "./tauri";
 
 export interface CreateSshProfileRequest {
@@ -8,8 +9,11 @@ export interface CreateSshProfileRequest {
   folder?: string;
   host: string;
   port: number;
-  username: string;
-  authMethod: AuthMethod;
+  username?: string;
+  authMethod?: AuthMethod;
+  keyFilePath?: string;
+  credentialId?: string;
+  newCredential?: SaveSshCredentialRequest;
   proxy?: SshProxy;
   description?: string;
   favorite: boolean;
@@ -47,10 +51,6 @@ export function renameSshTag(oldTag: string, newTag: string) {
 
 export function setSshProfileFavorite(id: string, favorite: boolean) {
   return invokeCommand<SshProfile>("set_ssh_profile_favorite", { id, favorite });
-}
-
-export function readKeyFile(path: string) {
-  return invokeCommand<string>("read_key_file", { path });
 }
 
 export async function renameConnectionFolder(oldPath: string, newName: string) {

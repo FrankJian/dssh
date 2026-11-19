@@ -6,6 +6,8 @@ import type { SshProfile } from "../models";
 import { buildConnectionFolders, isInConnectionFolder, renamedConnectionFolderPath } from "./connectionFolders";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "../ui/Button";
+import { SshCredentialManager } from "./SshCredentialManager";
 import { Icon, type IconName } from "../ui/Icon";
 import { SelectMenu } from "../ui/SelectMenu";
 import { ConnectionCard } from "./ConnectionCard";
@@ -103,6 +105,7 @@ export function SessionManager({
   onRenameTag,
   onRenameFolder,
 }: SessionManagerProps) {
+  const [manageCredentials, setManageCredentials] = useState(false);
   const [tagMenu, setTagMenu] = useState<{ tag: string; kind?: "folder"; x: number; y: number } | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [renamingTag, setRenamingTag] = useState<string | null>(null);
@@ -310,9 +313,14 @@ export function SessionManager({
       <header className="session-manager__header">
         <div className="session-manager__heading"><Icon name="connections" height="18" width="18" />
           <h1>连接管理</h1><span>{profiles.length} 个连接</span></div>
-        <button className="session-manager__new" onClick={createConnection} type="button" aria-label="新建连接">
-          <Icon name="plus" height="15" width="15" /><span>新建连接</span>
-        </button>
+        <div className="session-manager__header-actions">
+          <Button aria-label="凭据管理" className="session-manager__credentials" onClick={() => setManageCredentials(true)} variant="ghost">
+            <Icon name="fileKey" height="16" width="16" /><span>凭据管理</span>
+          </Button>
+          <button className="session-manager__new" onClick={createConnection} type="button" aria-label="新建连接">
+            <Icon name="plus" height="15" width="15" /><span>新建连接</span>
+          </button>
+        </div>
       </header>
       <div className="session-manager__body">
         {profiles.length > 0 ? <nav className="session-manager__nav" aria-label="连接分类" ref={navRef}>
@@ -413,6 +421,9 @@ export function SessionManager({
         <span className="session-manager__status-dot" />
         <span>{activeSessionCount} 个活动会话</span>
       </div>
+      {manageCredentials ? createPortal(
+        <SshCredentialManager onClose={() => setManageCredentials(false)} />, document.body,
+      ) : null}
       {tagMenu ? createPortal(
         <div className="context-menu is-glass-overlay" role="menu" aria-label={tagMenu.kind === "folder" ? "目录操作" : "标签分组操作"} ref={menuRef}
           style={{ left: tagMenu.x, top: tagMenu.y }} onContextMenu={(event) => event.preventDefault()}>

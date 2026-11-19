@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SettingsSwitch } from "../ui/SettingsSwitch";
-import { ToolSelect } from "./ToolControls";
+import { ToolNote, ToolSelect } from "./ToolControls";
 import { TextTool } from "./ToolForm";
 import { basicAuth, inspectJwt, jsonToCsv, parseToolUrl } from "./webDataTools";
 import {
@@ -18,7 +18,7 @@ export function UrlParserTool() {
 export function JwtTool() {
   return (
     <>
-      <p className="tool-form__note">仅解码三段式令牌。签名和声明的有效性需由服务端验证。</p>
+      <ToolNote>仅解码三段式令牌。签名和声明的有效性需由服务端验证。</ToolNote>
       <TextTool action="解码" inputLabel="JWT" outputLabel="解码结果"
         example="eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJkZW1vIiwicm9sZSI6InJlYWRlciJ9."
         run={inspectJwt} />
@@ -150,7 +150,7 @@ export function ListConverterTool() {
   const [unique, setUnique] = useState(false);
   return (
     <>
-      <p className="tool-form__note">转换时会去除项目首尾空白，并跳过空项。</p>
+      <ToolNote>转换时会去除项目首尾空白，并跳过空项。</ToolNote>
       <TextTool action="转换" inputLabel="列表" outputLabel="转换结果" resultKey={`${from}:${to}:${unique}`}
         example={convertList("dev\nqa\nprod\nqa", "line", from, false)}
         run={(input) => convertList(input, from, to, unique)}

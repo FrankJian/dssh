@@ -44,6 +44,7 @@ export type IconName =
   | "tag"
   | "folderPlus"
   | "filePlus"
+  | "fileInput"
   | "house"
   | "forward"
   | "gauge"
@@ -59,6 +60,7 @@ export type IconName =
   | "panelBottom"
   | "pin"
   | "play"
+  | "pause"
   | "plus"
   | "power"
   | "refresh"
@@ -157,6 +159,12 @@ export function Icon({ name, ...props }: IconProps) {
         <circle cx="19" cy="12" r="1" />
       </> : null}
       {name === "arrowLeft" ? <path d="M19 12H5m6-6-6 6 6 6" /> : null}
+      {name === "fileInput" ? (
+        <>
+          <path d="M8 8V4a1 1 0 0 1 1-1h6l5 5v12a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2M15 3v5h5" />
+          <path d="M3 13h11m-4-4 4 4-4 4" />
+        </>
+      ) : null}
       {name === "arrowRight" ? <path d="M5 12h14m-6-6 6 6-6 6" /> : null}
       {name === "clock" ? (
         <>
@@ -178,6 +186,7 @@ export function Icon({ name, ...props }: IconProps) {
       ) : null}
       {name === "moon" ? <path d="M20 15.4A8 8 0 0 1 8.6 4 7 7 0 1 0 20 15.4Z" /> : null}
       {name === "play" ? <path d="m8 5 11 7-11 7V5Z" /> : null}
+      {name === "pause" ? <path d="M9 5v14M15 5v14" /> : null}
       {name === "plus" ? <path d="M12 5v14M5 12h14" /> : null}
       {name === "settings" ? (
         <>

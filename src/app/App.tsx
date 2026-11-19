@@ -85,6 +85,7 @@ import { TerminalTransferConflictDialog } from "../terminal/TerminalTransferConf
 import { focusTerminalSession, releaseTerminal, restoreTerminalSnapshot, terminalSize } from "../terminal/terminalRegistry";
 import { paneSessionIds, usePaneLayout, type SplitDir } from "../terminal/usePaneLayout";
 import { useTerminalSessions } from "../terminal/useTerminalSessions";
+import { CommandCompletionNotices, type CommandCompletionNoticeHandle } from "../terminal/CommandCompletionNotices";
 import { useTerminalCloseGuard } from "../terminal/useTerminalCloseGuard";
 import { defaultSshTerminalTitle } from "../terminal/terminalTitle";
 import { jumpServerSftpTarget, type JumpServerSftpTarget } from "../terminal/terminalTarget";
@@ -372,6 +373,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const {
     commandCompletion,
     setCommandCompletion,
+    commandNotifications,
+    setCommandNotifications,
     commandHistoryLimit,
     setCommandHistoryLimit,
     copyOnSelect,
@@ -428,6 +431,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [jumpServerOpen, setJumpServerOpen] = useState<string | null>(null);
   const [jumpServerEditor, setJumpServerEditor] = useState<{ profile: JumpServerProfile | null; initialFolder?: string; clone?: boolean } | null>(null);
   const [jumpServerDelete, setJumpServerDelete] = useState<JumpServerProfile | null>(null);
+  const commandCompletionNoticesRef = useRef<CommandCompletionNoticeHandle>(null);
   const {
     activeSessionId,
     isSessionsLoaded,
@@ -452,7 +456,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     attachSession,
     subscribeOutput,
     writeToSession,
-  } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined);
+  } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined, handleCommandCompleted);
   const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
   const bulkClosingRef = useRef(false);
   const windowCloseRef = useRef<() => Promise<boolean>>(async () => false);
@@ -1561,6 +1565,33 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
+  function handleCommandCompleted(sessionId: string) {
+    if (!commandNotifications || appLock.status?.locked !== false) return;
+    const tabId = paneTabBySession.get(sessionId) ?? sessionId;
+    if (!sessions.some((session) => session.id === sessionId)) return;
+    const tab = workspaceTabs.find((item) => item.id === tabId);
+    if (!tab) return;
+    const terminalVisible = !isConnections && !isS3 && !isTools && !isArtifactory && !activeRemoteFilePath;
+    if (terminalVisible && tab.active) return;
+    commandCompletionNoticesRef.current?.show({ tabId, sessionId, title: tab.title });
+  }
+
+  function openCompletedCommand({ tabId, sessionId }: { tabId: string; sessionId: string }) {
+    if (appLock.status?.locked !== false) return;
+    const currentTabId = paneTabBySession.get(sessionId) ?? sessionId;
+    const tab = workspaceTabs.find((item) => item.id === currentTabId || item.id === tabId);
+    if (!tab) return;
+
+    setActiveActivity("sessions");
+    setActiveRemoteFilePath(null);
+    setTerminalFullscreenPaneId(null);
+    if (sessions.some((session) => session.id === sessionId)) {
+      handleFocusTerminal(sessionId);
+    } else {
+      handleSelectTab(tab);
+    }
+  }
+
   function handleFocusSftpTab(tabId: string) {
     setFileTreeSessionId(null);
     focusSftpTab(tabId);
@@ -2542,6 +2573,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           onRecentConnectionsLimitChange={setRecentConnectionsLimit}
           commandCompletion={commandCompletion}
           onCommandCompletionChange={setCommandCompletion}
+          commandNotifications={commandNotifications}
+          onCommandNotificationsChange={setCommandNotifications}
           commandHistoryLimit={commandHistoryLimit}
           onCommandHistoryLimitChange={setCommandHistoryLimit}
           aiConfig={aiConfig}
@@ -2644,6 +2677,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         </button>
       ) : null}
       <ToastHost />
+      {commandNotifications && appLock.status?.locked === false ? (
+        <CommandCompletionNotices ref={commandCompletionNoticesRef} onOpen={openCompletedCommand} />
+      ) : null}
       {!appLock.status?.locked ? (
         <TerminalTransferNotice transfers={terminalTransfers} onCancel={cancelTerminalTransfer} />
       ) : null}

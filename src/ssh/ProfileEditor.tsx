@@ -1,8 +1,9 @@
 import { ConnectionFolderField } from "./ConnectionFolderField";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState, type FormEvent } from "react";
 import type { SshProfile } from "../models";
-import { readKeyFile } from "../services/sshProfileService";
+import type { SshCredential } from "../models/sshCredential";
+import { listSshCredentials } from "../services/sshCredentialService";
+import { SshAuthenticationFields } from "./SshAuthenticationFields";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
@@ -15,6 +16,8 @@ import { TagInput } from "./TagInput";
 import { validateProfileDraft } from "./profileStore";
 import {
   createEmptyProfileDraft,
+  embeddedAuth,
+  newCredentialAuth,
   profileToDraft,
   profileToCloneDraft,
   type ProfileDraft,
@@ -52,6 +55,23 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
   );
   const [connectionType, setConnectionType] = useState<ConnectionType>(profile?.connectionType ?? initialConnectionType);
   const [errors, setErrors] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [credentials, setCredentials] = useState<SshCredential[] | null>(null);
+  const [credentialError, setCredentialError] = useState("");
+  const [credentialReload, setCredentialReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void listSshCredentials().then((items) => {
+      if (active) {
+        setCredentials(items);
+        setCredentialError("");
+      }
+    }).catch((error: Error) => {
+      if (active) setCredentialError(error.message);
+    });
+    return () => { active = false; };
+  }, [credentialReload]);
 
   useEffect(() => {
     setDraft(profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), connectionType: initialConnectionType, tags: [...(initialTags ?? [])], folder: initialFolder ?? "" });
@@ -74,47 +94,47 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
     }));
   }
 
-  async function handleUploadKey() {
-    try {
-      const selected = await open({
-        directory: false,
-        multiple: false,
-        title: "选择密钥文件",
-      });
-      if (typeof selected !== "string") {
-        return;
-      }
-      const content = await readKeyFile(selected);
-      const fileName = selected.split(/[\\/]/).pop() ?? "key";
-      setDraft((currentDraft) => ({
-        ...currentDraft,
-        keyData: content,
-        keyName: fileName,
-      }));
-      setErrors([]);
-    } catch (error) {
-      setErrors([error instanceof Error ? error.message : "读取密钥文件失败。"]);
-    }
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const validationErrors = validateProfileDraft(draft);
+    if (saving) return;
+    const validationErrors = validateProfileDraft(draft, Boolean(profile?.credentialId));
     if (validationErrors.length > 0) {
       setErrors(validationErrors);
       return;
     }
 
+    setSaving(true);
+    setErrors([]);
     try {
       await onSubmit(draft);
     } catch (error) {
       setErrors([error instanceof Error ? error.message : "保存 SSH 配置失败。"]);
+    } finally {
+      setSaving(false);
     }
   }
 
   const title = mode === "create" ? `新建 ${connectionTypeLabel(connectionType)} 连接` : `编辑 ${connectionTypeLabel(connectionType)} 连接`;
-  const passwordLabel = profile ? "密码（留空则保留原配置密码）" : "密码";
+  const useEmbeddedAuth = draft.authSource === embeddedAuth;
+  const createCredential = draft.authSource === newCredentialAuth;
+  const useSavedCredential = !useEmbeddedAuth && !createCredential;
+  const savedCredential = credentials?.find((credential) => credential.id === draft.authSource);
+  const credentialOptions = [
+    { value: embeddedAuth, label: "保存在连接中" },
+    { value: newCredentialAuth, label: "新建可复用凭据" },
+    ...(credentials ?? []).map((credential) => ({
+      value: credential.id,
+      label: `${credential.name} · ${credential.username}`,
+    })),
+  ];
+  if (useSavedCredential && !savedCredential) {
+    credentialOptions.push({
+      value: draft.authSource,
+      label: credentials ? "凭据已删除" : "已关联凭据",
+    });
+  }
+  const keepAuth = useEmbeddedAuth && profile && !profile.credentialId && profile.authMethod.type === draft.authType;
   const connectionRoute: ConnectionRoute = draft.useProxy ? draft.proxyType : "direct";
   const proxyLabel = connectionRoute === "http" ? "HTTP 代理" : "SOCKS5 代理";
 
@@ -126,6 +146,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
           <button
             aria-label="关闭编辑器"
             className="icon-button"
+            disabled={saving}
             onClick={onClose}
             type="button"
           >
@@ -211,7 +232,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
 
           <div className="profile-form__main">
             <ConnectionFolderField value={draft.folder} onChange={(value) => updateDraft("folder", value)} />
-            {mode === "create" && profile ? <p className="profile-form__hint">正在克隆“{profile.name}”。留空沿用原配置的密码、密钥口令和代理密码；填写新值可替换。保存后创建独立连接。</p> : null}
+            {mode === "create" && profile ? <p className="profile-form__hint">正在克隆“{profile.name}”。</p> : null}
             <div className="profile-form__connection-grid">
               <label className="field">
                 <span>连接方式</span>
@@ -274,80 +295,50 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
               </div>
             ) : null}
 
-            <label className="field">
-              <span>用户名</span>
-              <input
-                onChange={(event) => updateDraft("username", event.currentTarget.value)}
-                value={draft.username}
-              />
-            </label>
-
-            <fieldset className="auth-fieldset">
-              <legend>认证方式</legend>
-              <label>
-                <input
-                  checked={draft.authType === "password"}
-                  name="authType"
-                  onChange={() => updateDraft("authType", "password")}
-                  type="radio"
-                />
-                密码
-              </label>
-              <label>
-                <input
-                  checked={draft.authType === "privateKey"}
-                  name="authType"
-                  onChange={() => updateDraft("authType", "privateKey")}
-                  type="radio"
-                />
-                密钥
-              </label>
-            </fieldset>
-
-            {draft.authType === "password" ? (
-              <label className="field">
-                <span>{passwordLabel}</span>
-                <input
-                  onChange={(event) => updateDraft("password", event.currentTarget.value)}
-                  type="password"
-                  value={draft.password}
-                />
-              </label>
-            ) : (
-              <div className="form-grid">
-                <div className="field">
-                  <span>密钥文件</span>
-                  <div className="key-upload">
-                    <Button onClick={handleUploadKey} variant="ghost">
-                      {draft.keyName ? "重新上传" : "上传密钥"}
-                    </Button>
-                    <span className="key-upload__name">
-                      {draft.keyName
-                        ? draft.keyData
-                          ? `已选择：${draft.keyName}`
-                          : `已存储：${draft.keyName}`
-                        : "未选择密钥文件"}
-                    </span>
-                  </div>
+            <div className="field">
+              <span>认证来源</span>
+              <SelectMenu ariaLabel="认证来源" disabled={saving}
+                onChange={(value) => updateDraft("authSource", value)}
+                options={credentialOptions} searchable value={draft.authSource} />
+              {credentialError ? (
+                <div className="ssh-credentials__inline-status" role="status">
+                  <span>{credentialError}</span>
+                  <Button onClick={() => setCredentialReload((current) => current + 1)} variant="ghost">重试</Button>
                 </div>
-                <label className="field">
-                  <span>Passphrase（可选）</span>
-                  <input
-                    onChange={(event) => updateDraft("passphrase", event.currentTarget.value)}
-                    type="password"
-                    value={draft.passphrase}
-                  />
-                </label>
-              </div>
+              ) : credentials === null ? <small className="profile-form__hint">正在加载凭据…</small> : null}
+            </div>
+            {useSavedCredential ? (
+              <p className="profile-form__hint">
+                {savedCredential ? `${savedCredential.authMethod.type === "password" ? "密码认证" : "私钥认证"} · 更新此凭据后，新连接和手动重连会使用最新认证信息。`
+                  : credentials ? "请重新选择认证来源。" : null}
+              </p>
+            ) : (
+              <>
+                {createCredential ? (
+                  <label className="field">
+                    <span>凭据名称</span>
+                    <input disabled={saving} value={draft.credentialName}
+                      onChange={(event) => updateDraft("credentialName", event.currentTarget.value)} />
+                  </label>
+                ) : null}
+                <SshAuthenticationFields
+                  disabled={saving}
+                  draft={createCredential && !draft.keyFilePath ? { ...draft, keyName: "" } : draft}
+                  keepPassword={Boolean(keepAuth && draft.authType === "password")}
+                  keepPassphrase={Boolean(keepAuth && draft.authType === "privateKey" && (mode === "edit" || !draft.keyFilePath))}
+                  onChange={(changes) => setDraft((current) => ({ ...current, ...changes }))}
+                  onError={(message) => setErrors([message])}
+                />
+              </>
             )}
           </div>
 
           <footer className="profile-editor__footer">
-            <Button onClick={onClose} variant="ghost">
+            <Button disabled={saving} onClick={onClose} variant="ghost">
               取消
             </Button>
-            <Button type="submit" variant="primary">
-              {mode === "create" ? "创建配置" : "保存修改"}
+            <Button disabled={saving || Boolean(useSavedCredential && credentials && !savedCredential)} type="submit" variant="primary">
+              {saving ? "正在保存…" : mode === "create" ? "创建配置" : "保存修改"}
             </Button>
           </footer>
         </form>

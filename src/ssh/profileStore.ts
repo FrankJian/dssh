@@ -1,10 +1,10 @@
 import { normalizeConnectionFolder } from "./connectionFolders";
-import type { AuthMethod, SshProfile } from "../models";
+import { buildAuthRequest } from "./authDraft";
 import type {
   CreateSshProfileRequest,
   UpdateSshProfileRequest,
 } from "../services/sshProfileService";
-import type { ProfileDraft } from "./profileTypes";
+import { embeddedAuth, newCredentialAuth, type ProfileDraft } from "./profileTypes";
 
 function normalizeOptional(value: string) {
   const trimmed = value.trim();
@@ -22,35 +22,12 @@ function buildProxy(draft: ProfileDraft) {
   };
 }
 
-export function buildAuthMethod(
-  draft: ProfileDraft,
-  existing?: SshProfile,
-): AuthMethod {
-  if (draft.authType === "password") {
-    return {
-      type: "password",
-      secretRef:
-        draft.password.trim().length > 0
-          ? draft.password
-          : existing?.authMethod.type === "password"
-            ? existing.authMethod.secretRef
-            : undefined,
-    };
+function profileAuthentication(draft: ProfileDraft) {
+  if (draft.authSource === embeddedAuth) return buildAuthRequest(draft);
+  if (draft.authSource === newCredentialAuth) {
+    return { newCredential: { name: draft.credentialName.trim(), ...buildAuthRequest(draft) } };
   }
-
-  return {
-    type: "privateKey",
-    // Only send freshly uploaded key material; the backend keeps the existing
-    // key when this is omitted.
-    keyData: draft.keyData.trim().length > 0 ? draft.keyData : undefined,
-    keyName: normalizeOptional(draft.keyName),
-    passphraseRef:
-      draft.passphrase.trim().length > 0
-        ? draft.passphrase
-        : existing?.authMethod.type === "privateKey"
-          ? existing.authMethod.passphraseRef
-          : undefined,
-  };
+  return { credentialId: draft.authSource };
 }
 
 function normalizeTags(tags: string[]): string[] {
@@ -73,8 +50,7 @@ export function createProfileRequestFromDraft(draft: ProfileDraft): CreateSshPro
     folder: normalizeConnectionFolder(draft.folder),
     host: draft.host.trim(),
     port: Number(draft.port),
-    username: draft.username.trim(),
-    authMethod: buildAuthMethod(draft),
+    ...profileAuthentication(draft),
     proxy: buildProxy(draft),
     description: normalizeOptional(draft.description),
     favorite: draft.favorite,
@@ -84,27 +60,13 @@ export function createProfileRequestFromDraft(draft: ProfileDraft): CreateSshPro
 }
 
 export function updateProfileRequestFromDraft(
-  profile: SshProfile,
+  id: string,
   draft: ProfileDraft,
 ): UpdateSshProfileRequest {
-  return {
-    id: profile.id,
-    connectionType: draft.connectionType,
-    name: draft.name.trim(),
-    folder: normalizeConnectionFolder(draft.folder),
-    host: draft.host.trim(),
-    port: Number(draft.port),
-    username: draft.username.trim(),
-    authMethod: buildAuthMethod(draft, profile),
-    proxy: buildProxy(draft),
-    description: normalizeOptional(draft.description),
-    favorite: draft.favorite,
-    icon: draft.icon,
-    tags: normalizeTags(draft.tags),
-  };
+  return { ...createProfileRequestFromDraft(draft), id };
 }
 
-export function validateProfileDraft(draft: ProfileDraft) {
+export function validateProfileDraft(draft: ProfileDraft, wasLinked = false) {
   const errors: string[] = [];
   try { normalizeConnectionFolder(draft.folder); } catch (error) { errors.push((error as Error).message); }
   const port = Number(draft.port);
@@ -115,10 +77,6 @@ export function validateProfileDraft(draft: ProfileDraft) {
 
   if (!draft.host.trim()) {
     errors.push("请输入主机。");
-  }
-
-  if (!draft.username.trim()) {
-    errors.push("请输入用户名。");
   }
 
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -132,12 +90,21 @@ export function validateProfileDraft(draft: ProfileDraft) {
     errors.push("请输入有效的代理主机和端口。");
   }
 
-  if (
-    draft.authType === "privateKey" &&
-    draft.keyData.trim().length === 0 &&
-    draft.keyName.trim().length === 0
-  ) {
-    errors.push("请上传密钥文件。");
+  if (draft.authSource === embeddedAuth || draft.authSource === newCredentialAuth) {
+    const creatingCredential = draft.authSource === newCredentialAuth;
+    if (creatingCredential && !draft.credentialName.trim()) {
+      errors.push("请输入凭据名称。");
+    }
+    if (!draft.username.trim()) {
+      errors.push("请输入用户名。");
+    }
+    if ((creatingCredential || wasLinked) && draft.authType === "password" && !draft.password) {
+      errors.push("请输入密码。");
+    }
+    if (draft.authType === "privateKey" && !draft.keyFilePath &&
+      (creatingCredential || wasLinked || !draft.keyName)) {
+      errors.push("请选择密钥文件。");
+    }
   }
 
   return errors;

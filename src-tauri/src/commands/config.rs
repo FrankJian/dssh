@@ -7,7 +7,9 @@ use crate::{
     crypto,
     error::{AppError, AppResult},
     models::s3::{CreateS3ProfileRequest, S3Profile},
-    models::ssh_profile::{AuthMethod, CreateSshProfileRequest, SshProfile},
+    models::ssh_profile::{
+        AuthMethod, CreateSshProfileRequest, SaveSshCredentialRequest, SshProfile,
+    },
     storage::ProfileRepository,
 };
 
@@ -24,12 +26,18 @@ struct ProfilesDocument {
     version: u32,
     #[serde(default)]
     profiles: Vec<ProfileEntry>,
+    #[serde(
+        default,
+        rename = "sshCredentials",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    ssh_credentials: Vec<CredentialEntry>,
     #[serde(default, rename = "s3Profiles", alias = "s3_profiles")]
     s3_profiles: Vec<S3ProfileEntry>,
 }
 
 fn default_version() -> u32 {
-    2
+    3
 }
 
 fn default_port() -> u16 {
@@ -54,8 +62,16 @@ struct ProfileEntry {
     host: String,
     #[serde(default = "default_port")]
     port: u16,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     username: String,
-    auth: AuthEntry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auth: Option<AuthEntry>,
+    #[serde(
+        default,
+        rename = "credentialId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    credential_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(default)]
@@ -69,6 +85,14 @@ struct ProfileEntry {
     tags: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     folder: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CredentialEntry {
+    id: String,
+    name: String,
+    username: String,
+    auth: AuthEntry,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,8 +173,8 @@ fn mask_secret(value: &Option<String>) -> Option<String> {
     value.as_ref().map(|_| SECRET_MASK.to_string())
 }
 
-fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
-    let auth = match &profile.auth_method {
+fn export_auth(auth: &AuthMethod, mask: bool) -> AuthEntry {
+    match auth {
         AuthMethod::Password { secret_ref } => AuthEntry::Password {
             password: if mask {
                 mask_secret(secret_ref)
@@ -175,8 +199,11 @@ fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
                 passphrase_ref.clone()
             },
         },
-    };
+    }
+}
 
+fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
+    let linked = profile.credential_id.is_some();
     ProfileEntry {
         proxy: profile.proxy.as_ref().map(|proxy| ProfileProxyEntry {
             proxy_type: proxy.proxy_type.clone(),
@@ -193,8 +220,13 @@ fn entry_from_profile(profile: &SshProfile, mask: bool) -> ProfileEntry {
         name: profile.name.clone(),
         host: profile.host.clone(),
         port: profile.port,
-        username: profile.username.clone(),
-        auth,
+        username: if linked {
+            String::new()
+        } else {
+            profile.username.clone()
+        },
+        auth: (!linked).then(|| export_auth(&profile.auth_method, mask)),
+        credential_id: profile.credential_id.clone(),
         description: profile.description.clone(),
         favorite: profile.favorite,
         icon: profile.icon.clone(),
@@ -235,7 +267,7 @@ fn s3_entry_from_profile(
 }
 
 fn build_document_yaml(repository: &ProfileRepository, mask: bool) -> AppResult<String> {
-    let profiles = repository.list_profiles()?;
+    let (profiles, credentials) = repository.export_ssh_profiles()?;
     let s3_profiles = repository
         .list_s3_profiles()?
         .iter()
@@ -247,14 +279,23 @@ fn build_document_yaml(repository: &ProfileRepository, mask: bool) -> AppResult<
             .iter()
             .map(|p| entry_from_profile(p, mask))
             .collect(),
+        ssh_credentials: credentials
+            .into_iter()
+            .map(|credential| CredentialEntry {
+                id: credential.id,
+                name: credential.name,
+                username: credential.username,
+                auth: export_auth(&credential.auth_method, mask),
+            })
+            .collect(),
         s3_profiles,
     };
     serde_yaml::to_string(&document)
         .map_err(|error| AppError::new("export_error", error.to_string()))
 }
 
-fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
-    let auth_method = match entry.auth {
+fn import_auth(auth: AuthEntry) -> AuthMethod {
+    match auth {
         AuthEntry::Password { password } => AuthMethod::Password {
             secret_ref: password,
         },
@@ -267,15 +308,20 @@ fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
             key_name,
             passphrase_ref: passphrase,
         },
-    };
+    }
+}
 
+fn request_from_entry(entry: ProfileEntry) -> CreateSshProfileRequest {
     CreateSshProfileRequest {
         connection_type: entry.connection_type,
         name: entry.name,
         host: entry.host,
         port: entry.port,
         username: entry.username,
-        auth_method,
+        auth_method: entry.auth.map(import_auth),
+        credential_id: entry.credential_id,
+        new_credential: None,
+        key_file_path: None,
         proxy: entry
             .proxy
             .map(|proxy| crate::models::ssh_profile::SshProxy {
@@ -322,7 +368,7 @@ pub fn import_profiles_yaml(
     state: State<'_, AppState>,
     yaml: String,
 ) -> AppResult<Vec<SshProfile>> {
-    import_document(&state, &yaml)
+    import_document(&state.profiles, &yaml)
 }
 
 /// Decrypt a password-protected export and create the described profiles.
@@ -333,30 +379,38 @@ pub fn import_profiles_encrypted(
     password: String,
 ) -> AppResult<Vec<SshProfile>> {
     let yaml = crypto::decrypt(&blob, &password)?;
-    import_document(&state, &yaml)
+    import_document(&state.profiles, &yaml)
 }
 
-fn has_masked_profile_secrets(entry: &ProfileEntry) -> bool {
-    let masked_auth = match &entry.auth {
+fn has_masked_auth(auth: &AuthEntry) -> bool {
+    match auth {
         AuthEntry::Password { password } => password.as_deref() == Some(SECRET_MASK),
         AuthEntry::PrivateKey {
             key_data,
             passphrase,
             ..
         } => key_data.as_deref() == Some(SECRET_MASK) || passphrase.as_deref() == Some(SECRET_MASK),
-    };
-    masked_auth
+    }
+}
+
+fn has_masked_profile_secrets(entry: &ProfileEntry) -> bool {
+    entry.auth.as_ref().is_some_and(has_masked_auth)
         || entry
             .proxy
             .as_ref()
             .is_some_and(|proxy| proxy.password.as_deref() == Some(SECRET_MASK))
 }
 
-fn import_document(state: &State<'_, AppState>, yaml: &str) -> AppResult<Vec<SshProfile>> {
+fn import_document(repository: &ProfileRepository, yaml: &str) -> AppResult<Vec<SshProfile>> {
     let document: ProfilesDocument = serde_yaml::from_str(yaml)
         .map_err(|error| AppError::new("import_error", error.to_string()))?;
 
-    if document.profiles.iter().any(has_masked_profile_secrets) {
+    if document.profiles.iter().any(has_masked_profile_secrets)
+        || document
+            .ssh_credentials
+            .iter()
+            .any(|entry| has_masked_auth(&entry.auth))
+    {
         return Err(AppError::new(
             "import_error",
             "预览中的密码或密钥已脱敏，请使用加密导出文件恢复连接。",
@@ -380,13 +434,31 @@ fn import_document(state: &State<'_, AppState>, yaml: &str) -> AppResult<Vec<Ssh
         }
     }
 
-    let mut created = Vec::with_capacity(document.profiles.len());
-    for entry in document.profiles {
-        created.push(state.profiles.create_profile(request_from_entry(entry))?);
-    }
+    let credentials = document
+        .ssh_credentials
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.id,
+                SaveSshCredentialRequest {
+                    name: entry.name,
+                    username: entry.username,
+                    auth_method: import_auth(entry.auth),
+                    key_file_path: None,
+                    clear_passphrase: false,
+                },
+            )
+        })
+        .collect();
+    let profiles = document
+        .profiles
+        .into_iter()
+        .map(request_from_entry)
+        .collect();
+    let created = repository.import_ssh_profiles(credentials, profiles)?;
     for entry in document.s3_profiles {
         let secret_access_key = entry.secret_access_key.expect("validated above");
-        state.profiles.create_s3_profile(CreateS3ProfileRequest {
+        repository.create_s3_profile(CreateS3ProfileRequest {
             name: entry.name,
             host: if entry.endpoint.is_some() {
                 legacy_host(entry.endpoint.as_deref())
@@ -515,6 +587,36 @@ pub fn read_image_data_url(path: String) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn shared_credential_backup_preserves_references_and_masks_preview() {
+        use super::*;
+        let temp = std::env::temp_dir().join(format!(
+            "dssh-credential-backup-{:032x}",
+            rand::random::<u128>()
+        ));
+        let source = ProfileRepository::initialize(&temp, "source.db").unwrap();
+        let target = ProfileRepository::initialize(&temp, "target.db").unwrap();
+        let marker = format!("fixture-{:032x}", rand::random::<u128>());
+        let yaml = format!(
+            "version: 3\nsshCredentials:\n  - id: team\n    name: Team\n    username: deploy\n    auth: {{type: password, password: {marker}}}\nprofiles:\n  - name: SSH\n    host: ssh.test\n    credentialId: team\n  - name: SFTP\n    host: sftp.test\n    connectionType: sftp\n    credentialId: team\n"
+        );
+        import_document(&source, &yaml).unwrap();
+        let preview = build_document_yaml(&source, true).unwrap();
+        assert!(!preview.contains(&marker));
+        assert!(import_document(&target, &preview).is_err());
+        let exported = build_document_yaml(&source, false).unwrap();
+        assert_eq!(exported.matches(&marker).count(), 1);
+        let restored = import_document(&target, &exported).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert!(restored[0].credential_id.is_some());
+        assert_eq!(restored[0].credential_id, restored[1].credential_id);
+        assert_eq!(
+            target.list_ssh_credentials().unwrap()[0].connection_count,
+            2
+        );
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn sftp_yaml_roundtrip_preserves_type_proxy_and_masks_secrets() {
         use super::*;
         let yaml = "name: Upload\nhost: files.test\nusername: upload\nconnectionType: sftp\nfolder: backup/daily\ntags: [backup]\nauth:\n  type: password\n  password: fixture-auth\nproxy:\n  proxyType: socks5\n  host: proxy.test\n  port: 1080\n  username: proxy-user\n  password: fixture-proxy\n";
@@ -525,13 +627,15 @@ mod tests {
             crate::models::ssh_profile::SshConnectionType::Sftp
         );
         let profile = SshProfile {
+            credential_id: None,
+            credential_revision: None,
             id: "test".into(),
             connection_type: request.connection_type,
             name: request.name,
             host: request.host,
             port: request.port,
             username: request.username,
-            auth_method: request.auth_method,
+            auth_method: request.auth_method.unwrap(),
             proxy: request.proxy,
             description: request.description,
             favorite: request.favorite,

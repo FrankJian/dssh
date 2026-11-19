@@ -1,5 +1,5 @@
 import { onJumpServerTargetsClosed } from "../services/jumpserverService";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { listDetachedWorkspaces } from "../services/workspaceService";
 import { workspaceSessionIds } from "../models/workspace";
 import type { SshProfile, TerminalSession, TerminalSize } from "../models";
@@ -91,7 +91,11 @@ function readBacklog(backlog: SessionBacklog): string {
   return backlog.chunks[0] ?? "";
 }
 
-export function useTerminalSessions(initialSessionIds?: string[]) {
+export function useTerminalSessions(
+  initialSessionIds: string[] | undefined,
+  onCommandCompleted: (sessionId: string) => void,
+) {
+  const commandCompleted = useEffectEvent(onCommandCompleted);
   const initialSessionIdsRef = useRef(initialSessionIds);
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -169,7 +173,8 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
     if (!data) {
       return;
     }
-    updateCommandActivity(sessionId, trackerForSession(sessionId).observeOutput(data));
+    const activity = trackerForSession(sessionId).observeOutput(data);
+    updateCommandActivity(sessionId, activity);
     const tracker = targetTrackerForSession(sessionId);
     const before = tracker.sftpTarget;
     const address = tracker.observeOutput(data);
@@ -195,6 +200,7 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
         listener(data);
       }
     }
+    return activity;
   }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const getBacklog = useCallback((sessionId: string) => {
@@ -316,7 +322,10 @@ export function useTerminalSessions(initialSessionIds?: string[]) {
       targetTrackerForSession(event.sessionId).observeInput(event.data);
     });
     const outputPromise = onTerminalOutput((event) => {
-      pushOutput(event.sessionId, event.data);
+      if (pushOutput(event.sessionId, event.data) === "idle") {
+        const status = latestSessionStatusesRef.current.get(event.sessionId);
+        if (status === undefined || status === "connected") commandCompleted(event.sessionId);
+      }
     });
     const statusPromise = onTerminalStatus((event) => {
       latestSessionStatusesRef.current.set(event.sessionId, event.status);

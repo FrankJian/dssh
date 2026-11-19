@@ -1,7 +1,7 @@
 import { useState, type ComponentProps } from "react";
 import type { AdditionalToolId } from "./additionalCatalog";
 import { TextTool } from "./ToolForm";
-import { ToolSelect } from "./ToolControls";
+import { ToolNote, ToolSelect } from "./ToolControls";
 import { runLocalTool } from "./localToolWorker";
 import ConfigWorker from "./configTools.worker?worker";
 import CryptoWorker from "./cryptoTools.worker?worker";
@@ -249,7 +249,7 @@ export default function AdditionalToolPage({ id }: { id: AdditionalToolId }) {
   const [value, setValue] = useState(choice?.initial ?? choice?.values[0]?.[0] ?? "");
   return (
     <>
-      {note ? <p className="tool-form__note">{note}</p> : null}
+      {note ? <ToolNote>{note}</ToolNote> : null}
       <TextTool
         {...form}
         action={action}

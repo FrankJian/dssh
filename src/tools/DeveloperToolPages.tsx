@@ -1,7 +1,7 @@
 import { decodeBase64, encodeBase64 } from "./base64";
 import { ipv4Subnet } from "./networkConverters";
 import { useState } from "react";
-import { ToolSelect } from "./ToolControls";
+import { ToolNote, ToolSelect } from "./ToolControls";
 import { hashToolText } from "../services/toolsService";
 import { TextTool } from "./ToolForm";
 import {
@@ -39,7 +39,7 @@ export function UrlTool() { return <CodecTool kind="url" />; }
 export function TimestampTool() {
   return (
     <>
-      <p className="tool-form__note">整数时间戳最多 10 位时按秒读取，其余按毫秒读取。ISO 8601 日期须带时区。</p>
+      <ToolNote>整数时间戳最多 10 位时按秒读取，其余按毫秒读取。ISO 8601 日期须带时区。</ToolNote>
       <TextTool action="转换" inputLabel="日期或时间戳" outputLabel="转换结果" example="2026-01-01T12:00:00+08:00" run={convertTimestamp} />
     </>
   );

@@ -3,8 +3,49 @@ use tauri::State;
 use crate::{
     app::AppState,
     error::{AppError, AppResult},
-    models::ssh_profile::{CreateSshProfileRequest, SshProfile, UpdateSshProfileRequest},
+    models::ssh_profile::{
+        CreateSshProfileRequest, SaveSshCredentialRequest, SshCredential, SshProfile,
+        UpdateSshProfileRequest,
+    },
 };
+
+fn check_profile_access(state: &AppState, webview: &tauri::Webview) -> AppResult<()> {
+    crate::browser::trusted(webview)?;
+    if state.app_lock.status()?.locked {
+        return Err(AppError::new("app_locked", "请先解锁 Duo SSH。"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_ssh_credentials(
+    state: State<'_, AppState>,
+    webview: tauri::Webview,
+) -> AppResult<Vec<SshCredential>> {
+    check_profile_access(&state, &webview)?;
+    state.profiles.list_ssh_credentials()
+}
+
+#[tauri::command]
+pub fn save_ssh_credential(
+    state: State<'_, AppState>,
+    webview: tauri::Webview,
+    id: Option<String>,
+    request: SaveSshCredentialRequest,
+) -> AppResult<SshCredential> {
+    check_profile_access(&state, &webview)?;
+    state.profiles.save_ssh_credential(id.as_deref(), request)
+}
+
+#[tauri::command]
+pub fn delete_ssh_credential(
+    state: State<'_, AppState>,
+    webview: tauri::Webview,
+    id: String,
+) -> AppResult<()> {
+    check_profile_access(&state, &webview)?;
+    state.profiles.delete_ssh_credential(&id)
+}
 
 #[tauri::command]
 pub fn list_ssh_profiles(state: State<'_, AppState>) -> AppResult<Vec<SshProfile>> {
@@ -14,25 +55,31 @@ pub fn list_ssh_profiles(state: State<'_, AppState>) -> AppResult<Vec<SshProfile
 #[tauri::command]
 pub fn create_ssh_profile(
     state: State<'_, AppState>,
+    webview: tauri::Webview,
     request: CreateSshProfileRequest,
 ) -> AppResult<SshProfile> {
+    check_profile_access(&state, &webview)?;
     state.profiles.create_profile(request)
 }
 
 #[tauri::command]
 pub fn clone_ssh_profile(
     state: State<'_, AppState>,
+    webview: tauri::Webview,
     source_id: String,
     request: CreateSshProfileRequest,
 ) -> AppResult<SshProfile> {
+    check_profile_access(&state, &webview)?;
     state.profiles.clone_profile(&source_id, request)
 }
 
 #[tauri::command]
 pub fn update_ssh_profile(
     state: State<'_, AppState>,
+    webview: tauri::Webview,
     request: UpdateSshProfileRequest,
 ) -> AppResult<SshProfile> {
+    check_profile_access(&state, &webview)?;
     state.profiles.update_profile(request)
 }
 
@@ -60,14 +107,6 @@ pub fn set_ssh_profile_favorite(
     state.profiles.set_favorite(&id, favorite)
 }
 
-/// Reads the contents of a user-selected private key file so the frontend can
-/// store the key material with the profile.
-#[tauri::command]
-pub fn read_key_file(path: String) -> AppResult<String> {
-    std::fs::read_to_string(&path)
-        .map_err(|error| AppError::new("key_read_error", error.to_string()))
-}
-
 #[tauri::command]
 pub fn rename_connection_folder(
     state: State<'_, AppState>,
@@ -75,10 +114,7 @@ pub fn rename_connection_folder(
     old_path: String,
     new_name: String,
 ) -> AppResult<()> {
-    crate::browser::trusted(&webview)?;
-    if state.app_lock.status()?.locked {
-        return Err(AppError::new("app_locked", "请先解锁 Duo SSH。"));
-    }
+    check_profile_access(&state, &webview)?;
     state
         .profiles
         .rename_connection_folder(&old_path, &new_name)

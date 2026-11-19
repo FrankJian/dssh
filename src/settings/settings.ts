@@ -142,6 +142,7 @@ export function clampTerminalLetterSpacing(value: number): number {
 }
 
 export const terminalCopyOnSelectKey = "dssh.terminal.copyOnSelect";
+export const terminalCommandNotificationsKey = "dssh.terminal.commandNotifications";
 export const terminalRightClickKey = "dssh.terminal.rightClick";
 export const terminalGpuKey = "dssh.terminal.gpuAcceleration";
 export const terminalBgImageKey = "dssh.terminal.bgImage";

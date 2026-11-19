@@ -81,12 +81,13 @@ pub enum AuthKind {
 ///
 /// `profile_id` keeps separately saved profiles isolated even if their visible
 /// host details match. `profile_version` changes after every persisted profile
-/// update, which means a configuration or credential update cannot attach new
-/// channels to an older authenticated transport.
+/// update. `credential_version` tracks shared credentials independently so a
+/// rotation cannot attach new channels to an older authenticated transport.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ConnectionKey {
     profile_id: String,
     profile_version: String,
+    credential_version: Option<(String, i64)>,
     host: String,
     port: u16,
     username: String,
@@ -118,6 +119,10 @@ impl ConnectionKey {
         Self {
             profile_id: profile.id.clone(),
             profile_version: profile.updated_at.clone(),
+            credential_version: profile
+                .credential_id
+                .clone()
+                .zip(profile.credential_revision),
             host: profile.host.clone(),
             port: profile.port,
             username: profile.username.clone(),
@@ -980,6 +985,8 @@ mod tests {
 
     fn profile() -> SshProfile {
         SshProfile {
+            credential_id: None,
+            credential_revision: None,
             connection_type: Default::default(),
             id: "profile-1".to_string(),
             name: "example".to_string(),

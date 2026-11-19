@@ -1,3 +1,5 @@
+import { listen } from "@tauri-apps/api/event";
+import { sshCredentialsChanged } from "../services/sshCredentialService";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SshProfile } from "../models";
 import {
@@ -64,7 +66,11 @@ export function useProfiles() {
     void reloadProfiles();
     const refresh = () => { void reloadProfiles(); };
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    const unlisten = listen(sshCredentialsChanged, refresh).catch(() => undefined);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      void unlisten.then((dispose) => dispose?.()).catch(() => undefined);
+    };
   }, [reloadProfiles]);
 
   const filteredProfiles = useMemo(
@@ -101,7 +107,7 @@ export function useProfiles() {
     }
 
     const updatedProfile = await updateSshProfile(
-      updateProfileRequestFromDraft(existingProfile, draft),
+      updateProfileRequestFromDraft(profileId, draft),
     );
     setProfiles((currentProfiles) =>
       currentProfiles.map((profile) =>

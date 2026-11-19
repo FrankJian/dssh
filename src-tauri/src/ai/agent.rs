@@ -21,7 +21,7 @@ use crate::{
 const AI_EVENT: &str = "ai-event";
 const DEFAULT_MAX_STEPS: u32 = 12;
 
-const SYSTEM_PROMPT: &str = "你是内嵌于 dssh（一款跨平台 SSH 管理器）中的 AI 运维助手。\
+const SYSTEM_PROMPT: &str = "你是 Duo SSH（一款跨平台 SSH 管理器）的 AI 运维助手。\
 先判断用户是在咨询，还是要求你实际操作。问候、能力介绍、概念解释、示例命令和操作教程，直接用文字回答。\n\
 只有用户明确要求查询真实数据或实际操作，或明确同意上一轮的一项具体操作时，才调用完成该任务所需的工具。\n\
 助手自己的建议、能力介绍和询问不代表用户同意。用户仅问候或道谢时，不得继续执行历史任务或读取服务器、终端、浏览器数据。\n\n\
@@ -69,7 +69,7 @@ open_ssh_session 返回真实后台 session_id，后续显式使用此 ID 读取
 - 只有命令、脚本、路径、以及需要保留原样的原始输出才用行内代码 `code` 或\
 带语言标注的代码块（```bash```），普通说明文字不要用代码块包裹。\n\
 - 不要直接粘贴超长的原始输出：先给出简明的表格/要点总结，必要时再附关键片段。\n\
-- 使用简洁的中文，先结论后细节，末尾可给出可选的后续建议。";
+- 默认沿用用户的语言，先给结论再补充细节。产品名写作 Duo SSH，直接回答问题，避免添加翻译提示或无关的开场白。";
 
 enum Approval {
     Approved,
@@ -77,45 +77,31 @@ enum Approval {
     Cancelled,
 }
 
-/// A whole-message match keeps acknowledgements and greetings tool-free while
-/// still allowing a greeting followed by a concrete request.
-fn is_plain_conversation(message: &str) -> bool {
+/// Respond locally to complete, unambiguous social messages. A greeting
+/// followed by a request still goes through the agent.
+pub(crate) fn casual_reply(message: &str) -> Option<&'static str> {
     let text = message
         .trim_matches(|c: char| c.is_whitespace() || "。！？，、～.!?,~".contains(c))
         .to_lowercase();
-    matches!(
-        text.as_str(),
-        "你好"
-            | "你好啊"
-            | "您好"
-            | "嗨"
-            | "哈喽"
-            | "早上好"
-            | "下午好"
-            | "晚上好"
-            | "谢谢"
-            | "谢谢你"
-            | "多谢"
-            | "辛苦了"
-            | "你是谁"
-            | "你是什么"
-            | "你能做什么"
-            | "你可以做什么"
-            | "你会做什么"
-            | "介绍一下你自己"
-            | "你有什么功能"
-            | "你能帮我做什么"
-            | "hi"
-            | "hey"
-            | "hello"
-            | "good morning"
-            | "good afternoon"
-            | "good evening"
-            | "thank you"
-            | "thanks"
-            | "who are you"
-            | "what can you do"
-    )
+    Some(match text.as_str() {
+        "你好" | "你好啊" | "你好呀" | "您好" | "嗨" | "哈喽" | "早上好" | "下午好" | "晚上好" => {
+            "你好！有什么可以帮你？"
+        }
+        "谢谢" | "谢谢你" | "多谢" | "辛苦了" => "不客气！",
+        "你是谁" | "你是什么" | "介绍一下你自己" => "我是 Duo SSH 的 AI 运维助手。",
+        "你能做什么" | "你可以做什么" | "你会做什么" | "你有什么功能" | "你能帮我做什么" => {
+            "我可以帮你连接已保存的服务器、分析终端输出和排查故障，也可以在你确认后执行命令。"
+        }
+        "hi" | "hey" | "hello" | "good morning" | "good afternoon" | "good evening" => {
+            "Hi! How can I help?"
+        }
+        "thank you" | "thanks" => "You're welcome!",
+        "who are you" => "I'm the AI assistant in Duo SSH.",
+        "what can you do" => {
+            "I can help you connect to saved servers, analyze terminal output, troubleshoot issues, and run commands with your approval."
+        }
+        _ => return None,
+    })
 }
 
 fn to_chat_message(message: &AiChatMessage) -> ChatMessage {
@@ -172,6 +158,19 @@ async fn drive(
     handles: &mut RunHandles,
 ) -> Result<(), String> {
     let run_id = request.run_id.clone();
+    if let Some(reply) = casual_reply(&request.message) {
+        if !handles.cancel.load(Ordering::SeqCst) {
+            emit(
+                window,
+                AiEvent::Final {
+                    run_id,
+                    text: Some(reply.into()),
+                },
+            );
+        }
+        return Ok(());
+    }
+
     let app = window.app_handle();
     let mut provider = state
         .profiles
@@ -213,53 +212,43 @@ async fn drive(
         request.reasoning_level.as_deref(),
     )
     .map_err(|error| error.message)?;
-    let tools_enabled = !is_plain_conversation(&request.message);
-    let mut messages: Vec<ChatMessage> = if tools_enabled {
-        request
-            .history
-            .iter()
-            .filter(|message| !message.content.trim().is_empty())
-            .map(to_chat_message)
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let mut messages: Vec<ChatMessage> = request
+        .history
+        .iter()
+        .filter(|message| !message.content.trim().is_empty())
+        .map(to_chat_message)
+        .collect();
     messages.push(ChatMessage::user(request.message.clone()));
-    let mut chat_req = if tools_enabled {
-        let mut system_prompt = SYSTEM_PROMPT.to_string();
-        if let Some(current) = &request.current_server {
-            if current.kind.as_deref() == Some("local") {
-                system_prompt.push_str(&format!(
-                    "\n\n用户当前正在使用的是【本地终端】（{}）。请把它当作一台普通服务器来对待：\
-                     直接使用 run_command 执行命令即可（无需提供 server_id，也无需调用 list_servers），\
-                     命令会在本地机器上执行。需要查看该终端已有的输出或报错时使用 read_terminal。\
-                     除非用户明确要求操作某台远程服务器，否则请只针对本地终端进行操作，不要去连接远程服务器。",
-                    current.label
-                ));
-            } else {
-                system_prompt.push_str(&format!(
-                    "\n\n用户当前正在操作的服务器：{}（id: {}）。\
-                     若用户没有明确指定其他服务器，请默认对该服务器执行操作。",
-                    current.label, current.id
-                ));
-            }
-        } else {
-            system_prompt.push_str(
-                "\n\n当前没有打开的终端。你仍可回答一般问题；当用户要求连接、检查或操作某台服务器时，\
-                 仅在需要查找已保存目标时调用 list_servers；可使用 open_ssh_session 请求打开交互式 SSH 连接。\
-                 如需直接执行远程命令，必须在 run_command 中提供 server_id。打开终端后可用 list_terminal_sessions 获取新终端 ID，再读取和交互。",
-            );
-        }
 
-        system_prompt.push_str("\n\n后台操作规则：服务器交互优先在本对话后台 PTY 完成，不使用 control_app 打开终端或切换页面；用户明确要求查看当前终端或操作当前终端时才使用用户已有会话。当用户要求继续操作后台会话且需要核对目标时，用 list_terminal_sessions 查找 background=true 的会话。用户接管后不可继续向该会话输入。后台断线后原资产身份失效，须重新连接和选服。所有远程执行和输入仍逐次确认。");
-        ChatRequest::new(messages)
-            .with_system(system_prompt)
-            .with_tools(tool_defs())
+    let mut system_prompt = SYSTEM_PROMPT.to_string();
+    if let Some(current) = &request.current_server {
+        if current.kind.as_deref() == Some("local") {
+            system_prompt.push_str(&format!(
+                "\n\n用户当前正在使用的是【本地终端】（{}）。请把它当作一台普通服务器来对待：\
+                 直接使用 run_command 执行命令即可（无需提供 server_id，也无需调用 list_servers），\
+                 命令会在本地机器上执行。需要查看该终端已有的输出或报错时使用 read_terminal。\
+                 除非用户明确要求操作某台远程服务器，否则请只针对本地终端进行操作，不要去连接远程服务器。",
+                current.label
+            ));
+        } else {
+            system_prompt.push_str(&format!(
+                "\n\n用户当前正在操作的服务器：{}（id: {}）。\
+                 若用户没有明确指定其他服务器，请默认对该服务器执行操作。",
+                current.label, current.id
+            ));
+        }
     } else {
-        ChatRequest::new(messages).with_system(
-            "你是 Duo SSH 的 AI 运维助手。用用户的语言简洁回应问候或能力咨询。直接用文字回答。",
-        )
-    };
+        system_prompt.push_str(
+            "\n\n当前没有打开的终端。你仍可回答一般问题；当用户要求连接、检查或操作某台服务器时，\
+             仅在需要查找已保存目标时调用 list_servers；可使用 open_ssh_session 请求打开交互式 SSH 连接。\
+             如需直接执行远程命令，必须在 run_command 中提供 server_id。打开终端后可用 list_terminal_sessions 获取新终端 ID，再读取和交互。",
+        );
+    }
+
+    system_prompt.push_str("\n\n后台操作规则：服务器交互优先在本对话后台 PTY 完成，不使用 control_app 打开终端或切换页面；用户明确要求查看当前终端或操作当前终端时才使用用户已有会话。当用户要求继续操作后台会话且需要核对目标时，用 list_terminal_sessions 查找 background=true 的会话。用户接管后不可继续向该会话输入。后台断线后原资产身份失效，须重新连接和选服。所有远程执行和输入仍逐次确认。");
+    let mut chat_req = ChatRequest::new(messages)
+        .with_system(system_prompt)
+        .with_tools(tool_defs());
 
     let mut compressor = crate::ai::context::ContextCompressor::new(
         &chat_req,
@@ -331,21 +320,6 @@ async fn drive(
         };
 
         let text = response.first_text().map(|value| value.to_string());
-        if !tools_enabled {
-            // Some gateways may return a call even without advertised tools.
-            // Never send that call through the tool dispatch path.
-            emit(
-                window,
-                AiEvent::Final {
-                    run_id,
-                    text: text
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| Some("你好！有什么可以帮你？".into())),
-                },
-            );
-            return Ok(());
-        }
-
         let assistant_turn = assistant_message(&response, provider.kind);
         let tool_calls = response.into_tool_calls();
         if tool_calls.is_empty() {
@@ -810,20 +784,22 @@ fn emit(window: &WebviewWindow, event: AiEvent) {
 mod tests {
     use serde_json::json;
 
-    use super::{is_plain_conversation, parse_user_question};
+    use super::{casual_reply, parse_user_question};
 
     #[test]
-    fn greetings_and_capability_questions_do_not_enable_tools() {
-        for message in [
-            "你好",
-            " 你好！ ",
-            "HELLO!",
-            "谢谢你。",
-            "你能做什么？",
-            "What can you do?",
+    fn simple_chat_has_a_local_reply_in_the_users_language() {
+        for (message, expected) in [
+            ("你好", "你好！有什么可以帮你？"),
+            (" 你好！ ", "你好！有什么可以帮你？"),
+            ("HELLO!", "Hi! How can I help?"),
+            ("谢谢你。", "不客气！"),
+            ("你是谁？", "我是 Duo SSH 的 AI 运维助手。"),
+            ("Who are you?", "I'm the AI assistant in Duo SSH."),
         ] {
-            assert!(is_plain_conversation(message), "{message}");
+            assert_eq!(casual_reply(message), Some(expected), "{message}");
         }
+        assert!(casual_reply("你能做什么？").is_some());
+        assert!(casual_reply("What can you do?").is_some());
         for message in [
             "你好，列出我保存的服务器",
             "谢谢，继续检查刚才的报错",
@@ -831,7 +807,7 @@ mod tests {
             "可以，列一下",
             "Hello! List my saved servers",
         ] {
-            assert!(!is_plain_conversation(message), "{message}");
+            assert_eq!(casual_reply(message), None, "{message}");
         }
     }
 

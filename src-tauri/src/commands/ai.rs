@@ -290,13 +290,16 @@ pub async fn ai_generate_conversation_title(
     message: String,
     answer: String,
 ) -> AppResult<Option<String>> {
-    use crate::ai::{client::build_client, diagnostics::Redactor};
+    use crate::ai::{agent::casual_reply, client::build_client, diagnostics::Redactor};
     use genai::chat::{ChatOptions, ChatRequest};
     use std::time::Duration;
 
     state
         .profiles
         .require_ai_conversation(window.label(), &conversation_id)?;
+    if casual_reply(&message).is_some() {
+        return Ok(None);
+    }
     let mut provider = state.profiles.get_ai_provider(&provider_id)?;
     if !provider.models.iter().any(|entry| entry.id == model) && provider.model != model {
         return Ok(None);

@@ -5,9 +5,6 @@ export type AuthMethod =
     }
   | {
       type: "privateKey";
-      // The key material is only ever sent from the UI to the backend on
-      // upload; it is never returned in profile responses.
-      keyData?: string;
       keyName?: string;
       passphraseRef?: string;
     };
@@ -41,6 +38,7 @@ export interface SshProfile {
   port: number;
   username: string;
   authMethod: AuthMethod;
+  credentialId?: string;
   proxy?: SshProxy;
   description?: string;
   favorite: boolean;

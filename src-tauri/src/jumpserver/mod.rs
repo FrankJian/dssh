@@ -677,6 +677,8 @@ fn authorized_account(detail: &serde_json::Value, alias: &str) -> AppResult<Jump
 
 fn source_profile(id: &str, target: &JumpServerTarget, platform: &str) -> SshProfile {
     SshProfile {
+        credential_id: None,
+        credential_revision: None,
         connection_type: Default::default(),
         folder: String::new(),
         id: id.into(),

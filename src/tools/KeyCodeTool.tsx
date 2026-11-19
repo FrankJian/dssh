@@ -1,8 +1,6 @@
 import { useId, useState } from "react";
-import { Button } from "../ui/Button";
-import { Icon } from "../ui/Icon";
 import { copyToolText } from "../services/toolsService";
-import { ToolFeedback, ToolPanel } from "./ToolControls";
+import { ToolAction, ToolFeedback, ToolPanel } from "./ToolControls";
 
 export default function KeyCodeTool() {
   const captureId = useId();
@@ -28,12 +26,12 @@ export default function KeyCodeTool() {
               }} />
           </ToolPanel>
         </div>
-        <ToolPanel label="键盘事件" htmlFor={outputId} actions={
-          <Button variant="ghost" disabled={!result} onClick={() => {
+        <ToolPanel label="键盘事件" expandable feedback={{ error, status }} htmlFor={outputId} actions={
+          <ToolAction variant="ghost" label="复制结果" icon="copy" disabled={!result} onClick={() => {
             setStatus("");
             setError("");
             void copyToolText(result).then(() => setStatus("已复制结果。"), () => setError("无法复制按键结果。"));
-          }}><Icon name="copy" /> 复制结果</Button>
+          }} />
         }>
           <textarea id={outputId} value={result} readOnly spellCheck={false} />
         </ToolPanel>

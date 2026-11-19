@@ -1,8 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { copyToolImage, saveToolImage } from "../services/toolsService";
-import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
-import { ToolFeedback, ToolPanel, ToolToolbar } from "./ToolControls";
+import { ToolAction, ToolFeedback, ToolPanel, ToolToolbar } from "./ToolControls";
 import { toolError } from "./ToolForm";
 import { renderTextImage } from "./textImage";
 
@@ -74,14 +73,10 @@ export function ImageExportTool({ inputLabel, previewAlt, example, options, revi
           <textarea id={inputId} spellCheck={false} value={input} readOnly={busy}
             onChange={(event) => edit(event.currentTarget.value)} />
         </ToolPanel>
-        <ToolPanel label="图片预览" actions={
+        <ToolPanel label="图片预览" expandable feedback={{ error, status }} actions={
           <>
-            <Button variant="ghost" disabled={!image || busy} onClick={() => void operate("copy")}>
-              <Icon name="copy" /> 复制图片
-            </Button>
-            <Button variant="ghost" disabled={!image || busy} onClick={() => void operate("save")}>
-              <Icon name="download" /> 另存为 PNG
-            </Button>
+            <ToolAction variant="ghost" label="复制图片" icon="copy" disabled={!image || busy} onClick={() => void operate("copy")} />
+            <ToolAction variant="ghost" label="另存为 PNG" icon="download" disabled={!image || busy} onClick={() => void operate("save")} />
           </>
         }>
           <div className="tool-form__preview">

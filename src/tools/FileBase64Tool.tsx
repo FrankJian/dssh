@@ -1,9 +1,7 @@
 import { useId, useRef, useState } from "react";
-import { Button } from "../ui/Button";
-import { Icon } from "../ui/Icon";
 import { copyToolText } from "../services/toolsService";
 import { encodeBase64Bytes } from "./base64";
-import { ToolFeedback, ToolPanel } from "./ToolControls";
+import { ToolAction, ToolFeedback, ToolPanel } from "./ToolControls";
 import { toolError } from "./ToolForm";
 
 export default function FileBase64Tool() {
@@ -51,9 +49,7 @@ export default function FileBase64Tool() {
   return (
     <div className="tool-form" aria-busy={busy}>
       <div className="tool-form__toolbar">
-        <Button variant="primary" disabled={busy} onClick={() => fileInput.current?.click()}>
-          选择文件
-        </Button>
+        <ToolAction variant="primary" label="选择文件" icon="folderOpen" disabled={busy} onClick={() => fileInput.current?.click()} />
         <span>{name || "最大 2 MiB"}</span>
         <input hidden type="file" ref={fileInput} onChange={(event) => {
           const file = event.currentTarget.files?.[0];
@@ -61,10 +57,8 @@ export default function FileBase64Tool() {
           if (file) void read(file);
         }} />
       </div>
-      <ToolPanel label="Base64" htmlFor={outputId} actions={
-        <Button variant="ghost" disabled={busy || output === null} onClick={() => void copy()}>
-          <Icon name="copy" />复制结果
-        </Button>
+      <ToolPanel label="Base64" expandable feedback={{ error, status }} htmlFor={outputId} actions={
+        <ToolAction variant="ghost" label="复制结果" icon="copy" disabled={busy || output === null} onClick={() => void copy()} />
       }>
         <textarea id={outputId} readOnly spellCheck={false} value={output ?? ""} />
       </ToolPanel>

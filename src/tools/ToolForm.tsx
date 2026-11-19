@@ -1,7 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { Button } from "../ui/Button";
-import { Icon } from "../ui/Icon";
-import { ToolFeedback, ToolPanel, ToolToolbar } from "./ToolControls";
+import { ToolAction, ToolFeedback, ToolPanel, ToolToolbar } from "./ToolControls";
 import { copyToolText } from "../services/toolsService";
 
 const TEXT_INPUT_LIMIT = 256 * 1024;
@@ -101,12 +99,12 @@ export function TextTool({ inputLabel, inputType, outputLabel, multilineOutput =
           </div>
         ) : null}
         <ToolPanel
+          expandable
+          feedback={{ error, status }}
           label={outputLabel}
           htmlFor={outputId}
           actions={
-            <Button variant="ghost" onClick={() => void copy()} disabled={output === null || busy}>
-              <Icon name="copy" /> 复制结果
-            </Button>
+            <ToolAction variant="ghost" label="复制结果" icon="copy" onClick={() => void copy()} disabled={output === null || busy} />
           }
         >
           {multilineOutput ? (
