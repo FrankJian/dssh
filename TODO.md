@@ -1,7 +1,7 @@
 # Duo SSH 待办
 
-> 本文件**只记录尚未完成的开发项与待验收项**。已进入实施拆分的任务见 [`tasks.md`](tasks.md)，
-> 当前界面与机制约定见 [`spec.md`](spec.md)，架构规则见 [`AGENTS.md`](AGENTS.md)。
+> 本文件**只记录尚未完成的开发项与待验收项**。已明确范围的需求与实施任务见 [OpenSpec 变更](docs/openspec-workflow.md)，
+> 当前需求见 [OpenSpec 主规格](docs/requirements.md)，验收证据见 [验收导航](docs/verification/README.md)，架构规则见 [`AGENTS.md`](AGENTS.md)。
 >
 > 优先级：**P1 = 安全/架构优先**，**P2 = 体验与可靠性**，**P3 = 可选演进**。
 
@@ -61,7 +61,7 @@
 
 ### SFTP 连接库真实环境验收
 
-- SFTP 独立导航、SSH / SFTP 混合来源、目录标签、独立配置与 SSH 终端跳转已接入；本地迁移 / 配置 / 搜索 / 导航回归及隔离浏览器深浅主题、窄布局与表单预填已覆盖。真实密码 / 私钥 / 代理、TOFU、仅 SFTP 权限、传输中打开 / 关闭终端、跨窗口及 Windows/macOS 原生工作区待验收，见 [实施说明](features/sftp-connection-library.md#7-首版实施结果与待验收)。
+- SFTP 独立导航、SSH / SFTP 混合来源、目录标签、独立配置与 SSH 终端跳转已接入；本地迁移 / 配置 / 搜索 / 导航回归及隔离浏览器深浅主题、窄布局与表单预填已覆盖。真实密码 / 私钥 / 代理、TOFU、仅 SFTP 权限、传输中打开 / 关闭终端、跨窗口及 Windows/macOS 原生工作区待验收，见 [实施说明](docs/verification/sftp-connections.md#7-首版实施结果与待验收)。
 
 
 ### macOS 正式包本地网络权限验收
@@ -70,7 +70,7 @@
 
 ### JumpServer 图形化资产工作台验收与后续接入
 
-- 首版已接入平台配置 / 系统凭据库、用户名 / 密码 + OTP 与 Access Key 签名登录、关联原有 SSH 交互终端、组织隔离的授权目录 / 分页 / 搜索 / 账号选择、经连接池的临时令牌 SSH PTY、分屏 / 新建 / 重连与跨窗口退出清理。模拟 Core 的 Cookie / CSRF / OTP 流程、签名向量、取消与窗口归属、身份失效、存储迁移与浏览器隔离交互已覆盖；真实 Core / KoKo 的授权、主机信任、令牌消费、断线与审计，以及 macOS / Windows 原生工作区仍待验收。见[设计与实施说明](features/jumpserver-asset-workspace.md#10-首版实施情况)。
+- 首版已接入平台配置 / 系统凭据库、用户名 / 密码 + OTP 与 Access Key 签名登录、关联原有 SSH 交互终端、组织隔离的授权目录 / 分页 / 搜索 / 账号选择、经连接池的临时令牌 SSH PTY、分屏 / 新建 / 重连与跨窗口退出清理。模拟 Core 的 Cookie / CSRF / OTP 流程、签名向量、取消与窗口归属、身份失效、存储迁移与浏览器隔离交互已覆盖；真实 Core / KoKo 的授权、主机信任、令牌消费、断线与审计，以及 macOS / Windows 原生工作区仍待验收。见[设计与实施说明](docs/architecture/jumpserver-workspace.md#10-首版实施情况)。
 - 后续：资产收藏 / 最近使用、侧栏可折叠树、网络代理配置与仅 SSH 的已知资产入口；只有 SSH 权限时不能承诺自动列出全部资产。SSO / 审批、SFTP、exec 与转发分别适配和验收，不自动随终端开放。
 
 ### RDP 远程桌面验收与后续接入
@@ -87,7 +87,7 @@
 
 - Windows 本机中文输入法下 Ctrl+C 退化为普通 C：已加入桌面窗口本机 IME 隔离与修饰键快照补发、松键恢复，新增原生按键序列和 IME 关联回归，并做 Windows 目标编译检查；完整安装包上微软拼音 / 第三方输入法与英文切换后的实际行为仍待复验。中文组合使用远端 Windows 输入法。
 
-- 剪贴板逐连接三档设置、双向纯文本白名单、Windows 原生 OLE 文件桥及 macOS 无 FUSE 文件桥已接入，固定引擎升级至 3.33.0。原生策略 / 配置持久化 / 引擎边界回归已覆盖；真实 Windows Server 上的 Explorer / Finder 双向粘贴、目录与超大文件、慢链路取消、多会话切换仍待验收。见[剪贴板方案与实施结果](features/rdp-clipboard.md)。
+- 剪贴板逐连接三档设置、双向纯文本白名单、Windows 原生 OLE 文件桥及 macOS 无 FUSE 文件桥已接入，固定引擎升级至 3.33.0。原生策略 / 配置持久化 / 引擎边界回归已覆盖；真实 Windows Server 上的 Explorer / Finder 双向粘贴、目录与超大文件、慢链路取消、多会话切换仍待验收。见[剪贴板方案与实施结果](docs/architecture/rdp-clipboard.md)。
 
 - 已接入顶部边缘自动显示的原生控制栏、正常关闭隐藏 / 异常退出保留原因，以及 Windows 全屏窗口的任务栏标记与撤销。本地原生按钮 / 显隐逻辑和状态回归已覆盖；控制栏已支持拖动标题 / 空白区域，在桌面范围内按相对位置保持，原生鼠标拖动及边界回归通过；Windows 新安装包仍需验收真实桌面上的边缘触发、拖动、按钮、前后台切换后的任务栏恢复、多 DPI 与跨屏。
 
@@ -95,7 +95,7 @@
 
 - 安装包认证失败已定位到默认构建依赖 OpenSSL 外部 legacy-provider 的可移植性问题；已开启内置 MD4 / RC4，并增加无开发机环境的公开向量自检、runtime 移目录测试与退出诊断保留。需在新的 macOS / Windows 安装包上复验真实目标认证，不能沿用旧引擎产物。
 
-- 连接管理、独立 profile / SQLite 迁移、系统凭据库、私有管道、FreeRDP 原生窗口、会话归属、应用锁隐藏 / 恢复、手动重连及原生构建 / 打包流程已接入。已增加默认关闭、逐连接保存的“跳过服务器证书验证（不安全）”，保持 TLS / NLA 和持续未验证标识；严格模式与显式跳过的原生边界回归通过，真实 Windows Server 仍待验收。当前首版只开放内网直连，优先验收 Windows Server，详见 [实施说明](features/rdp-implementation.md) 和 [完整方案](features/rdp-workspace.md)。
+- 连接管理、独立 profile / SQLite 迁移、系统凭据库、私有管道、FreeRDP 原生窗口、会话归属、应用锁隐藏 / 恢复、手动重连及原生构建 / 打包流程已接入。已增加默认关闭、逐连接保存的“跳过服务器证书验证（不安全）”，保持 TLS / NLA 和持续未验证标识；严格模式与显式跳过的原生边界回归通过，真实 Windows Server 仍待验收。当前首版只开放内网直连，优先验收 Windows Server，详见 [实施说明](docs/architecture/rdp.md) 和 [完整方案](docs/history/rdp-research.md)。
 - 待验收：Windows 原生 worker 编译 / 安装包、真实 Windows Server 的本地 / AD 账户与证书、中文输入、全屏 / 跨屏 / DPI、OS 凭据库保存 / 更新 / 清除、睡眠唤醒、长稳与多会话、签名与干净系统安装，以及原生依赖版本基线 / 实际最小 macOS 要求。当前不能据此标记为稳定发行功能。
 - 后续：交互式首次证书信任、SSH connection pool 隧道（含真实目标 TLS / NLA 身份校验）、有界自动重连与配置导入导出。首版不开放 RD Gateway、多显示器、设备重定向或标签内嵌。
 - 凭据清理增强：旧密码更新后若 OS 凭据库暂不可用，补持久化的待清理引用与重试；当前不会回退到 SQLite 明文保存。
@@ -107,40 +107,41 @@
 
 ### 内置 WebView 浏览器验收
 
-- 统一浏览器标签、保留页面状态移窗 / 恢复、本地转发入口、终端链接打开方式及 AI 经确认读取 / 导航 / 点击 / 填写已实现，macOS 原生与不使用模型账户的工具回归通过；Windows WebView2、多显示器 DPI、真实 SSH 转发、外部浏览器安装路径及实际模型 / HTTPS / 登录流程待验收。使用 Tauri 多 WebView `unstable` API；下载管理、独立站点数据 / 清理、书签历史、弹窗 OAuth、SOCKS 路由与终端混合分屏暂缓，见[浏览器说明](features/webview-browser.md)。
+- 统一浏览器标签、保留页面状态移窗 / 恢复、本地转发入口、终端链接打开方式及 AI 经确认读取 / 导航 / 点击 / 填写已实现，macOS 原生与不使用模型账户的工具回归通过；Windows WebView2、多显示器 DPI、真实 SSH 转发、外部浏览器安装路径及实际模型 / HTTPS / 登录流程待验收。使用 Tauri 多 WebView `unstable` API；下载管理、独立站点数据 / 清理、书签历史、弹窗 OAuth、SOCKS 路由与终端混合分屏暂缓，见[浏览器说明](docs/guides/browser.md)。
 
 ### 快捷键验收
 
-- 已将快捷键扩充为 26 项，补充分屏、面板 / 标签切换、新建与关闭终端、常用导航；复用原有连接与关闭确认。已完成双平台按键匹配回归、实际 xterm 隔离交互与前端构建检查；Windows 和原生独立窗口键盘验收待完成。见 [快捷键说明](features/keyboard-shortcuts.md)。
+- 已将快捷键扩充为 26 项，补充分屏、面板 / 标签切换、新建与关闭终端、常用导航；复用原有连接与关闭确认。已完成双平台按键匹配回归、实际 xterm 隔离交互与前端构建检查；Windows 和原生独立窗口键盘验收待完成。见 [快捷键说明](docs/guides/keyboard-shortcuts.md)。
 
 ### 4. 终端吞吐、生命周期与显示保真
 
 - 标签批量关闭与运行任务确认、后端关闭完成回执、本地前台进程组清理已实现；macOS 真实 PTY 前台任务终止回归通过。Windows 进程树终止、真实 SSH / JumpServer 挂断行为仍需验收；`nohup`、`tmux` 等主动脱离终端的任务遵循其自身生命周期。
-- 输出合并、xterm 实例常驻、ConPTY 提示和拖拽节流已实现。2026-11 审计进一步修复了前端缓冲头部移动、重连隐藏光标、分屏失焦清理、同步配置/连接库操作与 Windows 盘符探测；锁屏（含 RDP 显隐等待）、AI/S3/SMB/JumpServer 配置和 SSH 创建的其他同步入口也已后台化，原生线程调整验收待完成；详见 [性能与可靠性审计](docs/performance-reliability-audit-2026-11.md)。
-- 跨窗口输出已改为按窗口订阅的 typed IPC Channel，并补上历史/实时序号及状态交接；新增可选检查点增量订阅与缺口拒绝，尚未接入完整屏幕移窗。Rust 历史保留已改为分块队列，两类前端输出追踪器已按文本段批量解析。尚需解决：IPC/xterm 洪水队列上限，以及移窗屏幕快照/TUI 恢复；历史保留上限不能保证整个通路内存有界。Windows 正式包、GPU/驱动、真实 SSH/TUI 与多 DPI 性能验收仍待完成。原规格及指标见 [`features/terminal-performance.md`](features/terminal-performance.md)。
+- 输出合并、xterm 实例常驻、ConPTY 提示和拖拽节流已实现。2026-11 审计进一步修复了前端缓冲头部移动、重连隐藏光标、分屏失焦清理、同步配置/连接库操作与 Windows 盘符探测；锁屏（含 RDP 显隐等待）、AI/S3/SMB/JumpServer 配置和 SSH 创建的其他同步入口也已后台化，原生线程调整验收待完成；详见 [性能与可靠性审计](docs/verification/performance-reliability-audit-2026-11.md)。
+- 可回看滚动历史已支持 0～100,000 行、默认 2,000 行，超限自动淘汰旧行；本机保存、已有实例即时更新及隔离浏览器跨窗口回归通过。Windows/macOS 完整原生设置与独立窗口验收仍待发布前完成，见[输出历史与流控](docs/architecture/terminal-output-flow-control.md)。
+- 跨窗口输出已改为按窗口订阅的 typed IPC Channel，并补上历史/实时序号及状态交接；新增可选检查点增量订阅与缺口拒绝，尚未接入完整屏幕移窗。Rust 历史保留已改为分块队列，两类前端输出追踪器已按文本段批量解析。实时输出已接入消费确认、128 KiB 投递窗口、有界后端队列和显式过载暂停/清屏恢复，见[流控说明](docs/architecture/terminal-output-flow-control.md)；仍需真实持续洪水的 RSS / 输入延迟与 Windows 正式包验收，以及移窗屏幕快照/TUI 恢复。GPU/驱动、真实 SSH/TUI 与多 DPI 性能验收仍待完成。原规格及指标见 [`features/terminal-performance.md`](docs/history/terminal-performance-plan.md)。
 
 ### 智能助手多协议与模型配置
 
-- 实际对话已增加默认折叠的脱敏错误诊断（步骤 / 地址 / 请求规模 / 状态 / 原始错误字段 / 网络错误链），以及短暂网关错误有限重试、实际窗口小于配置时的上下文恢复。三协议连续多轮工具回归已补充；真实账户故障仍需新诊断确认，详见 [配置说明](features/assistant-model-config.md)。
+- 实际对话已增加默认折叠的脱敏错误诊断（步骤 / 地址 / 请求规模 / 状态 / 原始错误字段 / 网络错误链），以及短暂网关错误有限重试、实际窗口小于配置时的上下文恢复。三协议连续多轮工具回归已补充；真实账户故障仍需新诊断确认，详见 [配置说明](docs/guides/assistant-model-config.md)。
 
-- 已补充连接测试的折叠诊断（实际地址 / 请求 / HTTP / 错误链，Rust 侧脱敏），修复已知旧 Claude 模型的 adaptive 思考参数及测试输出预算冲突。三协议模拟回归通过；真实厂商 / 网关与原生诊断交互仍待验收，详见 [配置说明](features/assistant-model-config.md)。
+- 已补充连接测试的折叠诊断（实际地址 / 请求 / HTTP / 错误链，Rust 侧脱敏），修复已知旧 Claude 模型的 adaptive 思考参数及测试输出预算冲突。三协议模拟回归通过；真实厂商 / 网关与原生诊断交互仍待验收，详见 [配置说明](docs/guides/assistant-model-config.md)。
 
 - 已将 AI 终端等待改为会话通知驱动、约 120ms 输出稳定后提前返回，并减少重复读取工具调用；本地等待与安全回归通过。真实厂商 / JumpServer 端到端耗时与模型流式响应仍待验证和后续优化。
 
-- AI 助手三方向停靠及自适应布局已实现，隔离浏览器交互与尺寸回归通过；真实 Tauri、分屏 / SFTP、多显示器和 macOS / Windows 原生拖拽验收待完成，见 [停靠布局](features/assistant-docking.md)。
+- AI 助手三方向停靠及自适应布局已实现，隔离浏览器交互与尺寸回归通过；真实 Tauri、分屏 / SFTP、多显示器和 macOS / Windows 原生拖拽验收待完成，见 [停靠布局](docs/architecture/assistant-docking.md)。
 
-- AI 后台 PTY 已实现：不打开标签 / 切换页面，支持跨轮复用、归属隔离、真实状态、接管、空闲回收与对话清理。模拟队列及输入并发回归通过；真实 JumpServer、认证 / 取消 / 回收、接管及 macOS / Windows 原生界面验收待完成，全屏 TUI 与增量游标读取后续完善，见 [实现说明](features/assistant-background-sessions.md)。
+- AI 后台 PTY 已实现：不打开标签 / 切换页面，支持跨轮复用、归属隔离、真实状态、接管、空闲回收与对话清理。模拟队列及输入并发回归通过；真实 JumpServer、认证 / 取消 / 回收、接管及 macOS / Windows 原生界面验收待完成，全屏 TUI 与增量游标读取后续完善，见 [实现说明](docs/guides/assistant-sessions.md)。
 
-- 已补充 JumpServer 交互终端输入：列出活动终端、确认后向原 PTY 输入一行并回车、等待及读取后续输出；输入确认绑定终端输出与输入版本，认证提示交回用户。模拟 IP → 资产编号 → 账号编号、状态变化拦截和前端目标 / 任务跟踪回归通过；真实 JumpServer/KoKo 版本与全屏 TUI 验收待完成。见 [交互说明](features/assistant-jumpserver.md)。
+- 已补充 JumpServer 交互终端输入：列出活动终端、确认后向原 PTY 输入一行并回车、等待及读取后续输出；输入确认绑定终端输出与输入版本，认证提示交回用户。模拟 IP → 资产编号 → 账号编号、状态变化拦截和前端目标 / 任务跟踪回归通过；真实 JumpServer/KoKo 版本与全屏 TUI 验收待完成。见 [交互说明](docs/guides/assistant-jumpserver.md)。
 
 - 已移除 GitHub Copilot 集成；模型服务支持厂商预设、自定义基础或完整 API 地址、三种显式协议（OpenAI Chat Completions / Responses、Anthropic Messages），以及输入区跨厂商搜索切换。首个模型填好后可直接保存或测试，多个模型仍以独立条目添加；每项包含 ID、显示名称与上下文窗口（新模型默认 256K）及最大输出（默认 32K tokens），支持编辑、移除和设为默认，模型发现只提供候选。预置厂商仅输入 Key、后端固定解析官方路由，自定义 API 才显示地址 / 协议；推理档位支持增删与自定义 API 值，在输入区切换。
 - 已移除手动历史压缩配置；每次主请求和工具后续请求前检查完整上下文预算，超出后自动压缩，保留当前用户输入及工具配对。已覆盖大段工具结果、超长转义历史、摘要失败、过长当前输入与工具定义等回归；精确厂商 tokenizer / 真实限额边界仍需实际账户验收。
 - 配置与 Key 已迁至 SQLite：Key 只写、不向前端回显；兼容旧版 localStorage 配置，成功导入后才清理旧数据。系统钥匙串仍属 P1 后续项。
-- 本地三协议 HTTP 工具调用回归、凭据持久化与配置迁移测试，以及 TypeScript / 生产构建 / Rust 检查均通过。真实厂商账户（含代理、限流、推理模型、模型发现）和 macOS / Windows 原生窗口视觉、键盘及窄面板验收待完成；逐个添加、名称编辑、上下文容量和默认模型切换已用浏览器隔离预览验收；完整原生窗口与跨平台验收仍待完成。详见 [配置说明](features/assistant-model-config.md)。
+- 本地三协议 HTTP 工具调用回归、凭据持久化与配置迁移测试，以及 TypeScript / 生产构建 / Rust 检查均通过。真实厂商账户（含代理、限流、推理模型、模型发现）和 macOS / Windows 原生窗口视觉、键盘及窄面板验收待完成；逐个添加、名称编辑、上下文容量和默认模型切换已用浏览器隔离预览验收；完整原生窗口与跨平台验收仍待完成。详见 [配置说明](docs/guides/assistant-model-config.md)。
 
 ### SFTP 双栏工作台验收与后续能力
 
-- 双栏详情 / 排序 / 隐藏文件、历史导航、可见项目多选、双栏拖拽、直接下载到当前目录、覆盖 / 跳过确认、逐项传输状态、新建 / 重命名 / 确认删除与复用编辑器已接入。排序 / 范围选择 / 历史导航回归及隔离浏览器交互检查已覆盖；真实 SSH 的大目录、慢链路取消 / 网络中断、符号链接、Windows 路径、Tauri 原生拖拽与多窗口编辑仍待验收，见 [操作说明](features/sftp-workspace.md)。
+- 双栏详情 / 排序 / 隐藏文件、历史导航、可见项目多选、双栏拖拽、直接下载到当前目录、覆盖 / 跳过确认、逐项传输状态、新建 / 重命名 / 确认删除与复用编辑器已接入。排序 / 范围选择 / 历史导航回归及隔离浏览器交互检查已覆盖；真实 SSH 的大目录、慢链路取消 / 网络中断、符号链接、Windows 路径、Tauri 原生拖拽与多窗口编辑仍待验收，见 [操作说明](docs/guides/sftp.md)。
 - 后续：可持久化并追加任务的后台队列、失败重试 / 断点续传、目录比较 / 双向同步与目录收藏。两栏已接入可选的递归模糊搜索、进度 / 停止 / 重试、部分目录失败提示和扫描上限；模拟 IPC 与路径 / 取消回归通过，真实 SSH 超大目录、网络超时和原生多窗口仍待验收。当前传输列表只显示本批次任务，不承诺暂停 / 续传；已接入 Finder / Explorer 原生文件与文件夹拖入服务器栏，真实跨应用投放手势、Windows 原生与跨屏 DPI 仍待验收。
 
 ### 5. 通知中心与统一确认框
@@ -152,22 +153,22 @@
 
 - 终端 `rz` 上传与 `sz` 下载首版已接入：Rust 侧原始字节探测/分流、原生文件选择或保存目录选择、分块读写、进度与取消。
   `sz` 下载遇到同名本地文件会暂停并询问覆盖或跳过（默认跳过）；覆盖先写临时文件，完整接收后才替换原文件。远端文件名仍经过安全校验。仍需用真实 SSH `rz`/`sz`/`lrzsz` 做互操作与 Windows/macOS 验收；实现细节和边界见
-  [功能规格](features/zmodem-jumpserver-transfer.md)。
+  [功能规格](docs/architecture/terminal-file-transfer.md)。
 - KoKo 原生 SFTP 可从已保存的 SSH 网关配置打开。右栏切换为同一连接后，可在两个授权资产目录间复制文件和目录，真实 KoKo 的认证、资产目录、传输权限及双端审计待验收。Core 令牌 SFTP 与指定资产终端上传入口尚未实现。
 - JumpServer 终端标签优先读取 KoKo 的窗口标题中的资产地址，并兼容直连用户名、连接提示和菜单中的明确资产 IP；不同版本/定制版仍需真实会话验收。若服务端从不向终端输出资产 IP，客户端无法仅凭 SSH 网关连接确定目标地址，需结合脱敏会话样本补充适配。
 
 ### 终端多配色方案与自定义颜色
 
 - 首轮实现已落地：35 套预设（含海玻璃与矿雾的深浅成对方案）、自定义颜色编辑与预览、按深浅外观独立保存的背景色叠加、独立本机存储、存活终端动态应用；默认跟随应用深浅外观，并分别记住浅色与深色方案；自动检查已通过。
-- 真实终端视觉、生命周期、协议边界和 Tauri 双窗口跨平台验收仍待完成，见 [`tasks.md`](tasks.md#终端多配色方案与自定义颜色)。
+- 真实终端视觉、生命周期、协议边界和 Tauri 双窗口跨平台验收仍待完成，见 [`tasks.md`](docs/verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
 - 保持 Graphite 默认及现有字体/透明背景设置；覆盖存活终端、隐藏标签、分屏与独立窗口，不因切换配色重建会话。
-- 详见 [功能规格](features/terminal-color-schemes.md) 和 [实施任务](tasks.md#终端多配色方案与自定义颜色)。
+- 详见 [功能规格](docs/guides/terminal-appearance.md) 和 [实施任务](docs/verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
 
 ## P3：可选演进
 
 ### 应用整体配色与页面重设计
 
-- 依据 [`features/interface-redesign.md`](features/interface-redesign.md) 分页面重设计：采用更协调的圆角、留白和柔和底色，减少生硬矩形拼接；保留终端、文件列表与远程桌面的清晰度和操作效率。
+- 依据 [`features/interface-redesign.md`](docs/design/interface-checklist.md) 分页面重设计：采用更协调的圆角、留白和柔和底色，减少生硬矩形拼接；保留终端、文件列表与远程桌面的清晰度和操作效率。
 - 已在外观设置接入自定义应用颜色，并同步生成深浅两套背景 / 表面 / 文字 / 强调色；与终端配色独立。主窗口、独立窗口、弹窗、窄布局和减少透明度环境仍需视觉验收；命名配色预设可后续扩展。
 
 
@@ -178,11 +179,14 @@
 
 ### 8. 原生窗口材质（桌面透视）
 
-- 默认 Graphite Glass 的 CSS chrome / 浮层材质已经落地；后续只在设置 → 外观提供“关闭 / 整窗”的**原生窗口材质**可选项。整窗档需要窗口透明 + 系统材质（Windows 11 Mica / Acrylic、macOS vibrancy），会影响窗口缩放性能、resize 边框与启动首帧，必须先完成可行性验证。终端默认保持完全不透明，桌面透视不得降低正文可读性。完整规格见 [`features/liquid-glass.md`](features/liquid-glass.md)，主题实现与验收边界见 [`features/graphite-glass-theme.md`](features/graphite-glass-theme.md)。
+- 已迁入 [native-window-material 提案](openspec/changes/native-window-material/proposal.md)与[任务](openspec/changes/native-window-material/tasks.md)，仍为未实现可选增强。已有 CSS 玻璃基线不表示桌面透视完成；Phase 6 保持可选。
 
 ### 9. VNC 远程桌面工作区
 
-- 新增独立 VNC profile、嵌入式远程桌面工作区，以及通过既有 SSH connection pool 建立的 VNC 隧道。该功能必须
-  让保存的 VNC 凭据停留在 Rust / 系统密钥链中，不能让 WebView 直接代理 TCP 或读取密码。完整协议、安全和界面
-  规格见 [`features/vnc-workspace.md`](features/vnc-workspace.md)，分阶段实施清单见
-  [`tasks.md`](tasks.md#vnc-远程桌面工作区)。
+- 已迁入 [vnc-workspace 提案](openspec/changes/vnc-workspace/proposal.md)与[任务](openspec/changes/vnc-workspace/tasks.md)，仍未进入代码实现。凭据不出 Rust/系统密钥链及 Phase 0 安全门槛保持，Phase 5 可选。
+
+### 其他未排期范围
+
+- JumpServer SFTP 路径定制与诊断尚未实现，保留[原方案](docs/history/jumpserver-transfer-plan.md)，先取得真实部署的路径对照，不以 rz/sz 接入代替此项完成。
+- RDP 的 SSH 路由、RD Gateway、多显示器与后续内嵌路线仍按[原调研](docs/history/rdp-research.md)单独明确范围；动态分辨率已接入但仍待真实服务端验收，不能与多显示器合并判断。
+- Artifactory 跨目录 AQL 搜索、服务端复制/移动、持久化传输恢复仍为[后续取舍](docs/history/artifactory-evolution.md)，未建立实施承诺。

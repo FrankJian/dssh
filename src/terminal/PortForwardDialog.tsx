@@ -8,6 +8,8 @@ import {
 } from "../services/forwardingService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface PortForwardDialogProps {
   sessionId: string;
@@ -28,7 +30,7 @@ interface FormState {
 const kindTabs: Array<{ id: ForwardKind; label: string }> = [
   { id: "local", label: "本地" },
   { id: "remote", label: "远程" },
-  { id: "dynamic", label: "Dynamic" },
+  { id: "dynamic", label: "SOCKS5" },
 ];
 
 const kindHints: Record<ForwardKind, string> = {
@@ -71,7 +73,7 @@ function describeForward(forward: PortForward): string {
 const kindLabels: Record<ForwardKind, string> = {
   local: "本地",
   remote: "远程",
-  dynamic: "Dynamic",
+  dynamic: "SOCKS5",
 };
 
 export function PortForwardDialog({
@@ -80,10 +82,12 @@ export function PortForwardDialog({
   profileId,
   sessionId,
 }: PortForwardDialogProps) {
+  const dialogRef = useDialogFocus();
   const [form, setForm] = useState<FormState>(() => createInitialForm(defaultRemoteHost));
   const [forwards, setForwards] = useState<PortForward[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [stoppingIds, setStoppingIds] = useState<Set<string>>(() => new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -104,6 +108,7 @@ export function PortForwardDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) return;
     setError(null);
 
     const localPort = parsePort(form.localPort);
@@ -155,24 +160,31 @@ export function PortForwardDialog({
   }
 
   async function handleStop(forwardId: string) {
+    if (stoppingIds.has(forwardId)) return;
+    setStoppingIds((current) => new Set(current).add(forwardId));
     try {
       await stopPortForward(forwardId);
       await refresh();
     } catch (stopError) {
       setError(stopError instanceof Error ? stopError.message : "关闭端口转发失败。");
+    } finally {
+      setStoppingIds((current) => { const next = new Set(current); next.delete(forwardId); return next; });
     }
   }
 
   const isDynamic = form.kind === "dynamic";
   const arrow = form.kind === "remote" ? "←" : "→";
+  const mutationPending = isSubmitting || stoppingIds.size > 0;
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="port-forward" aria-label="端口转发">
+      <section ref={dialogRef} className="port-forward" role="dialog" aria-modal="true" aria-label="端口转发"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !mutationPending) { event.stopPropagation(); onClose(); } }}>
         <header className="profile-editor__topbar">
           <h2>端口转发</h2>
           <button
             aria-label="关闭端口转发"
+            disabled={mutationPending}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -196,6 +208,7 @@ export function PortForwardDialog({
                     ) : null}
                   </div>
                   {forward.kind === "local" ? <button
+                    disabled={stoppingIds.has(forward.id)}
                     aria-label="在浏览器中打开本地转发"
                     title="在浏览器中打开（HTTP）"
                     className="icon-button"
@@ -208,12 +221,13 @@ export function PortForwardDialog({
                     }}
                   ><Icon name="globe" height="16" width="16" /></button> : null}
                   <button
-                    aria-label="关闭此端口转发"
+                    aria-label={stoppingIds.has(forward.id) ? "正在关闭端口转发" : "关闭此端口转发"}
+                    disabled={stoppingIds.has(forward.id)}
                     className="icon-button"
                     onClick={() => handleStop(forward.id)}
                     type="button"
                   >
-                    <Icon name="close" height="16" width="16" />
+                    <Icon name={stoppingIds.has(forward.id) ? "clock" : "close"} height="16" width="16" />
                   </button>
                 </div>
               ))
@@ -229,83 +243,43 @@ export function PortForwardDialog({
               </div>
             ) : null}
 
-            <div className="port-forward__row">
-              <input
-                aria-label="本地地址"
-                className="port-forward__host"
-                onChange={(event) => updateForm("localHost", event.currentTarget.value)}
-                placeholder="127.0.0.1"
-                value={form.localHost}
-              />
-              <span className="port-forward__colon">:</span>
-              <input
-                aria-label="本地端口"
-                className="port-forward__port"
-                inputMode="numeric"
-                onChange={(event) => updateForm("localPort", event.currentTarget.value)}
-                placeholder="8000"
-                value={form.localPort}
-              />
-              {isDynamic ? null : (
-                <>
-                  <span className="port-forward__arrow" aria-hidden="true">
-                    {arrow}
-                  </span>
-                  <input
-                    aria-label="远端地址"
-                    className="port-forward__host"
-                    onChange={(event) => updateForm("remoteHost", event.currentTarget.value)}
-                    placeholder="127.0.0.1"
-                    value={form.remoteHost}
-                  />
-                  <span className="port-forward__colon">:</span>
-                  <input
-                    aria-label="远端端口"
-                    className="port-forward__port"
-                    inputMode="numeric"
-                    onChange={(event) => updateForm("remotePort", event.currentTarget.value)}
-                    placeholder="80"
-                    value={form.remotePort}
-                  />
-                </>
-              )}
-            </div>
-
-            <input
-              aria-label="描述"
-              className="port-forward__description"
-              onChange={(event) => updateForm("description", event.currentTarget.value)}
-              placeholder="Description"
-              value={form.description}
-            />
-
-            <div className="port-forward__footer">
-              <div className="pf-tabs" role="tablist" aria-label="转发类型">
-                {kindTabs.map((tab) => (
-                  <button
-                    aria-selected={form.kind === tab.id}
-                    className={`pf-tab ${form.kind === tab.id ? "is-active" : ""}`.trim()}
-                    key={tab.id}
-                    onClick={() => updateForm("kind", tab.id)}
-                    role="tab"
-                    type="button"
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+            <fieldset className="port-forward__fields" disabled={isSubmitting}>
+              <SegmentedControl label="转发类型" value={form.kind}
+                options={kindTabs.map(({ id, label }) => ({ value: id, label }))}
+                onChange={(kind) => updateForm("kind", kind)} />
+              <div className="port-forward__endpoints" data-dynamic={isDynamic}>
+                <fieldset className="port-forward__endpoint">
+                  <legend>{form.kind === "remote" ? "本地目标" : "本地监听"}</legend>
+                  <div className="port-forward__row">
+                    <label className="field"><span>地址</span><input aria-label="本地地址" autoComplete="off" spellCheck={false}
+                      onChange={(event) => updateForm("localHost", event.currentTarget.value)} placeholder="127.0.0.1" value={form.localHost} /></label>
+                    <label className="field port-forward__port"><span>端口</span><input aria-label="本地端口" inputMode="numeric"
+                      onChange={(event) => updateForm("localPort", event.currentTarget.value)} placeholder="8000" value={form.localPort} /></label>
+                  </div>
+                </fieldset>
+                {!isDynamic ? <>
+                  <span className="port-forward__arrow" aria-hidden="true">{arrow}</span>
+                  <fieldset className="port-forward__endpoint">
+                    <legend>{form.kind === "remote" ? "远端监听" : "远端目标"}</legend>
+                    <div className="port-forward__row">
+                      <label className="field"><span>地址</span><input aria-label="远端地址" autoComplete="off" spellCheck={false}
+                        onChange={(event) => updateForm("remoteHost", event.currentTarget.value)} placeholder="127.0.0.1" value={form.remoteHost} /></label>
+                      <label className="field port-forward__port"><span>端口</span><input aria-label="远端端口" inputMode="numeric"
+                        onChange={(event) => updateForm("remotePort", event.currentTarget.value)} placeholder="80" value={form.remotePort} /></label>
+                    </div>
+                  </fieldset>
+                </> : null}
               </div>
-              <Button
-                className="port-forward__submit"
-                disabled={isSubmitting}
-                type="submit"
-                variant="primary"
-              >
-                <Icon name="forward" height="15" width="15" />
-                <span>转发端口</span>
+              <label className="field"><span>描述（可选）</span><input aria-label="描述"
+                onChange={(event) => updateForm("description", event.currentTarget.value)} value={form.description} /></label>
+              <p className="port-forward__hint">{kindHints[form.kind]}</p>
+            </fieldset>
+            <div className="port-forward__footer">
+              <Button disabled={mutationPending} onClick={onClose} variant="ghost">取消</Button>
+              <Button className="port-forward__submit" disabled={isSubmitting} type="submit" variant="primary">
+                <Icon name="forward" height="15" width="15" /><span>{isSubmitting ? "正在创建…" : "创建转发"}</span>
               </Button>
             </div>
-
-            <p className="port-forward__hint">{kindHints[form.kind]}</p>
           </form>
         </div>
       </section>

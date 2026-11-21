@@ -49,6 +49,20 @@ pub fn subscribe_terminal_output(
 }
 
 #[tauri::command]
+pub fn acknowledge_terminal_output(
+    state: State<'_, AppState>,
+    webview: Webview,
+    session_id: String,
+    subscription_id: String,
+    end_offset: u64,
+) -> AppResult<()> {
+    crate::browser::trusted(&webview)?;
+    state
+        .sessions
+        .acknowledge_output(&session_id, webview.label(), &subscription_id, end_offset)
+}
+
+#[tauri::command]
 pub fn unsubscribe_terminal_output(
     state: State<'_, AppState>,
     webview: Webview,

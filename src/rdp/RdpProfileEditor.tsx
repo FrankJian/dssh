@@ -6,8 +6,9 @@ import { saveRdpProfile } from "../services/rdpService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { SelectMenu } from "../ui/SelectMenu";
+import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { TagInput } from "../ssh/TagInput";
-import { useDialogFocus } from "./useDialogFocus";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 const RESOLUTION_PRESETS = [
   { value: "720p", label: "720P · 1280 × 720", width: 1280, height: 720 },
@@ -39,10 +40,11 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
   }
   return <div className="profile-editor-backdrop" role="presentation">
     <section ref={dialogRef} className="profile-editor is-glass-overlay rdp-editor" role="dialog" aria-modal="true" aria-label={profile && !clone ? "编辑 RDP 连接" : "新建 RDP 连接"}
-      onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
+      onKeyDown={(event) => { if (event.key === "Escape" && !busy && !event.defaultPrevented) onClose(); }}>
       <header className="profile-editor__topbar"><h2>{profile && !clone ? "编辑" : "新建"} RDP 连接</h2>
         <button className="icon-button" type="button" aria-label="关闭编辑器" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>
       <form className="rdp-editor__form" onSubmit={submit}>
+        <div className="rdp-editor__body">
         {error ? <div className="form-errors" role="alert">{error}</div> : null}
         <p className="profile-form__hint">独立原生桌面窗口 · Windows Pro / Enterprise / Server · NLA。仅直连，磁盘与设备重定向关闭；暂不参与 YAML 导入导出。</p>
         {engine && !engine.available ? <p className="profile-form__hint" role="status">{engine.message}</p> : null}
@@ -61,8 +63,8 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
             options={[{ value: "keep", label: profile?.hasPassword ? "保留原配置密码" : "不保存，连接时输入" }, { value: "replace", label: "保存新密码到系统凭据库" }, { value: "clear", label: "清除保存的密码" }]} />
         </div>
         {passwordAction === "replace" ? <label className="field"><span>新密码</span><input required type="password" autoComplete="new-password" maxLength={4096} value={password} onChange={(e) => setPassword(e.target.value)} /></label> : null}
-        <label className="checkbox-field"><input type="checkbox" checked={draft.skipCertificateVerification}
-          aria-describedby="rdp-certificate-policy" onChange={(e) => field("skipCertificateVerification", e.target.checked)} />跳过服务器证书验证（不安全）</label>
+        <label className="settings-control-row"><span>跳过服务器证书验证（不安全）</span><SettingsSwitch checked={draft.skipCertificateVerification}
+          aria-describedby="rdp-certificate-policy" onChange={(e) => field("skipCertificateVerification", e.target.checked)} /></label>
         <p id="rdp-certificate-policy" className={draft.skipCertificateVerification ? "rdp-security-warning" : "profile-form__hint"}>
           {draft.skipCertificateVerification ? "已关闭证书链、主机名及指纹校验，无法确认服务器身份，可能遭遇中间人攻击。仅用于你信任的网络；连接仍使用加密和 NLA 认证。" : "默认验证服务器证书。内网自签名证书或名称不匹配时，可按需为此连接开启跳过验证。"}
         </p>
@@ -93,6 +95,7 @@ export function RdpProfileEditor({ profile, clone = false, initialTags, initialF
         </div> : null}
         <div className="field"><span>标签</span><TagInput value={draft.tags} suggestions={allTags} onChange={(tags) => field("tags", tags)} /></div>
         <label className="field"><span>描述</span><input value={draft.description} onChange={(e) => field("description", e.target.value)} /></label>
+        </div>
         <footer className="rdp-editor__actions"><Button disabled={busy} onClick={onClose}>取消</Button><Button variant="primary" type="submit" disabled={busy}>{busy ? "正在保存…" : "保存连接"}</Button></footer>
       </form>
     </section>

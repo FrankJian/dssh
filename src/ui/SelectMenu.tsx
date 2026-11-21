@@ -188,7 +188,13 @@ export function SelectMenu({
 
   function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (!open || event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && event.target === searchRef.current) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      setSearchQuery("");
+      triggerRef.current?.focus({ preventScroll: true });
+    } else if (event.key === "Enter" && event.target === searchRef.current) {
       const option = filteredOptions.find((item) => !item.disabled);
       if (option) {
         event.preventDefault();

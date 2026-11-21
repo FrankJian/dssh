@@ -3,6 +3,7 @@ import type { S3CleanupObject } from "../models";
 import { previewS3Cleanup } from "../services/s3Service";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface Props {
   profileId: string;
@@ -214,6 +215,7 @@ function CleanupFolderNode({
 }
 
 export function S3CleanupDialog({ profileId, bucket, prefix, onClose, onDelete }: Props) {
+  const dialogRef = useDialogFocus();
   const [cutoff, setCutoff] = useState(defaultCutoff);
   const [now, setNow] = useState(() => Date.now());
   const [objects, setObjects] = useState<S3CleanupObject[] | null>(null);
@@ -288,7 +290,8 @@ export function S3CleanupDialog({ profileId, bucket, prefix, onClose, onDelete }
   return (
     <>
       <div className="profile-editor-backdrop" role="presentation">
-        <section className="s3-cleanup-dialog" aria-label="清理 S3 目录">
+        <section ref={dialogRef} inert={showFinalConfirm} className="s3-cleanup-dialog" role="dialog" aria-modal="true" aria-label="清理 S3 目录"
+          onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !showFinalConfirm) { event.stopPropagation(); onClose(); } }}>
           <header className="profile-editor__topbar">
             <h2>清理目录</h2>
             <button className="icon-button" aria-label="关闭" onClick={onClose} type="button">
@@ -349,7 +352,7 @@ export function S3CleanupDialog({ profileId, bucket, prefix, onClose, onDelete }
             <footer className="s3-dialog-actions">
               <Button onClick={onClose} variant="secondary">取消</Button>
               <Button
-                className="s3-cleanup-dialog__continue s3-delete-dialog__confirm"
+                className="s3-cleanup-dialog__continue"
                 disabled={!canContinue}
                 onClick={() => setShowFinalConfirm(true)}
                 variant="primary"
@@ -386,10 +389,12 @@ function S3CleanupFinalConfirmDialog({
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
+  const dialogRef = useDialogFocus();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function confirm() {
+    if (deleting) return;
     setDeleting(true);
     setError(null);
     try {
@@ -403,10 +408,11 @@ function S3CleanupFinalConfirmDialog({
 
   return (
     <div className="profile-editor-backdrop s3-cleanup-confirm-backdrop" role="presentation">
-      <section className="s3-delete-dialog" aria-label="确认清理 S3 文件">
+      <section ref={dialogRef} className="s3-delete-dialog" role="dialog" aria-modal="true" aria-label="确认清理 S3 文件"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !deleting) { event.stopPropagation(); onClose(); } }}>
         <header className="profile-editor__topbar">
           <h2>确认不可恢复删除</h2>
-          <button className="icon-button" aria-label="关闭" onClick={onClose} type="button">
+          <button className="icon-button" aria-label="关闭" disabled={deleting} onClick={onClose} type="button">
             <Icon name="close" />
           </button>
         </header>
@@ -416,7 +422,7 @@ function S3CleanupFinalConfirmDialog({
           {error ? <div className="form-errors">{error}</div> : null}
           <footer className="s3-dialog-actions">
             <Button disabled={deleting} onClick={onClose} variant="secondary">返回检查</Button>
-            <Button className="s3-delete-dialog__confirm" disabled={deleting} onClick={() => void confirm()} variant="primary">
+            <Button disabled={deleting} onClick={() => void confirm()} variant="danger">
               {deleting ? "删除中..." : "永久删除"}
             </Button>
           </footer>

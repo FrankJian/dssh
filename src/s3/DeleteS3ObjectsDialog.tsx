@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface Props {
   folderCount: number;
@@ -15,10 +16,12 @@ export function DeleteS3ObjectsDialog({
   onClose,
   onConfirm,
 }: Props) {
+  const dialogRef = useDialogFocus();
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   async function confirm() {
+    if (deleting) return;
     setDeleting(true);
     setError(null);
     try {
@@ -33,10 +36,11 @@ export function DeleteS3ObjectsDialog({
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="s3-delete-dialog" aria-label="确认删除 S3 对象">
+      <section ref={dialogRef} className="s3-delete-dialog" role="dialog" aria-modal="true" aria-label="确认删除 S3 对象"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !deleting) { event.stopPropagation(); onClose(); } }}>
         <header className="profile-editor__topbar">
           <h2>确认删除</h2>
-          <button className="icon-button" aria-label="关闭" onClick={onClose} type="button">
+          <button className="icon-button" aria-label="关闭" disabled={deleting} onClick={onClose} type="button">
             <Icon name="close" />
           </button>
         </header>
@@ -47,10 +51,10 @@ export function DeleteS3ObjectsDialog({
               其中包含 {folderCount} 个文件夹，其下的全部对象也会被递归删除。
             </p>
           ) : null}
-          {error ? <div className="form-errors">{error}</div> : null}
+          {error ? <div className="form-errors" role="alert">{error}</div> : null}
           <footer className="s3-dialog-actions">
             <Button disabled={deleting} onClick={onClose} variant="ghost">取消</Button>
-            <Button className="s3-delete-dialog__confirm" disabled={deleting} onClick={() => void confirm()} variant="primary">
+            <Button disabled={deleting} onClick={() => void confirm()} variant="danger">
               {deleting ? "删除中..." : "删除"}
             </Button>
           </footer>

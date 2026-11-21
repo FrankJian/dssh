@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { AssistantDockPosition } from "../app/assistantDock";
 import { Icon, type IconName } from "../ui/Icon";
+import { handleMenuNavigation } from "../ui/menuNavigation";
 
 const POSITIONS: { value: AssistantDockPosition; label: string; icon: IconName }[] = [
   { value: "left", label: "停靠在左侧", icon: "panelLeft" },
@@ -47,32 +48,6 @@ export function AiToolbarMenu({
     action();
   }
 
-  function handleMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      close();
-      return;
-    }
-    if (event.key === "Tab") {
-      close();
-      return;
-    }
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    let next: number;
-    switch (event.key) {
-      case "ArrowDown": next = (index + 1) % buttons.length; break;
-      case "ArrowUp": next = (index + buttons.length - 1) % buttons.length; break;
-      case "Home": next = 0; break;
-      case "End": next = buttons.length - 1; break;
-      default: return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    buttons[next]?.focus();
-  }
-
   return (
     <div className="ai-toolbar-menu" ref={root} onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
@@ -91,7 +66,7 @@ export function AiToolbarMenu({
       </button>
       {open ? (
         <div className="ai-toolbar-menu__popover is-glass-overlay" id={menuId}
-          aria-label="助手操作" role="menu" onKeyDown={handleMenuKeyDown}>
+          aria-label="助手操作" role="menu" onKeyDown={(event) => handleMenuNavigation(event, close)}>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => run(onOpenConfig)}>
             <Icon name="settings" height="16" width="16" />
             <span>模型配置</span>

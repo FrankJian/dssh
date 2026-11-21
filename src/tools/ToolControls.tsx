@@ -2,6 +2,18 @@ import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode
 import { Button } from "../ui/Button";
 import { Icon, type IconName } from "../ui/Icon";
 import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
+import { SettingsSwitch } from "../ui/SettingsSwitch";
+
+export function ToolSwitch({ label, checked, onChange, disabled }: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return <label className="tool-form__switch"><span>{label}</span>
+    <SettingsSwitch checked={checked} disabled={disabled} onChange={(event) => onChange(event.currentTarget.checked)} />
+  </label>;
+}
 
 export function ToolAction({ label, icon, ...props }: Omit<ComponentProps<typeof Button>, "children"> & {
   label: string;

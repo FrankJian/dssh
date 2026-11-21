@@ -2,8 +2,10 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import { createPortal } from 'react-dom';
 import type { SshProfile } from '../models';
 import { Icon } from '../ui/Icon';
+import { handleMenuNavigation, dismissMenu } from '../ui/menuNavigation';
 import { IconButton } from '../ui/IconButton';
 import { SelectMenu } from '../ui/SelectMenu';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import { ConnectionAddress } from '../ssh/ConnectionAddress';
 import { sftpConnectionIconName } from '../ssh/profileIcons';
 import { buildConnectionFolders, isInConnectionFolder, renamedConnectionFolderPath, type ConnectionFolderNode } from '../ssh/connectionFolders';
@@ -42,6 +44,8 @@ export function SftpConnectionSidebar({profiles, selectedId, loading, error, ope
     document.addEventListener('pointerdown',outside); window.addEventListener('resize',close);
     return ()=>{document.removeEventListener('pointerdown',outside);window.removeEventListener('resize',close);};
   },[menu]);
+  function closeMenu() { dismissMenu(() => setMenu(null), triggerRef.current); }
+
   function showMenu(target:Target,element:HTMLElement,x:number,y:number) {
     triggerRef.current=element;
     setMenu({target,x:Math.max(8,Math.min(x,window.innerWidth-236)),y:Math.max(8,Math.min(y,window.innerHeight-224))});
@@ -90,10 +94,22 @@ export function SftpConnectionSidebar({profiles, selectedId, loading, error, ope
     </div>
     <div className="sftp-library__filters">
       <SelectMenu ariaLabel="SFTP 来源" value={source} onChange={value=>setSource(value as SftpSource)} options={[{value:'all',label:'全部来源'},{value:'ssh',label:'来自 SSH'},{value:'sftp',label:'独立 SFTP'}]}/>
-      <div className="sftp-library__views" role="group" aria-label="SFTP 分组方式">
-        {([{id:'folder',label:'目录分组',icon:'folder'},{id:'tag',label:'标签分组',icon:'tag'},{id:'list',label:'平铺列表',icon:'connections'}] as const).map(option=><IconButton key={option.id} label={option.label} aria-pressed={view===option.id} active={view===option.id}
-          onClick={()=>{setView(option.id);setSelectedGroup({kind:'folder',value:''});}}><Icon name={option.icon} width="14" height="14"/></IconButton>)}
-      </div>
+      <SegmentedControl
+        label="SFTP 分组方式"
+        className="segmented-control--icons"
+        value={view}
+        onChange={(next) => {
+          setView(next);
+          setSelectedGroup({ kind: 'folder', value: '' });
+        }}
+        options={([
+          { value: 'folder', label: '目录分组', icon: 'folder' },
+          { value: 'tag', label: '标签分组', icon: 'tag' },
+          { value: 'list', label: '平铺列表', icon: 'connections' },
+        ] as const).map(({ value, label, icon }) => ({
+          value, label, content: <Icon name={icon} width="16" height="16" />,
+        }))}
+      />
     </div>
     <div className="sftp-library__content">
       {error?<p className="form-errors" role="alert">{error}</p>:null}
@@ -109,16 +125,16 @@ export function SftpConnectionSidebar({profiles, selectedId, loading, error, ope
     </div>
     <footer className="sftp-library__footer"><span>{query||source!=='all'?`${filtered.length} / ${profiles.length}`:profiles.length} 个连接</span><span>点击打开文件</span></footer>
     {menu?createPortal(<div className="context-menu is-glass-overlay" role="menu" aria-label="SFTP 连接操作" ref={menuRef} style={{left:menu.x,top:menu.y}}
-      onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();setMenu(null);triggerRef.current?.focus();}else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const items=Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button')??[]);const index=items.indexOf(document.activeElement as HTMLButtonElement);items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}}}>
+      onKeyDown={event=>handleMenuNavigation(event,closeMenu)}>
       {target?.kind==='profile'?<>
-        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);onOpen(target.profile);}}><Icon name="serverFolder"/>打开 SFTP</button>
-        {!openSshProfileIds.has(target.profile.id) ? <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);onOpenTerminal(target.profile);}}><Icon name="terminalTool"/>打开 SSH 终端</button> : null}
-        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);onEdit(target.profile);}}><Icon name="edit"/>编辑 {target.profile.connectionType==='sftp'?'SFTP':'SSH'} 配置</button>
-        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);onClone(target.profile);}}><Icon name="copy"/>克隆连接</button>
-        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);onDelete(target.profile);}}><Icon name="trash"/>删除共享配置</button>
+        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();onOpen(target.profile);}}><Icon name="serverFolder"/>打开 SFTP</button>
+        {!openSshProfileIds.has(target.profile.id) ? <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();onOpenTerminal(target.profile);}}><Icon name="terminalTool"/>打开 SSH 终端</button> : null}
+        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();onEdit(target.profile);}}><Icon name="edit"/>编辑 {target.profile.connectionType==='sftp'?'SFTP':'SSH'} 配置</button>
+        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();onClone(target.profile);}}><Icon name="copy"/>克隆连接</button>
+        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();onDelete(target.profile);}}><Icon name="trash"/>删除共享配置</button>
       </>:target?<>
-        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);create(target);}}><Icon name="plus"/>在此新建 SFTP</button>
-        {target.value?<button className="context-menu__item" role="menuitem" type="button" onClick={()=>{setMenu(null);setRenaming(target);}}><Icon name="edit"/>重命名{target.kind==='folder'?'目录':'标签'}</button>:null}
+        <button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();create(target);}}><Icon name="plus"/>在此新建 SFTP</button>
+        {target.value?<button className="context-menu__item" role="menuitem" type="button" onClick={()=>{closeMenu();setRenaming(target);}}><Icon name="edit"/>重命名{target.kind==='folder'?'目录':'标签'}</button>:null}
       </>:null}
     </div>,document.body):null}
     {renaming?.kind==='folder'?<RenameFolderDialog path={renaming.value} count={profiles.filter(profile=>isInConnectionFolder(profile,renaming.value)).length} onClose={()=>{setRenaming(null);triggerRef.current?.focus();}}

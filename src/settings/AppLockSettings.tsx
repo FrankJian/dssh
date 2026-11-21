@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import type { AppLockStatus, UpdateAppLockSettingsRequest } from "../services/appLockService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface AppLockSettingsProps {
   status: AppLockStatus | null;
@@ -114,6 +115,7 @@ interface AppLockPasswordDialogProps {
 }
 
 function AppLockPasswordDialog({ busy, mode, onCancel, onSubmit }: AppLockPasswordDialogProps) {
+  const dialogRef = useDialogFocus();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -146,10 +148,12 @@ function AppLockPasswordDialog({ busy, mode, onCancel, onSubmit }: AppLockPasswo
   return (
     <div className="profile-editor-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         aria-label={changingPassword ? "修改锁屏密码" : "关闭锁屏"}
         aria-modal="true"
         className="config-password"
         role="dialog"
+        onKeyDown={(event) => { if (event.key === "Escape" && !busy && !event.defaultPrevented) onCancel(); }}
       >
         <header className="config-password__header">
           <h3>{changingPassword ? "修改锁屏密码" : "确认关闭锁屏"}</h3>

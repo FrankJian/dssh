@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { appPaletteContrast, appPaletteTokens, normalizeAppPaletteColor } from "./appPalette.ts";
+
+test("destructive button text remains readable in both appearances and hover states", () => {
+  const css = readFileSync(new URL("./global.css", import.meta.url), "utf8");
+  for (const selector of [/:root\s*\{([\s\S]*?)\n\}/, /:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/]) {
+    const block = css.match(selector)?.[1];
+    assert.ok(block, "appearance token block exists");
+    const tokens = Object.fromEntries([...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]));
+    for (const background of ["--btn-danger-bg", "--btn-danger-bg-hover"]) {
+      assert.ok(appPaletteContrast(tokens["--btn-danger-fg"], tokens[background]) >= 4.5, `${selector}: ${background}`);
+    }
+  }
+});
 
 test("custom palette accepts only normalized RGB hex values", () => {
   assert.equal(normalizeAppPaletteColor(" #AbC "), "#aabbcc");

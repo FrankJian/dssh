@@ -6,6 +6,8 @@ import { DEFAULT_TERMINAL_SCHEME_ID } from "../terminal/themes/presets";
 import { applyTerminalBackgroundOverride, TERMINAL_MINIMUM_CONTRAST_RATIO, toXtermTheme } from "../terminal/themes/resolve";
 import type { CustomTerminalScheme, TerminalColorField, TerminalColors, TerminalThemeKind } from "../terminal/themes/types";
 import { Button } from "../ui/Button";
+import { Dialog } from "../ui/Dialog";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { SelectMenu, type SelectMenuOption } from "../ui/SelectMenu";
 import {
   cloneColors,
@@ -30,7 +32,7 @@ import "@xterm/xterm/css/xterm.css";
 interface TerminalColorSettingsProps {
   fontFamily: string;
   fontSize: number;
-  onCloseGuardChange?: (guard: () => boolean) => void;
+  onCloseGuardChange?: (guard: (proceed: () => void) => void) => void;
 }
 
 interface SchemeDraft {
@@ -70,10 +72,6 @@ function isDirty(draft: SchemeDraft) {
   return draft.name !== draft.initialName || draft.kind !== draft.initialKind || JSON.stringify(draft.colors) !== JSON.stringify(draft.initialColors);
 }
 
-function confirmDiscard(draft: SchemeDraft | null) {
-  return !draft || !isDirty(draft) || window.confirm("放弃未保存的配色修改？");
-}
-
 export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange }: TerminalColorSettingsProps) {
   const store = useTerminalTheme();
   const schemes = getTerminalSchemes(store.preferences);
@@ -85,6 +83,12 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
   const [draftError, setDraftError] = useState<string | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(() => new Set());
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    kind: "discard" | "delete" | "reset";
+    label?: string;
+    proceed: () => void;
+  } | null>(null);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
   const previewBaseColors = draft?.colors ?? active.colors;
   const previewColors = applyTerminalBackgroundOverride(previewBaseColors, store.preferences.backgroundOverrides[draft?.kind ?? active.kind]);
   const effectiveBackground = getActiveTerminalColors(store.preferences).background;
@@ -112,54 +116,64 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
   }
 
   useEffect(() => {
-    onCloseGuardChange?.(() => confirmDiscard(draft));
-    return () => onCloseGuardChange?.(() => true);
+    onCloseGuardChange?.((proceed) => requestDiscard(proceed));
+    return () => onCloseGuardChange?.((proceed) => proceed());
   }, [draft, onCloseGuardChange]);
 
+  function requestDiscard(proceed: () => void) {
+    if (draft && isDirty(draft)) {
+      setConfirmationError(null);
+      setConfirmation({ kind: "discard", proceed });
+    } else proceed();
+  }
+
   function startDraft(schemeId: string, copy: boolean) {
-    const source = schemes.find((scheme) => scheme.id === schemeId);
-    if (!source) return;
-    if (!confirmDiscard(draft)) return;
-    const colors = cloneColors(source.colors);
-    const custom = !copy && "sourcePresetId" in source ? source as CustomTerminalScheme : null;
-    const requestedName = `${source.name} 自定义`;
-    const existingNames = new Set(store.preferences.customSchemes.map((scheme) => scheme.name.toLocaleLowerCase()));
-    let copyName = requestedName;
-    let suffix = 2;
-    while (copy && existingNames.has(copyName.toLocaleLowerCase())) copyName = `${requestedName} ${suffix++}`;
-    setDraft({
-      ...(custom ? { id: custom.id } : {}),
-      name: copy ? copyName : source.name,
-      kind: source.kind,
-      sourcePresetId: custom?.sourcePresetId ?? source.id,
-      baseColors: custom ? cloneColors(custom.baseColors) : cloneColors(colors),
-      colors,
-      initialName: copy ? copyName : source.name,
-      initialKind: source.kind,
-      initialColors: cloneColors(colors),
+    requestDiscard(() => {
+      const source = schemes.find((scheme) => scheme.id === schemeId);
+      if (!source) return;
+      const colors = cloneColors(source.colors);
+      const custom = !copy && "sourcePresetId" in source ? source as CustomTerminalScheme : null;
+      const requestedName = `${source.name} 自定义`;
+      const existingNames = new Set(store.preferences.customSchemes.map((scheme) => scheme.name.toLocaleLowerCase()));
+      let copyName = requestedName;
+      let suffix = 2;
+      while (copy && existingNames.has(copyName.toLocaleLowerCase())) copyName = `${requestedName} ${suffix++}`;
+      setDraft({
+        ...(custom ? { id: custom.id } : {}),
+        name: copy ? copyName : source.name,
+        kind: source.kind,
+        sourcePresetId: custom?.sourcePresetId ?? source.id,
+        baseColors: custom ? cloneColors(custom.baseColors) : cloneColors(colors),
+        colors,
+        initialName: copy ? copyName : source.name,
+        initialKind: source.kind,
+        initialColors: cloneColors(colors),
+      });
+      setDraftError(null);
+      setInvalidFields(new Set());
     });
-    setDraftError(null);
-    setInvalidFields(new Set());
   }
 
   function handleSelectScheme(id: string) {
-    if (!confirmDiscard(draft)) return;
-    setDraft(null);
-    setDraftError(null);
-    setInvalidFields(new Set());
-    try {
-      selectTerminalScheme(id);
-      setEditorError(null);
-    } catch (error) {
-      setEditorError(error instanceof Error ? error.message : String(error));
-    }
+    requestDiscard(() => {
+      setDraft(null);
+      setDraftError(null);
+      setInvalidFields(new Set());
+      try {
+        selectTerminalScheme(id);
+        setEditorError(null);
+      } catch (error) {
+        setEditorError(error instanceof Error ? error.message : String(error));
+      }
+    });
   }
 
   function cancelDraft() {
-    if (!confirmDiscard(draft)) return;
-    setDraft(null);
-    setDraftError(null);
-    setInvalidFields(new Set());
+    requestDiscard(() => {
+      setDraft(null);
+      setDraftError(null);
+      setInvalidFields(new Set());
+    });
   }
 
   function saveDraft() {
@@ -184,13 +198,11 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
 
   function deleteActiveScheme() {
     if (!("sourcePresetId" in active)) return;
-    if (!window.confirm(`删除自定义配色“${active.name}”？此操作无法撤销。`)) return;
-    try {
+    setConfirmationError(null);
+    setConfirmation({ kind: "delete", label: active.name, proceed: () => {
       deleteCustomTerminalScheme(active.id);
       setEditorError(null);
-    } catch (error) {
-      setEditorError(error instanceof Error ? error.message : String(error));
-    }
+    } });
   }
 
   function resetColorsToBase() {
@@ -283,15 +295,17 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
       <div className="terminal-color-settings__actions">
         <Button
           disabled={active.id === (appearanceKind === "light" ? "builtin:graphite-light" : DEFAULT_TERMINAL_SCHEME_ID)}
-          onClick={() => {
-            if (!confirmDiscard(draft)) return;
-            setDraft(null);
-            try {
-              restoreDefaultTerminalScheme();
-              setEditorError(null);
-            } catch (error) {
-              setEditorError(error instanceof Error ? error.message : String(error));
-            }
+          onClick={(event) => {
+            event.currentTarget.focus({ preventScroll: true });
+            requestDiscard(() => {
+              setDraft(null);
+              try {
+                restoreDefaultTerminalScheme();
+                setEditorError(null);
+              } catch (error) {
+                setEditorError(error instanceof Error ? error.message : String(error));
+              }
+            });
           }}
           variant="ghost"
         >
@@ -299,12 +313,12 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
         </Button>
         {"sourcePresetId" in active ? (
           <>
-            <Button onClick={() => startDraft(active.id, false)} variant="secondary">编辑</Button>
-            <Button onClick={() => startDraft(active.id, true)} variant="ghost">复制并编辑</Button>
-            <Button onClick={deleteActiveScheme} variant="ghost">删除</Button>
+            <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); startDraft(active.id, false); }} variant="secondary">编辑</Button>
+            <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); startDraft(active.id, true); }} variant="ghost">复制并编辑</Button>
+            <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); deleteActiveScheme(); }} variant="ghost">删除</Button>
           </>
         ) : (
-          <Button onClick={() => startDraft(active.id, true)} variant="secondary">复制并编辑</Button>
+          <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); startDraft(active.id, true); }} variant="secondary">复制并编辑</Button>
         )}
       </div>
 
@@ -313,14 +327,13 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
         <div className="terminal-color-settings__error" role="alert">
           <span>{store.storageError}</span>
           <Button
-            onClick={() => {
-              if (!window.confirm("重置后将删除无法读取的配色记录，恢复 Graphite Dark。是否继续？")) return;
-              try {
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              setConfirmationError(null);
+              setConfirmation({ kind: "reset", proceed: () => {
                 resetInvalidTerminalThemeStorage();
                 setEditorError(null);
-              } catch (error) {
-                setEditorError(error instanceof Error ? error.message : String(error));
-              }
+              } });
             }}
             variant="ghost"
           >
@@ -355,17 +368,12 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
               value={draft.name}
             />
           </label>
-          <label className="settings-field">
+          <div className="settings-field">
             <span className="settings-field__label">方案类型</span>
-            <select
-              className="settings-number"
-              onChange={(event) => setDraft({ ...draft, kind: event.currentTarget.value as TerminalThemeKind })}
-              value={draft.kind}
-            >
-              <option value="dark">深色</option>
-              <option value="light">浅色</option>
-            </select>
-          </label>
+            <SegmentedControl label="方案类型" value={draft.kind}
+              options={[{ value: "dark", label: "深色" }, { value: "light", label: "浅色" }]}
+              onChange={(kind) => setDraft({ ...draft, kind })} />
+          </div>
           <div className="terminal-color-editor__fields">
             {basicFields.map(({ field, label }) => (
               <ColorField
@@ -418,11 +426,33 @@ export function TerminalColorSettings({ fontFamily, fontSize, onCloseGuardChange
           <div className="terminal-color-settings__actions">
             <Button onClick={resetColorsToBase} variant="ghost">恢复副本初始颜色</Button>
             <span className="terminal-color-settings__spacer" />
-            <Button onClick={cancelDraft} variant="secondary">取消</Button>
+            <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); cancelDraft(); }} variant="secondary">取消</Button>
             <Button disabled={invalidFields.size > 0} onClick={saveDraft} variant="primary">保存并应用</Button>
           </div>
         </div>
       ) : null}
+      {confirmation ? <Dialog
+        title={confirmation.kind === "discard" ? "放弃配色修改？" : confirmation.kind === "delete" ? "删除自定义配色？" : "重置配色记录？"}
+        initialFocusSelector="[data-confirm-cancel]"
+        onClose={() => { setConfirmation(null); setConfirmationError(null); }}
+        footer={<>
+          <Button data-confirm-cancel onClick={() => { setConfirmation(null); setConfirmationError(null); }}>
+            {confirmation.kind === "discard" ? "继续编辑" : "取消"}
+          </Button>
+          <Button variant="danger" onClick={() => {
+            try {
+              confirmation.proceed();
+              setConfirmation(null);
+              setConfirmationError(null);
+            } catch (error) {
+              setConfirmationError(error instanceof Error ? error.message : String(error));
+            }
+          }}>{confirmation.kind === "discard" ? "放弃修改" : confirmation.kind === "delete" ? "删除配色" : "重置记录"}</Button>
+        </>}
+      >
+        <p>{confirmation.kind === "discard" ? "尚未保存的配色修改将被丢弃。" : confirmation.kind === "delete" ? `删除自定义配色“${confirmation.label}”？此操作无法撤销。` : "重置后将删除无法读取的配色记录，恢复 Graphite Dark。"}</p>
+        {confirmationError ? <div className="form-errors" role="alert">{confirmationError}</div> : null}
+      </Dialog> : null}
     </section>
   );
 }

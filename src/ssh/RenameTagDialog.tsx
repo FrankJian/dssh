@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface RenameTagDialogProps {
   tag: string;
@@ -11,6 +12,7 @@ interface RenameTagDialogProps {
 }
 
 export function RenameTagDialog({ tag, count, allTags, onRename, onClose }: RenameTagDialogProps) {
+  const dialogRef = useDialogFocus();
   const [name, setName] = useState(tag);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,18 +35,11 @@ export function RenameTagDialog({ tag, count, allTags, onRename, onClose }: Rena
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="ssh-delete-dialog" role="dialog" aria-modal="true" aria-label="重命名标签"
+      <section ref={dialogRef} className="ssh-delete-dialog" role="dialog" aria-modal="true" aria-label="重命名标签"
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.stopPropagation();
             if (!saving) onClose();
-          }
-          if (event.key === "Tab") {
-            const controls = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)")];
-            const first = controls[0];
-            const last = controls[controls.length - 1];
-            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
           }
         }}>
         <header className="profile-editor__topbar">

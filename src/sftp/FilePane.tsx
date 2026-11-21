@@ -10,8 +10,10 @@ import {
 import { relativeSearchPath, type FileSearchScope, type SearchProgress } from "./recursiveSearch";
 import type { RecursiveSearchStatus } from "./useRecursiveFileSearch";
 import { Icon } from "../ui/Icon";
+import { handleMenuNavigation, dismissMenu } from "../ui/menuNavigation";
 import { FileEntryIcon } from "./FileEntryIcon";
 import { IconButton } from "../ui/IconButton";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
 import { SelectMenu } from "../ui/SelectMenu";
 import { directoryBreadcrumbs } from "./browserPaths";
 import { usePathSuggestions } from "./usePathSuggestions";
@@ -111,6 +113,7 @@ export function FilePane(p: FilePaneProps) {
   const paneRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  function closeMenu() { dismissMenu(() => setMenu(null), menuTriggerRef.current); }
   const pathRef = useRef<HTMLInputElement>(null);
   const addressRef = useRef<HTMLDivElement>(null);
   const suggestionsId = useId();
@@ -301,7 +304,7 @@ export function FilePane(p: FilePaneProps) {
         }
       }}
     >
-      <header className="sftp-dual-browser__pane-header">
+      <WorkspaceToolbar label={`${title}文件`} className="sftp-dual-browser__pane-header" identity={
         <span
           className="sftp-dual-browser__identity"
           title={
@@ -329,7 +332,7 @@ export function FilePane(p: FilePaneProps) {
             </small>
           </span>
         </span>
-        <div>
+      }>
           {p.sourceAction}
           <IconButton disabled={locked} label={p.scopedRemoteRoot ? "返回授权目录" : "返回主目录"} onClick={p.onHome}>
             <Icon name="house" />
@@ -360,8 +363,7 @@ export function FilePane(p: FilePaneProps) {
           >
             <Icon name="search" />
           </IconButton>
-        </div>
-      </header>
+      </WorkspaceToolbar>
       <form
         className="sftp-dual-browser__path"
         onSubmit={(event) => {
@@ -814,38 +816,12 @@ export function FilePane(p: FilePaneProps) {
           onMouseDown={() => setMenu(null)}
           onKeyDown={(event) => {
             event.stopPropagation();
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setMenu(null);
-              menuTriggerRef.current?.focus();
-            } else if (
-              ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
-            ) {
-              event.preventDefault();
-              const items = Array.from(
-                menuRef.current?.querySelectorAll<HTMLButtonElement>(
-                  "button:not(:disabled)",
-                ) ?? [],
-              );
-              const index = items.findIndex(
-                (item) => item === document.activeElement,
-              );
-              const next =
-                event.key === "Home"
-                  ? 0
-                  : event.key === "End"
-                    ? items.length - 1
-                    : (index +
-                        (event.key === "ArrowDown" ? 1 : -1) +
-                        items.length) %
-                      items.length;
-              items[next]?.focus();
-            }
+            handleMenuNavigation(event, closeMenu);
           }}
         >
           <div
             ref={menuRef}
-            className="sftp-dual-browser__menu"
+            className="sftp-dual-browser__menu is-glass-overlay"
             role="menu"
             aria-label={`${title}文件操作`}
             style={{ left: menu.x, top: menu.y }}
@@ -855,8 +831,8 @@ export function FilePane(p: FilePaneProps) {
               role="menuitem"
               disabled={locked || selected.length !== 1}
               onClick={() => {
+                closeMenu();
                 p.onEnter(selected[0]);
-                setMenu(null);
               }}
             >
               打开 / 编辑
@@ -866,7 +842,7 @@ export function FilePane(p: FilePaneProps) {
                 role="menuitem"
                 disabled={mutationsLocked}
                 onClick={() => {
-                  setMenu(null);
+                  closeMenu();
                   p.onOpenFileList?.(selected[0].path);
                 }}
               >
@@ -878,8 +854,8 @@ export function FilePane(p: FilePaneProps) {
                 role="menuitem"
                 disabled={locked || selected.length !== 1}
                 onClick={() => {
+                  closeMenu();
                   p.onReveal(selected[0]);
-                  setMenu(null);
                 }}
               >
                 打开所在目录
@@ -889,8 +865,8 @@ export function FilePane(p: FilePaneProps) {
               role="menuitem"
               disabled={mutationsLocked || p.transferDisabled}
               onClick={() => {
+                closeMenu();
                 p.onTransfer();
-                setMenu(null);
               }}
             >
               {p.transferLabel ?? (p.side === "remote"
@@ -902,7 +878,7 @@ export function FilePane(p: FilePaneProps) {
                 role="menuitem"
                 disabled={mutationsLocked || !selected.length}
                 onClick={() => {
-                  setMenu(null);
+                  closeMenu();
                   p.onDownloadAs?.();
                 }}
               >
@@ -913,8 +889,8 @@ export function FilePane(p: FilePaneProps) {
               role="menuitem"
               disabled={mutationsLocked || selected.length !== 1}
               onClick={() => {
+                closeMenu();
                 p.onRename();
-                setMenu(null);
               }}
             >
               重命名 <kbd>F2</kbd>
@@ -922,8 +898,8 @@ export function FilePane(p: FilePaneProps) {
             <button
               role="menuitem"
               onClick={() => {
+                closeMenu();
                 p.onCopy();
-                setMenu(null);
               }}
             >
               复制路径
@@ -932,8 +908,8 @@ export function FilePane(p: FilePaneProps) {
               role="menuitem"
               disabled={mutationsLocked}
               onClick={() => {
+                closeMenu();
                 p.onDelete();
-                setMenu(null);
               }}
             >
               删除… <kbd>Del</kbd>

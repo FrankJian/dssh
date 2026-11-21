@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useDialogFocus } from "../rdp/useDialogFocus";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface AppLockScreenProps {
   locked: boolean;
@@ -31,8 +31,6 @@ function LockScreenBrand() {
   return <header className="app-lock-screen__brand">
     <span className="app-lock-screen__brand-mark"><Icon name="terminalTool" /></span>
     <span>Duo SSH</span>
-    <span className="app-lock-screen__brand-divider" aria-hidden="true" />
-    <span className="app-lock-screen__brand-caption">安全工作区</span>
   </header>;
 }
 
@@ -43,7 +41,38 @@ function LockedScreen({ onUnlock, leaving }: Pick<AppLockScreenProps, "onUnlock"
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const dialogRef = useDialogFocus();
+  const dialogRef = useDialogFocus<HTMLDialogElement>();
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Locking must cover native dialogs too; z-index cannot rise above the top layer.
+    const show = () => {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    };
+    const close = () => {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    };
+    show();
+    // A pending file operation can mount another dialog after locking.
+    // Re-raise the lock before that new top-layer surface can be painted.
+    const observer = new MutationObserver((records) => {
+      if (records.some(({ target }) => target instanceof Element && target !== dialog &&
+        target.tagName === "DIALOG" && target.hasAttribute("open"))) {
+        close();
+        show();
+      }
+    });
+    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
+    return () => {
+      observer.disconnect();
+      close();
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, []);
 
   useEffect(() => {
     if (!busy && !leaving) inputRef.current?.focus();
@@ -75,15 +104,13 @@ function LockedScreen({ onUnlock, leaving }: Pick<AppLockScreenProps, "onUnlock"
   }
 
   return (
-    <section ref={dialogRef} className={`app-lock-screen${leaving ? " is-unlocking" : ""}`} style={{ animationDuration: `${UNLOCK_FADE_MS}ms` }} role="dialog" aria-modal="true" aria-labelledby="app-lock-title" aria-describedby="app-lock-description">
+    <dialog ref={dialogRef} className={`app-lock-screen${leaving ? " is-unlocking" : ""}`} style={{ animationDuration: `${UNLOCK_FADE_MS}ms` }} role="dialog" aria-modal="true" aria-labelledby="app-lock-title"
+      onCancel={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
       <LockScreenBrand />
-      <div className="app-lock-screen__watermark" aria-hidden="true"><Icon name="lock" strokeWidth="1.5" /></div>
       <div className="app-lock-screen__content">
         <form className="app-lock-screen__dialog" onSubmit={submit} aria-busy={busy}>
           <div className="app-lock-screen__intro">
-            <span className="app-lock-screen__eyebrow">欢迎回来</span>
             <h1 id="app-lock-title">工作区已锁定</h1>
-            <p id="app-lock-description">输入锁屏密码，继续你的工作。</p>
           </div>
           <label className="app-lock-screen__field" htmlFor="app-lock-password">锁屏密码</label>
           <div className="app-lock-screen__input" data-invalid={Boolean(error)}>
@@ -113,14 +140,13 @@ function LockedScreen({ onUnlock, leaving }: Pick<AppLockScreenProps, "onUnlock"
           </div>
           <div id="app-lock-feedback" className="app-lock-screen__feedback">
             {error ? <p className="app-lock-screen__error" role="alert"><Icon name="info" height="14" width="14" /><span>{error}</span></p>
-              : <p className={capsLock ? "app-lock-screen__caps-lock" : "app-lock-screen__hint"} role="status">{capsLock ? "大写锁定已开启" : "按 Enter 即可解锁"}</p>}
+              : capsLock ? <p className="app-lock-screen__caps-lock" role="status">大写锁定已开启</p> : null}
           </div>
           <Button className="app-lock-screen__submit" variant="primary" disabled={busy || leaving || !password} type="submit">
-            <span>{busy ? "正在解锁…" : "解锁工作区"}</span><Icon name="arrowRight" height="16" width="16" />
+            <span>{busy ? "正在解锁…" : "解锁"}</span><Icon name="arrowRight" height="16" width="16" />
           </Button>
         </form>
       </div>
-      <footer className="app-lock-screen__footer"><Icon name="shield" height="14" width="14" /><span>工作区内容已隐藏</span></footer>
-    </section>
+    </dialog>
   );
 }

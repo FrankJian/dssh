@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { ImageExportTool } from "./TextImageTool";
-import { ToolSelect } from "./ToolControls";
+import { ToolSelect, ToolSwitch } from "./ToolControls";
 import { renderQrCode, wifiQrPayload, type WifiSecurity } from "./qrTools";
 
 const levels = [
@@ -40,9 +39,7 @@ export function WifiQrTool() {
                 maxLength={128} onChange={(event) => setPassword(event.target.value)} />
             </label>
           ) : null}
-          <label className="tool-form__switch">
-            <SettingsSwitch checked={hidden} onChange={(event) => setHidden(event.target.checked)} />隐藏网络
-          </label>
+          <ToolSwitch label="隐藏网络" checked={hidden} onChange={setHidden} />
         </>
       }
       render={(input) => renderQrCode(wifiQrPayload(input, password, security, hidden), "M")}

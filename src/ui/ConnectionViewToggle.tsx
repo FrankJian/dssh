@@ -1,4 +1,5 @@
 import { Icon } from "./Icon";
+import { SegmentedControl } from "./SegmentedControl";
 
 export type ConnectionViewMode = "grid" | "list" | "tree";
 
@@ -14,12 +15,15 @@ export function ConnectionViewToggle({ value, onChange, label = "视图" }: {
   onChange: (view: ConnectionViewMode) => void;
   label?: string;
 }) {
-  return <div className="session-manager__views" role="group" aria-label={label}>
-    {OPTIONS.map((option) => <button key={option.id} type="button"
-      className={`session-manager__view${value === option.id ? " is-active" : ""}`}
-      title={option.label} aria-label={option.label} aria-pressed={value === option.id}
-      onClick={() => onChange(option.id)}>
-      <Icon name={option.icon} height="15" width="15" />
-    </button>)}
-  </div>;
+  return <SegmentedControl
+    label={label}
+    className="segmented-control--icons"
+    value={value}
+    onChange={onChange}
+    options={OPTIONS.map((option) => ({
+      value: option.id,
+      label: option.label,
+      content: <Icon name={option.icon} height="16" width="16" />,
+    }))}
+  />;
 }

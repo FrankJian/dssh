@@ -90,6 +90,14 @@ pub struct TerminalOutputSubscription {
 pub enum TerminalStreamEvent {
     Output(TerminalOutputEvent),
     Status(TerminalStatusDelivery),
+    Paused(TerminalOutputPaused),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputPaused {
+    pub session_id: String,
+    pub subscription_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

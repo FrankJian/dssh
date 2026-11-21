@@ -24,6 +24,7 @@ import {
   type ProfileEditorMode,
 } from "./profileTypes";
 import { SSH_PROFILE_ICON_OPTIONS } from "./profileIcons";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface ProfileEditorProps {
   mode: ProfileEditorMode;
@@ -50,6 +51,7 @@ const CONNECTION_ROUTE_OPTIONS: readonly SelectMenuOption[] = [
 ];
 
 export function ProfileEditor({ allTags, initialTags, initialFolder, initialConnectionType = "ssh", mode, onClose, onSubmit, profile, onCreateRdp, onCreateSmb, onCreateJumpServer }: ProfileEditorProps) {
+  const dialogRef = useDialogFocus();
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     profile ? (mode === "create" ? profileToCloneDraft(profile) : profileToDraft(profile)) : { ...createEmptyProfileDraft(), connectionType: initialConnectionType, tags: [...(initialTags ?? [])], folder: initialFolder ?? "" },
   );
@@ -140,7 +142,8 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="profile-editor profile-editor--connection is-glass-overlay" aria-label={title}>
+      <section ref={dialogRef} className="profile-editor profile-editor--connection is-glass-overlay" role="dialog" aria-modal="true" aria-label={title}
+        onKeyDown={(event) => { if (event.key === "Escape" && !saving && !event.defaultPrevented) onClose(); }}>
         <header className="profile-editor__topbar">
           <h2>{title}</h2>
           <button
@@ -155,6 +158,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
         </header>
 
         <form className="profile-form profile-form--connection" onSubmit={handleSubmit}>
+          <div className="profile-form__scroll">
           {errors.length > 0 ? (
             <div className="form-errors" role="alert">
               {errors.map((error) => (
@@ -177,28 +181,8 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
                   }))}
                   value={connectionType}
                 />
-                <small className="profile-form__hint">SFTP 默认打开文件管理，也可主动打开 SSH 终端。</small>
               </label>
             ) : null}
-
-            <fieldset className="profile-icon-picker">
-              <legend>连接图标</legend>
-              <div aria-label="连接图标" className="profile-icon-picker__options" role="group">
-                {SSH_PROFILE_ICON_OPTIONS.map((option) => (
-                  <button
-                    aria-pressed={draft.icon === option.id}
-                    className={`profile-icon-picker__option${draft.icon === option.id ? " is-selected" : ""}`}
-                    key={option.id}
-                    onClick={() => updateDraft("icon", option.id)}
-                    title={option.label}
-                    type="button"
-                  >
-                    <Icon name={option.icon} height="18" width="18" />
-                    <span>{option.label}</span>
-                  </button>
-                ))}
-              </div>
-            </fieldset>
 
             <label className="field">
               <span>名称</span>
@@ -209,23 +193,47 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
               />
             </label>
 
-            <div className="field">
-              <span>分组（标签）</span>
-              <TagInput
-                onChange={(tags) => updateDraft("tags", tags)}
-                suggestions={allTags}
-                value={draft.tags}
-              />
-            </div>
+            <details className="profile-form__metadata">
+              <summary>图标、标签与描述</summary>
+              <div className="profile-form__metadata-content">
+                <fieldset className="profile-icon-picker">
+                  <legend>连接图标</legend>
+                  <div aria-label="连接图标" className="profile-icon-picker__options" role="group">
+                    {SSH_PROFILE_ICON_OPTIONS.map((option) => (
+                      <button
+                        aria-pressed={draft.icon === option.id}
+                        className={`profile-icon-picker__option${draft.icon === option.id ? " is-selected" : ""}`}
+                        key={option.id}
+                        onClick={() => updateDraft("icon", option.id)}
+                        title={option.label}
+                        type="button"
+                      >
+                        <Icon name={option.icon} height="18" width="18" />
+                        <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
 
-            <label className="field">
-              <span>描述</span>
-              <textarea
-                onChange={(event) => updateDraft("description", event.currentTarget.value)}
-                rows={3}
-                value={draft.description}
-              />
-            </label>
+                <div className="field">
+                  <span>分组（标签）</span>
+                  <TagInput
+                    onChange={(tags) => updateDraft("tags", tags)}
+                    suggestions={allTags}
+                    value={draft.tags}
+                  />
+                </div>
+
+                <label className="field">
+                  <span>描述</span>
+                  <textarea
+                    onChange={(event) => updateDraft("description", event.currentTarget.value)}
+                    rows={3}
+                    value={draft.description}
+                  />
+                </label>
+              </div>
+            </details>
 
 
           </aside>
@@ -333,6 +341,7 @@ export function ProfileEditor({ allTags, initialTags, initialFolder, initialConn
             )}
           </div>
 
+          </div>
           <footer className="profile-editor__footer">
             <Button disabled={saving} onClick={onClose} variant="ghost">
               取消

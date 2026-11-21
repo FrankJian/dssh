@@ -1,5 +1,5 @@
 import { SettingsSwitch } from "../ui/SettingsSwitch";
-import { getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
+import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { Update } from "@tauri-apps/plugin-updater";
@@ -16,7 +16,6 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 
 interface AppInfo {
-  name: string;
   version: string;
   tauriVersion: string;
 }
@@ -36,6 +35,7 @@ interface UpdateEndpointDiagnostic {
 }
 
 const ISSUE_TRACKER_URL = "https://github.com/FrankJian/dssh/issues";
+const APP_DISPLAY_NAME = "Duo SSH";
 
 function detectPlatform(): string {
   if (isMacOS) {
@@ -82,15 +82,15 @@ export function AboutSection() {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([getName(), getVersion(), getTauriVersion()])
-      .then(([name, version, tauriVersion]) => {
+    void Promise.all([getVersion(), getTauriVersion()])
+      .then(([version, tauriVersion]) => {
         if (!cancelled) {
-          setInfo({ name, version, tauriVersion });
+          setInfo({ version, tauriVersion });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setInfo({ name: "Duo SSH", version: "未知", tauriVersion: "未知" });
+          setInfo({ version: "未知", tauriVersion: "未知" });
         }
       });
     return () => {
@@ -106,7 +106,7 @@ export function AboutSection() {
 
   async function handleCopy() {
     const text = [
-      `${info?.name ?? "dssh"} ${info?.version ?? ""}`.trim(),
+      `${APP_DISPLAY_NAME} ${info?.version ?? ""}`.trim(),
       `Tauri ${info?.tauriVersion ?? ""}`.trim(),
       `平台 ${platform}`,
     ].join("\n");
@@ -192,7 +192,7 @@ export function AboutSection() {
         <div className="about-hero__identity">
           <img className="about-hero__logo" src="/icon.png" alt="" width={64} height={64} />
           <div className="about-hero__meta">
-            <h3 className="about-hero__name">{info?.name ?? "Duo SSH"}</h3>
+            <h3 className="about-hero__name">{APP_DISPLAY_NAME}</h3>
             <p className="about-hero__version">版本 <span>{info?.version ?? "…"}</span></p>
           </div>
         </div>

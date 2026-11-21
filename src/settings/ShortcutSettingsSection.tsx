@@ -21,6 +21,7 @@ function ShortcutRecorder({
   binding,
   definition,
   recording,
+  disabled,
   onChange,
   onStart,
   onStop,
@@ -28,18 +29,20 @@ function ShortcutRecorder({
   binding: ShortcutBinding;
   definition: ShortcutDefinition;
   recording: boolean;
+  disabled: boolean;
   onChange: (binding: ShortcutBinding) => void;
   onStart: () => void;
   onStop: () => void;
 }) {
   useEffect(() => {
-    if (!recording) return;
+    if (!recording || disabled) return;
 
     const record = (next: ShortcutBinding) => {
       onChange(next);
       onStop();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector(".app-lock-screen")) { onStop(); return; }
       if (definition.input !== "key") return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -47,6 +50,7 @@ function ShortcutRecorder({
       if (next) record(next);
     };
     const handleWheel = (event: WheelEvent) => {
+      if (document.querySelector(".app-lock-screen")) { onStop(); return; }
       if (definition.input !== "wheel") return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -62,12 +66,13 @@ function ShortcutRecorder({
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("wheel", handleWheel, true);
     };
-  }, [definition.input, onChange, onStop, recording]);
+  }, [definition.input, disabled, onChange, onStop, recording]);
 
   return (
     <button
       aria-label={`修改快捷键：${definition.label}，当前 ${formatShortcut(binding)}`}
       className={`shortcut-recorder${recording ? " is-recording" : ""}`}
+      disabled={disabled}
       onClick={onStart}
       title={recording
         ? definition.input === "wheel" ? "按住组合键并滚动鼠标滚轮" : "请按下新的快捷键组合"
@@ -92,11 +97,12 @@ const categoryColumns = [
   ["分屏", "终端"],
 ] as const;
 
-export function ShortcutSettingsSection() {
+export function ShortcutSettingsSection({ disabled = false }: { disabled?: boolean }) {
   const [bindings, setBindings] = useState(getShortcutBindings);
   const [message, setMessage] = useState<string | null>(null);
   const [recordingId, setRecordingId] = useState<ShortcutId | null>(null);
   const definitions = getShortcutDefinitions();
+  useEffect(() => { if (disabled) setRecordingId(null); }, [disabled]);
 
   function updateBinding(id: ShortcutId, binding: ShortcutBinding) {
     const conflict = findShortcutConflict(id, binding, bindings);
@@ -127,7 +133,7 @@ export function ShortcutSettingsSection() {
     <section className="settings-section" aria-label="快捷键设置">
       <div className="settings-section__head shortcuts-section__head">
         <h3>快捷键</h3>
-        <Button onClick={resetAll} title="恢复全部默认快捷键" variant="ghost">
+        <Button disabled={disabled} onClick={resetAll} title="恢复全部默认快捷键" variant="ghost">
           <Icon name="refresh" height="14" width="14" />
           <span>恢复默认</span>
         </Button>
@@ -153,6 +159,7 @@ export function ShortcutSettingsSection() {
                               binding={binding}
                               definition={definition}
                               recording={recordingId === definition.id}
+                              disabled={disabled}
                               onChange={(next) => updateBinding(definition.id, next)}
                               onStart={() => setRecordingId(definition.id)}
                               onStop={() => setRecordingId(null)}
@@ -160,6 +167,7 @@ export function ShortcutSettingsSection() {
                             <button
                               aria-label={`恢复默认快捷键：${definition.label}`}
                               className="shortcut-reset"
+                              disabled={disabled}
                               onClick={() => resetBinding(definition.id)}
                               title="恢复默认快捷键"
                               type="button"

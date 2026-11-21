@@ -1,6 +1,7 @@
 import { useDeferredValue, useMemo, useState } from "react";
 import emojiData from "unicode-emoji-json/data-by-emoji.json";
 import { Button } from "../ui/Button";
+import { SearchField } from "../ui/SearchField";
 import { copyToolText } from "../services/toolsService";
 import { ToolFeedback, ToolPanel } from "./ToolControls";
 
@@ -33,11 +34,8 @@ export default function EmojiTool() {
   return (
     <div className="tool-form">
       <div className="tool-form__toolbar">
-        <label className="tool-form__setting">
-          搜索 Emoji
-          <input className="tool-form__title-input" value={query} placeholder="英文名称或 Emoji"
-            onChange={(event) => { setQuery(event.target.value); setLimit(100); }} />
-        </label>
+        <SearchField label="搜索 Emoji" value={query} placeholder="英文名称或 Emoji"
+          onChange={(event) => { setQuery(event.target.value); setLimit(100); }} />
       </div>
       <ToolPanel label="选择并复制">
         {matches.length ? (

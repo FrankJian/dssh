@@ -3,6 +3,7 @@ import { useId, useRef, useState } from "react";
 import type { AiConnectionTestResult, AiProvider, AiProviderKind } from "../models/ai";
 import { listAiModels, testAiConnection } from "../services/aiService";
 import { Button } from "../ui/Button";
+import { Dialog } from "../ui/Dialog";
 import { SelectMenu } from "../ui/SelectMenu";
 import { AiModelCatalog, type AiModelCatalogHandle } from "./AiModelCatalog";
 import { Icon } from "../ui/Icon";
@@ -35,22 +36,37 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
   const [notice, setNotice] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<AiConnectionTestResult | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [confirmation, setConfirmation] = useState<
+    | { kind: "discard"; provider: AiProvider | null; onApplied?: () => void }
+    | { kind: "remove"; providerId: string; label: string }
+    | null
+  >(null);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
 
-  function edit(provider: AiProvider | null) {
-    if ((dirty || modelPending) && !window.confirm("放弃尚未保存的模型配置？")) return false;
+  function applyEdit(provider: AiProvider | null) {
     setDraft(provider ? { ...provider } : null);
     setDiscoveredModels([]); setModelPending(false); setModelEditorRevision((value) => value + 1);
     setDirty(false); setError(null); setNotice(null); setTestResult(null);
-    return true;
+  }
+  function edit(provider: AiProvider | null, onApplied?: () => void) {
+    if (busy) return;
+    if (dirty || modelPending) {
+      setConfirmationError(null);
+      setConfirmation({ kind: "discard", provider, onApplied });
+      return;
+    }
+    applyEdit(provider);
+    onApplied?.();
   }
 
   function addService() {
-    if (edit(createEmptyProvider())) previousServiceId.current = savedProvider?.id ?? null;
+    const previousId = savedProvider?.id ?? null;
+    edit(createEmptyProvider(), () => { previousServiceId.current = previousId; });
   }
 
   function cancelAddService() {
     const previous = providers.find((provider) => provider.id === previousServiceId.current);
-    if (edit(previous ?? null)) previousServiceId.current = null;
+    edit(previous ?? null, () => { previousServiceId.current = null; });
   }
   function patch(value: Partial<AiProvider>) {
     setDraft((previous) => {
@@ -105,13 +121,14 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
     } finally { setBusy(false); }
   }
   async function remove() {
-    if (!draft || !window.confirm(`删除“${draft.label}”及其已保存的 API 密钥？此操作无法撤销。`)) return;
-    setBusy(true); setError(null);
+    if (busy || confirmation?.kind !== "remove") return;
+    setBusy(true); setConfirmationError(null);
     try {
-      await aiConfig.removeProvider(draft.id);
+      await aiConfig.removeProvider(confirmation.providerId);
       setDraft(null); setDirty(false); setNotice(null); setTestResult(null);
       setDiscoveredModels([]); setModelPending(false);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "删除失败。"); }
+      setConfirmation(null);
+    } catch (cause) { setConfirmationError(cause instanceof Error ? cause.message : "删除失败。"); }
     finally { setBusy(false); }
   }
 
@@ -119,7 +136,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
     <section className="settings-section ai-settings" aria-label="AI 设置">
       <header className="settings-section__head ai-settings__heading">
         <h3>模型服务</h3>
-        <Button disabled={busy || addingService || !aiConfig.isReady} onClick={addService} variant="secondary">
+        <Button disabled={busy || addingService || !aiConfig.isReady} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); addService(); }} variant="secondary">
           <Icon name="plus" height="16" width="16" />添加服务
         </Button>
       </header>
@@ -137,7 +154,7 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
               <button type="button" key={provider.id} disabled={busy}
                 aria-pressed={draft?.id === provider.id}
                 className={`ai-settings__provider${draft?.id === provider.id ? " is-selected" : ""}`}
-                onClick={() => { if (draft?.id !== provider.id) edit(provider); }}>
+                onClick={(event) => { if (draft?.id !== provider.id) { event.currentTarget.focus({ preventScroll: true }); edit(provider); } }}>
                 <Icon name="server" height="16" width="16" />
                 <span title={provider.label}>{provider.label}</span>
                 <small>{provider.id === activeProviderId ? "当前使用 · " : ""}{provider.models.length} 个模型</small>
@@ -164,13 +181,12 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                 </div>
                 {presetId === "custom" ? <>
                 <label className="field">显示名称
-                  <input placeholder="自定义 API" value={draft.label} onChange={(e) => patch({ label: e.currentTarget.value })} />
+                  <input placeholder="输入服务名称" value={draft.label} onChange={(e) => patch({ label: e.currentTarget.value })} />
                 </label>
-                <label className="field">API 协议
-                  <select className="settings-select" value={draft.kind} onChange={(e) => patch({ kind: e.currentTarget.value as AiProviderKind })}>
-                    {API_PROTOCOLS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  </select>
-                </label>
+                <div className="field"><span>API 协议</span>
+                  <SelectMenu ariaLabel="API 协议" value={draft.kind} options={API_PROTOCOLS}
+                    onChange={(kind) => patch({ kind: kind as AiProviderKind })} />
+                </div>
                 <label className="field">API 地址
                   <input autoComplete="off" title="支持基础地址和完整接口地址，保留网关路径" placeholder="https://gateway.example.com/v1/" value={draft.baseUrl}
                     onChange={(e) => patch({ baseUrl: e.currentTarget.value, presetId: "custom" })} />
@@ -200,8 +216,12 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
                 <div className="ai-settings__actions">
                   <Button onClick={() => void save()} variant="primary">{busy && !testing ? "处理中…" : "保存配置"}</Button>
                   <Button onClick={() => void testConnection()} variant="secondary">{testing ? "测试中…" : "测试连接"}</Button>
-                  {addingService ? <Button onClick={cancelAddService} variant="ghost">取消</Button> : null}
-                  {savedProvider ? <Button className="ai-settings__remove" onClick={() => void remove()} variant="ghost">删除服务</Button> : null}
+                  {addingService ? <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); cancelAddService(); }} variant="ghost">取消</Button> : null}
+                  {savedProvider ? <Button className="ai-settings__remove" onClick={(event) => {
+                    event.currentTarget.focus({ preventScroll: true });
+                    setConfirmationError(null);
+                    setConfirmation({ kind: "remove", providerId: savedProvider.id, label: savedProvider.label });
+                  }} variant="ghost">删除服务</Button> : null}
                   <div className="ai-settings__feedback" aria-live="polite" aria-atomic="true">
                     {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
                     {testing ? <span className="settings-field__hint" role="status">正在测试默认模型连接，最长等待 30 秒…</span> : null}
@@ -262,6 +282,27 @@ export function AiSettingsSection({ aiConfig, assistantDock }: { aiConfig: AiCon
           </div>
         </details>
       </section>
+      {confirmation ? <Dialog
+        title={confirmation.kind === "discard" ? "放弃未保存的修改？" : "删除模型服务？"}
+        busy={busy}
+        initialFocusSelector="[data-confirm-cancel]"
+        onClose={() => { setConfirmation(null); setConfirmationError(null); }}
+        footer={<>
+          <Button data-confirm-cancel disabled={busy} onClick={() => { setConfirmation(null); setConfirmationError(null); }}>
+            {confirmation.kind === "discard" ? "继续编辑" : "取消"}
+          </Button>
+          <Button disabled={busy} variant="danger" onClick={() => {
+            if (confirmation.kind === "discard") {
+              applyEdit(confirmation.provider);
+              confirmation.onApplied?.();
+              setConfirmation(null);
+            } else void remove();
+          }}>{confirmation.kind === "discard" ? "放弃修改" : busy ? "删除中…" : "删除服务"}</Button>
+        </>}
+      >
+        <p>{confirmation.kind === "discard" ? "当前服务中尚未保存的配置将被丢弃。" : `删除“${confirmation.label}”及其已保存的 API 密钥？此操作无法撤销。`}</p>
+        {confirmationError ? <div className="form-errors" role="alert">{confirmationError}</div> : null}
+      </Dialog> : null}
     </section>
   );
 }

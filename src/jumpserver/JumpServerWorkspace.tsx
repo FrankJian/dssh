@@ -5,7 +5,8 @@ import type { JumpServerAccount, JumpServerAsset, JumpServerIdentity, JumpServer
 import { jumpServerIdentity, listJumpServerAccounts, listJumpServerAssets, listJumpServerNodes, logoutJumpServer, openJumpServerTerminal, openJumpServerSshGateway } from "../services/jumpserverService";
 import { Icon } from "../ui/Icon";
 import { Button } from "../ui/Button";
-import { useDialogFocus } from "../rdp/useDialogFocus";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import { ConnectionViewToggle, type ConnectionViewMode } from "../ui/ConnectionViewToggle";
 import { JumpServerLogin } from "./JumpServerLogin";
 import { JumpServerAssetViews } from "./JumpServerAssetViews";
@@ -29,12 +30,9 @@ export function JumpServerWorkspace({ profile, loading = false, error, onBack, o
   onTerminal: (session: TerminalSession) => Promise<void>;
 }) {
   return <section className="jumpserver" aria-label="JumpServer 资产工作台">
-    <header className="jumpserver__header">
+    <WorkspaceToolbar label="JumpServer 工作台" identity={<><Icon name="stackedHexagon" width="18" height="18" /><h1 title={profile?.name}>{profile?.name ?? "JumpServer"}</h1></>}>
       <Button variant="ghost" onClick={onBack}><Icon name="arrowLeft" width="16" height="16" />连接管理</Button>
-      <div className="jumpserver__heading"><h1 title={profile?.name}>{profile?.name ?? "JumpServer"}</h1>
-        {profile && <span>JumpServer</span>}
-      </div>
-    </header>
+    </WorkspaceToolbar>
     {error && <p className="jumpserver__error" role="alert">{error}</p>}
     {loading ? <p className="jumpserver__empty" role="status">正在加载连接…</p> : profile ?
       <Platform key={profile.id} profile={profile} onTerminal={onTerminal} onEdit={onEdit} onDelete={onDelete} /> :

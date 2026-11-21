@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { SettingsSwitch } from "../ui/SettingsSwitch";
-import { ToolNote, ToolSelect } from "./ToolControls";
+import { ToolNote, ToolSelect, ToolSwitch } from "./ToolControls";
 import { TextTool } from "./ToolForm";
 import { basicAuth, inspectJwt, jsonToCsv, parseToolUrl } from "./webDataTools";
 import {
@@ -158,10 +157,7 @@ export function ListConverterTool() {
           <>
             <SeparatorSelect label="输入分隔符" value={from} onChange={setFrom} />
             <SeparatorSelect label="输出分隔符" value={to} onChange={setTo} />
-            <label className="tool-form__switch">
-              <SettingsSwitch checked={unique} onChange={(event) => setUnique(event.target.checked)} />
-              去重
-            </label>
+            <ToolSwitch label="去重" checked={unique} onChange={setUnique} />
           </>
         }
       />

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import { Icon } from "../ui/Icon";
 import { AiSettingsSection } from "./AiSettingsSection";
 import type { AiConfig } from "./useAiConfig";
@@ -11,19 +11,12 @@ interface AiConfigModalProps {
 }
 
 export function AiConfigModal({ aiConfig, assistantDock, onClose }: AiConfigModalProps) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  const dialogRef = useDialogFocus();
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="settings-window ai-config-window" aria-label="AI 模型配置">
+      <section ref={dialogRef} className="settings-window ai-config-window" role="dialog" aria-modal="true" aria-label="AI 模型配置"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); onClose(); } }}>
         <header className="settings-window__header">
           <h2>AI 模型配置</h2>
           <button aria-label="关闭" className="icon-button" onClick={onClose} type="button">

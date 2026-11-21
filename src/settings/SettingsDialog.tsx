@@ -1,3 +1,5 @@
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import { isActivityId } from "../app/navigationPreferences";
 import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { BrowserLinkSettings } from "./BrowserLinkSettings";
@@ -13,6 +15,7 @@ import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
 import { AppPaletteSettings } from "./AppPaletteSettings";
 import { TerminalCursorSettings } from "./TerminalCursorSettings";
+import { TerminalScrollbackSettings } from "./TerminalScrollbackSettings";
 import {
   clampCommandHistoryLimit,
   clearCommandHistory,
@@ -312,10 +315,11 @@ export function SettingsDialog({
   const [dialogBusy, setDialogBusy] = useState(false);
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [isDraggingWindow, setIsDraggingWindow] = useState(false);
-  const windowRef = useRef<HTMLElement>(null);
-  const terminalDraftGuardRef = useRef<() => boolean>(() => true);
+  const windowRef = useDialogFocus();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const terminalDraftGuardRef = useRef<(proceed: () => void) => void>((proceed) => proceed());
   const requestClose = useCallback(() => {
-    if (terminalDraftGuardRef.current()) onClose();
+    terminalDraftGuardRef.current(onClose);
   }, [onClose]);
   const fontOptions = useMemo(
     () => buildFontOptions(systemFontFamilies, [fontFamily, editorSettings.fontFamily]),
@@ -323,14 +327,9 @@ export function SettingsDialog({
   );
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        requestClose();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [requestClose]);
+    contentRef.current?.scrollTo({ top: 0 });
+    windowRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [category, windowRef]);
 
   useEffect(() => {
     let cancelled = false;
@@ -525,16 +524,21 @@ export function SettingsDialog({
     <div className="profile-editor-backdrop settings-window-backdrop" role="presentation">
       <section
         aria-label="设置"
+        role="dialog"
+        aria-modal="true"
         className={`settings-window is-glass-overlay${isDraggingWindow ? " is-dragging" : ""}`}
         ref={windowRef}
         style={{ transform: `translate(${windowOffset.x}px, ${windowOffset.y}px)` }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !event.defaultPrevented && (event.target as HTMLElement).closest('[role="dialog"]') === event.currentTarget) requestClose();
+        }}
       >
         <header className="settings-window__header" onPointerDown={beginWindowDrag} title="拖动以移动窗口">
           <h2>设置</h2>
           <button
             aria-label="关闭设置"
             className="icon-button"
-            onClick={requestClose}
+            onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); requestClose(); }}
             type="button"
           >
             <Icon name="close" height="16" width="16" />
@@ -545,11 +549,13 @@ export function SettingsDialog({
           <nav className="settings-nav" aria-label="设置分类">
             {visibleCategories.map((item) => (
               <button
-                aria-current={category === item.id}
+                aria-current={category === item.id ? "page" : undefined}
                 className={`settings-nav__item ${category === item.id ? "is-active" : ""}`.trim()}
                 key={item.id}
-                onClick={() => {
-                  if (terminalDraftGuardRef.current()) setCategory(item.id);
+                onClick={(event) => {
+                  if (category === item.id) return;
+                  event.currentTarget.focus({ preventScroll: true });
+                  terminalDraftGuardRef.current(() => setCategory(item.id));
                 }}
                 type="button"
               >
@@ -559,7 +565,7 @@ export function SettingsDialog({
             ))}
           </nav>
 
-          <div className="settings-content">
+          <div ref={contentRef} className="settings-content">
             {category === "appearance" ? (
               <section className="settings-section appearance-settings" aria-label="外观">
                 <div className="appearance-settings__top">
@@ -567,22 +573,16 @@ export function SettingsDialog({
                     <div className="settings-section__head">
                       <h3>主题</h3>
                     </div>
-                    <div className="settings-theme" role="group" aria-label="应用主题">
-                      {themeOptions.map((option) => (
-                        <button
-                          aria-pressed={themeMode === option.mode}
-                          className={`settings-theme__option ${
-                            themeMode === option.mode ? "is-active" : ""
-                          }`.trim()}
-                          key={option.mode}
-                          onClick={() => onThemeChange(option.mode)}
-                          type="button"
-                        >
-                          <Icon name={option.icon} height="18" width="18" />
-                          <span>{option.label}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      label="应用主题"
+                      value={themeMode}
+                      onChange={onThemeChange}
+                      options={themeOptions.map((option) => ({
+                        value: option.mode,
+                        label: option.label,
+                        content: <><Icon name={option.icon} height="16" width="16" /><span>{option.label}</span></>,
+                      }))}
+                    />
                   </section>
                   <AppPaletteSettings color={appPaletteColor} onChange={onAppPaletteColorChange} />
                 </div>
@@ -708,6 +708,7 @@ export function SettingsDialog({
                 <TerminalCursorSettings />
 
                   </div>
+                <TerminalScrollbackSettings />
                 </div>
                 <div className="terminal-settings__panel" role="tabpanel" id="terminal-preferences-interaction" aria-labelledby="terminal-preferences-tab-interaction" hidden={terminalSection !== "interaction"}>
                 <section className="terminal-settings__group" aria-label="终端交互设置">
@@ -941,7 +942,7 @@ export function SettingsDialog({
               </section>
             ) : null}
 
-            {category === "shortcuts" ? <ShortcutSettingsSection /> : null}
+            {category === "shortcuts" ? <ShortcutSettingsSection disabled={appLockStatus?.locked ?? false} /> : null}
 
             {category === "security" ? (
               <AppLockSettings status={appLockStatus} onSave={onAppLockSettingsChange} />
@@ -987,8 +988,7 @@ export function SettingsDialog({
                 <div className="settings-section__head">
                   <h3>配置文件</h3>
                   <p>
-                    下方为脱敏预览，密码与密钥已隐藏（显示为 ******）。导出会用密码加密为单个文件，
-                    导入时需输入同一密码解密。复制的也是脱敏内容。
+                    预览与复制均已脱敏。导出文件使用密码加密，导入时需用同一密码解密。
                   </p>
                 </div>
                 <div className="settings-config__actions">

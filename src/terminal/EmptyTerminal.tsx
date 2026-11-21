@@ -91,15 +91,12 @@ export function EmptyTerminal({
   return (
     <div className={`terminal-empty terminal-empty--${mode}`}>
       <div className="terminal-empty__panel">
-        <span className="terminal-empty__eyebrow">{isHome ? "安全连接" : "终端"}</span>
-        <h1>{isHome ? "管理你的 SSH 连接" : "终端会话已启动"}</h1>
-        <p>{isHome
-          ? "在左侧 SSH 配置中创建连接，或稍后直接进入本地终端。所有配置会保存在本地。"
-          : "每个标签页都是独立的终端会话。切换标签不会中断连接，关闭标签会结束对应会话。"}</p>
+        <h1>{isHome ? "连接与终端" : "终端会话已启动"}</h1>
+        {!isHome ? <p>每个标签页都是独立的终端会话。切换标签不会中断连接，关闭标签会结束对应会话。</p> : null}
         {isHome ? (
           <div className="terminal-empty__actions">
-            <Button onClick={onCreateProfile} variant="primary">新建 SSH 配置</Button>
-            <Button onClick={onStartLocalSession} variant="ghost">稍后导入</Button>
+            <Button onClick={onCreateProfile} variant="primary"><Icon name="plus" height="15" width="15" />新建 SSH 连接</Button>
+            {onStartLocalSession ? <Button onClick={onStartLocalSession} variant="ghost"><Icon name="terminalTool" height="15" width="15" />本地终端</Button> : null}
           </div>
         ) : null}
       </div>

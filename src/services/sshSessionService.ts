@@ -39,7 +39,8 @@ export interface TerminalOutputSubscription {
 }
 
 export type TerminalStreamEvent = (TerminalOutputEvent & { type: "output" })
-  | (TerminalStatusEvent & { type: "status"; subscriptionId: string });
+  | (TerminalStatusEvent & { type: "status"; subscriptionId: string })
+  | { type: "paused"; sessionId: string; subscriptionId: string };
 
 export interface TerminalInputEvent {
   sessionId: string;
@@ -91,6 +92,10 @@ export function subscribeTerminalOutput(sessionId: string, subscriptionId: strin
 
 export function unsubscribeTerminalOutput(sessionId: string, subscriptionId: string) {
   return invokeCommand<void>("unsubscribe_terminal_output", { sessionId, subscriptionId });
+}
+
+export function acknowledgeTerminalOutput(sessionId: string, subscriptionId: string, endOffset: number) {
+  return invokeCommand<void>("acknowledge_terminal_output", { sessionId, subscriptionId, endOffset });
 }
 
 export function startSshSession(request: StartSshSessionRequest) {

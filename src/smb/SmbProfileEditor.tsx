@@ -7,7 +7,7 @@ import { normalizeConnectionFolder } from "../ssh/connectionFolders";
 import { TagInput } from "../ssh/TagInput";
 import { Icon } from "../ui/Icon";
 import { Button } from "../ui/Button";
-import { useDialogFocus } from "../rdp/useDialogFocus";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import "./smbEditor.css";
 
 interface Props {
@@ -45,7 +45,7 @@ export function SmbProfileEditor({ profile, clone, initialTags, initialFolder, a
   return <div className="profile-editor-backdrop" role="presentation">
     <section ref={dialogRef} className="profile-editor is-glass-overlay smb-editor" role="dialog" aria-modal="true"
       aria-labelledby={titleId}
-      onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
+      onKeyDown={(event) => { if (event.key === "Escape" && !busy && !event.defaultPrevented) onClose(); }}>
       <header className="profile-editor__topbar smb-editor__header">
         <div className="smb-editor__heading">
           <Icon name="folder" width="18" height="18" />

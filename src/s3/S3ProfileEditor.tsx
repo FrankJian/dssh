@@ -3,6 +3,8 @@ import type { S3Profile } from "../models";
 import { testS3Connection, testSavedS3Profile } from "../services/s3Service";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { SettingsSwitch } from "../ui/SettingsSwitch";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import {
   createEmptyS3ProfileDraft,
   s3ProfileToDraft,
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export function S3ProfileEditor({ mode, profile, onClose, onSubmit }: Props) {
+  const dialogRef = useDialogFocus();
   const [draft, setDraft] = useState(() =>
     profile ? s3ProfileToDraft(profile) : createEmptyS3ProfileDraft(),
   );
@@ -135,66 +138,71 @@ export function S3ProfileEditor({ mode, profile, onClose, onSubmit }: Props) {
   const title = mode === "create" ? "新建 S3 配置" : "编辑 S3 配置";
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="profile-editor profile-editor--s3 is-glass-overlay" aria-label={title}>
+      <section ref={dialogRef} className="profile-editor profile-editor--s3 is-glass-overlay" role="dialog" aria-modal="true" aria-label={title}
+        onKeyDown={(event) => { if (event.key === "Escape" && !saving && !testing && !event.defaultPrevented) onClose(); }}>
         <header className="profile-editor__topbar">
           <h2>{title}</h2>
-          <button className="icon-button" aria-label="关闭编辑器" onClick={onClose} type="button">
+          <button className="icon-button" aria-label="关闭编辑器" disabled={saving || testing} onClick={onClose} type="button">
             <Icon name="close" />
           </button>
         </header>
         <form className="profile-form profile-form--s3" onSubmit={submit}>
           <div className="profile-form__scroll">
-            {error ? <div className="form-errors">{error}</div> : null}
-            <div className="profile-form__section-title">连接</div>
-            <div className="form-grid">
+            {error ? <div className="form-errors" role="alert">{error}</div> : null}
+            <fieldset className="form-section">
+              <legend>连接</legend>
+              <div className="form-grid">
+                <label className="field">
+                  <span>配置名称</span>
+                  <input autoFocus value={draft.name} onChange={(e) => update("name", e.currentTarget.value)} />
+                </label>
+                <label className="field">
+                  <span>加密</span>
+                  <select
+                    value={draft.useTls ? "tls" : "none"}
+                    onChange={(event) => update("useTls", event.currentTarget.value === "tls")}
+                  >
+                    <option value="tls">TLS/SSL 隐式加密</option>
+                    <option value="none">不加密（仅限可信内网）</option>
+                  </select>
+                </label>
+              </div>
+              <div className="form-grid">
+                <label className="field">
+                  <span>主机名</span>
+                  <input
+                    placeholder="s3.amazonaws.com"
+                    value={draft.host}
+                    onChange={(e) => update("host", e.currentTarget.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>端口号</span>
+                  <input
+                    inputMode="numeric"
+                    value={draft.port}
+                    onChange={(e) => update("port", e.currentTarget.value)}
+                  />
+                </label>
+              </div>
+            </fieldset>
+            <fieldset className="form-section">
+              <legend>访问凭据</legend>
+              <div className="form-grid">
+                <label className="field">
+                  <span>Access Key ID</span>
+                  <input value={draft.accessKeyId} onChange={(e) => update("accessKeyId", e.currentTarget.value)} />
+                </label>
+                <label className="field">
+                  <span>{mode === "create" ? "Secret Access Key" : "Secret Access Key（留空保持不变）"}</span>
+                  <input type="password" value={draft.secretAccessKey} onChange={(e) => update("secretAccessKey", e.currentTarget.value)} />
+                </label>
+              </div>
               <label className="field">
-                <span>配置名称</span>
-                <input autoFocus value={draft.name} onChange={(e) => update("name", e.currentTarget.value)} />
+                <span>Session Token（可选）</span>
+                <input type="password" value={draft.sessionToken} onChange={(e) => update("sessionToken", e.currentTarget.value)} />
               </label>
-              <label className="field">
-                <span>加密</span>
-                <select
-                  value={draft.useTls ? "tls" : "none"}
-                  onChange={(event) => update("useTls", event.currentTarget.value === "tls")}
-                >
-                  <option value="tls">TLS/SSL 隐式加密</option>
-                  <option value="none">不加密（仅限可信内网）</option>
-                </select>
-              </label>
-            </div>
-            <div className="profile-form__section-title">凭据</div>
-            <div className="form-grid">
-              <label className="field">
-                <span>主机名</span>
-                <input
-                  placeholder="s3.amazonaws.com"
-                  value={draft.host}
-                  onChange={(e) => update("host", e.currentTarget.value)}
-                />
-              </label>
-              <label className="field">
-                <span>端口号</span>
-                <input
-                  inputMode="numeric"
-                  value={draft.port}
-                  onChange={(e) => update("port", e.currentTarget.value)}
-                />
-              </label>
-            </div>
-            <div className="form-grid">
-              <label className="field">
-                <span>Access Key ID</span>
-                <input value={draft.accessKeyId} onChange={(e) => update("accessKeyId", e.currentTarget.value)} />
-              </label>
-              <label className="field">
-                <span>{mode === "create" ? "Secret Access Key" : "Secret Access Key（留空保持不变）"}</span>
-                <input type="password" value={draft.secretAccessKey} onChange={(e) => update("secretAccessKey", e.currentTarget.value)} />
-              </label>
-            </div>
-            <label className="field">
-              <span>Session Token（可选）</span>
-              <input type="password" value={draft.sessionToken} onChange={(e) => update("sessionToken", e.currentTarget.value)} />
-            </label>
+            </fieldset>
             <details className="profile-form__advanced">
               <summary>高级选项</summary>
               <div className="profile-form__advanced-content">
@@ -235,14 +243,14 @@ export function S3ProfileEditor({ mode, profile, onClose, onSubmit }: Props) {
                   <span>描述</span>
                   <textarea rows={2} value={draft.description} onChange={(e) => update("description", e.currentTarget.value)} />
                 </label>
-                <div className="profile-form__toggles">
-                  <label className="checkbox-field">
-                    <input type="checkbox" checked={draft.forcePathStyle} onChange={(e) => update("forcePathStyle", e.currentTarget.checked)} />
-                    强制使用路径式访问
+                <div className="settings-control-group">
+                  <label className="settings-control-row">
+                    <span>强制使用路径式访问</span>
+                    <SettingsSwitch checked={draft.forcePathStyle} onChange={(e) => update("forcePathStyle", e.currentTarget.checked)} />
                   </label>
-                  <label className="checkbox-field">
-                    <input type="checkbox" checked={draft.favorite} onChange={(e) => update("favorite", e.currentTarget.checked)} />
-                    设为收藏
+                  <label className="settings-control-row">
+                    <span>设为收藏</span>
+                    <SettingsSwitch checked={draft.favorite} onChange={(e) => update("favorite", e.currentTarget.checked)} />
                   </label>
                 </div>
               </div>
@@ -257,7 +265,7 @@ export function S3ProfileEditor({ mode, profile, onClose, onSubmit }: Props) {
             >
               {testing ? "测试中..." : testSucceeded ? <><Icon name="check" height="15" width="15" />连接成功</> : "测试连接"}
             </Button>
-            <Button onClick={onClose} variant="secondary">取消</Button>
+            <Button disabled={saving || testing} onClick={onClose} variant="secondary">取消</Button>
             <Button type="submit" variant="primary" disabled={saving}>
               {saving ? "保存中..." : "保存"}
             </Button>

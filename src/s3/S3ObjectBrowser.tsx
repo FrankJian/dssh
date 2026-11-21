@@ -1,4 +1,8 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
+import { Breadcrumbs } from "../ui/Breadcrumbs";
+import { S3ObjectActionDialog, type S3ObjectAction } from "./S3ObjectActionDialog";
+import { handleMenuNavigation, dismissMenu } from "../ui/menuNavigation";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -186,6 +190,8 @@ export function S3ObjectBrowser({
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [isLoading, setIsLoading] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [objectAction, setObjectAction] = useState<S3ObjectAction | null>(null);
+  useEffect(() => setObjectAction(null), [profile?.id, bucket, prefix]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
@@ -210,6 +216,8 @@ export function S3ObjectBrowser({
   >({});
   const panelRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuTriggerRef = useRef<HTMLElement | null>(null);
+  function closeMenu() { dismissMenu(() => setMenu(null), menuTriggerRef.current); }
   const noticeTimerRef = useRef<number | null>(null);
   const [transferProgresses, setTransferProgresses] = useState<Record<string, TransferProgress>>(
     {},
@@ -410,11 +418,12 @@ export function S3ObjectBrowser({
   }
 
   function openEntryContextMenu(
-    event: { clientX: number; clientY: number; preventDefault: () => void },
+    event: { clientX: number; clientY: number; currentTarget: HTMLElement; preventDefault: () => void },
     entry: SelectedEntry,
     object?: S3Object,
   ) {
     event.preventDefault();
+    menuTriggerRef.current = event.currentTarget;
     if (!selectedEntries[entry.key]) {
       setSelectedEntries({ [entry.key]: entry });
       setSelectionAnchorKey(entry.key);
@@ -544,6 +553,7 @@ export function S3ObjectBrowser({
 
   useLayoutEffect(() => {
     if (!menu || !menuRef.current) return;
+    menuRef.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     const margin = 8;
     const rect = menuRef.current.getBoundingClientRect();
     const x = Math.max(margin, Math.min(menu.x, window.innerWidth - rect.width - margin));
@@ -724,10 +734,7 @@ export function S3ObjectBrowser({
 
   async function handleCreateFolder() {
     if (!profile || !bucket) return;
-    const name = window.prompt("文件夹名称");
-    if (!name?.trim()) return;
-    const clean = name.trim().replace(/^\/+|\/+$/g, "");
-    await run(() => createS3Folder(profile.id, bucket, `${prefix}${clean}/`));
+    setObjectAction({ kind: "folder", profileId: profile.id, bucket, prefix });
   }
 
   async function confirmDeleteTargets() {
@@ -773,25 +780,7 @@ export function S3ObjectBrowser({
 
   async function handleCopyMove(key: string, isFolder: boolean, move: boolean) {
     if (!profile) return;
-    const destination = window.prompt(
-      move ? "移动到（格式：bucket/key）" : "复制到（格式：bucket/key）",
-      `${bucket}/${key}`,
-    );
-    if (!destination) return;
-    const slash = destination.indexOf("/");
-    if (slash < 1 || slash === destination.length - 1) {
-      setError("目标必须使用 bucket/key 格式。");
-      return;
-    }
-    const destinationBucket = destination.slice(0, slash);
-    const destinationKey = destination.slice(slash + 1);
-    await run(async () => {
-      if (move) {
-        await moveS3Object(profile.id, bucket, key, destinationBucket, destinationKey, isFolder);
-      } else {
-        await copyS3Object(profile.id, bucket, key, destinationBucket, destinationKey, isFolder);
-      }
-    });
+    setObjectAction({ kind: move ? "move" : "copy", profileId: profile.id, bucket, prefix, key, isFolder });
   }
 
   function parentPrefix() {
@@ -811,8 +800,7 @@ export function S3ObjectBrowser({
       ref={panelRef}
     >
       {isDragOver ? <div className="s3-browser__dropzone">松开鼠标上传到当前前缀</div> : null}
-      <header className="s3-browser__toolbar">
-        <div className="s3-browser__actions">
+      <WorkspaceToolbar label="S3 浏览器" identity={<><Icon name="bucket" width="18" height="18" /><strong title={profile.name}>{profile.name}</strong></>}>
           <IconButton
             disabled={!bucket || !objects.length || isCheckingPublicAccess}
             label="检查当前文件的公开访问状态"
@@ -825,16 +813,15 @@ export function S3ObjectBrowser({
           <IconButton disabled={!bucket || isBusy} label="新建文件夹" onClick={() => void handleCreateFolder()}><Icon name="folderPlus" /></IconButton>
           <IconButton disabled={!bucket} label="上传" onClick={() => void handleUpload()}><Icon name="upload" /></IconButton>
           <IconButton disabled={!selectedItems.length || isBusy} label={`删除选中项目（${selectedItems.length}）`} onClick={() => setDeleteTargets(selectedItems)}><Icon name="trash" /></IconButton>
-        </div>
-      </header>
-      <div className="s3-browser__path">
-        <button className="s3-crumb" onClick={() => { setBucket(""); setPrefix(""); setObjects([]); setPrefixes([]); setSelectedEntries({}); setSelectionAnchorKey(null); }} type="button">存储桶</button>
-        {bucket ? <><span>/</span><button className="s3-crumb" onClick={() => void loadObjects(bucket, "")} type="button">{bucket}</button></> : null}
-        {prefix.split("/").filter(Boolean).map((part, index, parts) => {
+      </WorkspaceToolbar>
+      <Breadcrumbs label="S3 路径" items={[
+        { id: "buckets", label: "存储桶", onClick: () => { setBucket(""); setPrefix(""); setObjects([]); setPrefixes([]); setSelectedEntries({}); setSelectionAnchorKey(null); } },
+        ...(bucket ? [{ id: "bucket", label: bucket, onClick: () => void loadObjects(bucket, "") }] : []),
+        ...prefix.split("/").filter(Boolean).map((part, index, parts) => {
           const target = `${parts.slice(0, index + 1).join("/")}/`;
-          return <span className="s3-crumb-wrap" key={target}><span>/</span><button className="s3-crumb" onClick={() => void loadObjects(bucket, target)} type="button">{part}</button></span>;
-        })}
-      </div>
+          return { id: target, label: part, onClick: () => void loadObjects(bucket, target) };
+        }),
+      ]} />
       {error ? <div className="s3-browser__error">{error}</div> : null}
       {notice ? <div className="s3-browser__notice">{notice}</div> : null}
       {activeTransfers.map(([transferId, progress]) => (
@@ -933,15 +920,16 @@ export function S3ObjectBrowser({
       {isBusy ? <div className="s3-browser__status">正在执行操作...</div> : null}
       {activeUploadCount ? <div className="s3-browser__status">正在上传 {activeUploadCount} 个文件{uploadQueueRef.current.length ? `，${uploadQueueRef.current.length} 个等待中` : ""}...</div> : null}
       {menu ? (
-        <div className="context-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()} role="menu">
-          <button className="context-menu__item" onClick={() => { const target = menu; setMenu(null); if (target.isFolder) void handleDownloadFolder(target.key); else if (target.object) void handleDownload(target.object); }} type="button"><Icon name="download" />{menu.isFolder ? "递归下载" : "下载"}</button>
-          {menu.isFolder ? <button className="context-menu__item" onClick={() => { setCleanupPrefix(menu.key); setMenu(null); }} type="button"><Icon name="trash" />清理此目录</button> : null}
-          <button className="context-menu__item" onClick={() => { void navigator.clipboard.writeText(`s3://${bucket}/${menu.key}`); setMenu(null); }} type="button"><Icon name="copy" />复制 S3 URI</button>
-          {!menu.isFolder && menu.object ? <button className="context-menu__item" onClick={() => { const target = menu.object; setMenu(null); if (target) void copyPublicObjectUrl(target); }} type="button"><Icon name="externalWindow" />复制公开 HTTP 地址</button> : null}
-          <button className="context-menu__item" onClick={() => { const target = menu; setMenu(null); void handleCopyMove(target.key, target.isFolder, false); }} type="button"><Icon name="copy" />复制到...</button>
-          <button className="context-menu__item" onClick={() => { const target = menu; setMenu(null); void handleCopyMove(target.key, target.isFolder, true); }} type="button"><Icon name="forward" />移动到...</button>
-          {!menu.isFolder && menu.object ? <button className="context-menu__item" onClick={() => { setAclObject(menu.object ?? null); setMenu(null); }} type="button"><Icon name="shield" />设置 ACL</button> : null}
-          <button className="context-menu__item context-menu__item--danger" onClick={() => { const target = menu; setMenu(null); setDeleteTargets(selectedEntries[target.key] ? selectedItems : [{ key: target.key, isFolder: target.isFolder }]); }} type="button"><Icon name="trash" />删除</button>
+        <div className="context-menu is-glass-overlay" ref={menuRef} style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()} role="menu" aria-label="S3 对象操作"
+          onKeyDown={(event) => handleMenuNavigation(event, closeMenu)}>
+          <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu; closeMenu(); if (target.isFolder) void handleDownloadFolder(target.key); else if (target.object) void handleDownload(target.object); }} type="button"><Icon name="download" />{menu.isFolder ? "递归下载" : "下载"}</button>
+          {menu.isFolder ? <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu.key; closeMenu(); setCleanupPrefix(target); }} type="button"><Icon name="trash" />清理此目录</button> : null}
+          <button role="menuitem" className="context-menu__item" onClick={() => { void navigator.clipboard.writeText(`s3://${bucket}/${menu.key}`); closeMenu(); }} type="button"><Icon name="copy" />复制 S3 URI</button>
+          {!menu.isFolder && menu.object ? <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu.object; closeMenu(); if (target) void copyPublicObjectUrl(target); }} type="button"><Icon name="externalWindow" />复制公开 HTTP 地址</button> : null}
+          <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu; closeMenu(); void handleCopyMove(target.key, target.isFolder, false); }} type="button"><Icon name="copy" />复制到...</button>
+          <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu; closeMenu(); void handleCopyMove(target.key, target.isFolder, true); }} type="button"><Icon name="forward" />移动到...</button>
+          {!menu.isFolder && menu.object ? <button role="menuitem" className="context-menu__item" onClick={() => { const target = menu.object ?? null; closeMenu(); setAclObject(target); }} type="button"><Icon name="shield" />设置 ACL</button> : null}
+          <button role="menuitem" className="context-menu__item context-menu__item--danger" onClick={() => { const target = menu; closeMenu(); setDeleteTargets(selectedEntries[target.key] ? selectedItems : [{ key: target.key, isFolder: target.isFolder }]); }} type="button"><Icon name="trash" />删除</button>
         </div>
       ) : null}
       {aclObject ? (
@@ -979,6 +967,17 @@ export function S3ObjectBrowser({
           onSaveBookmark={handleSaveBookmark}
         />
       ) : null}
+      {objectAction ? <S3ObjectActionDialog action={objectAction} onClose={() => setObjectAction(null)} onSubmit={async (value) => {
+        const action = objectAction;
+        if (action.kind === "folder") await createS3Folder(action.profileId, action.bucket, `${action.prefix}${value}/`);
+        else {
+          const slash = value.indexOf("/");
+          const operation = action.kind === "move" ? moveS3Object : copyS3Object;
+          await operation(action.profileId, action.bucket, action.key, value.slice(0, slash), value.slice(slash + 1), action.isFolder);
+        }
+        directoryCache.current.clear();
+        await loadObjects(action.bucket, action.prefix);
+      }} /> : null}
       {deleteTargets ? (
         <DeleteS3ObjectsDialog
           folderCount={deleteTargets.filter((item) => item.isFolder).length}

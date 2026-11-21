@@ -32,10 +32,9 @@ use crate::{
     models::{
         ssh_profile::{AuthMethod, SshProfile, SshProxy},
         terminal::{
-            SessionStatus, TerminalOutputEvent, TerminalOutputSubscription, TerminalSession,
-            TerminalSessionKind, TerminalSize, TerminalStatusEvent, TerminalStreamEvent,
-            TerminalTransferConflictEvent, TerminalTransferPromptEvent,
-            TerminalTransferStatusEvent,
+            SessionStatus, TerminalOutputSubscription, TerminalSession, TerminalSessionKind,
+            TerminalSize, TerminalStatusEvent, TerminalStreamEvent, TerminalTransferConflictEvent,
+            TerminalTransferPromptEvent, TerminalTransferStatusEvent,
         },
     },
     ssh::auth_prompts::{SshAuthPrompt, SshAuthPromptManager},
@@ -1017,7 +1016,7 @@ impl SessionManager {
         session.status = event.status.clone();
         session.output_changed.notify_waiters();
         if !session.hidden()
-            && let Ok(delivery) = session.output_delivery.lock()
+            && let Ok(mut delivery) = session.output_delivery.lock()
         {
             delivery.send_status(event);
         }
@@ -1082,6 +1081,28 @@ impl SessionManager {
                 .lock()
                 .map_err(lock_error)?
                 .unsubscribe(window, subscription);
+        }
+        Ok(())
+    }
+
+    pub fn acknowledge_output(
+        &self,
+        session_id: &str,
+        window: &str,
+        token: &str,
+        end: u64,
+    ) -> AppResult<()> {
+        let delivery = self
+            .sessions
+            .lock()
+            .map_err(lock_error)?
+            .get(session_id)
+            .map(|s| s.output_delivery.clone());
+        if let Some(delivery) = delivery {
+            delivery
+                .lock()
+                .map_err(lock_error)?
+                .acknowledge(session_id, window, token, end)?;
         }
         Ok(())
     }
@@ -3966,24 +3987,13 @@ impl OutputSink {
             return;
         };
         output.append(&text);
-        let (start_offset, end_offset, targets) = delivery.record(text.len());
         drop(output);
         if let Some(signal) = &self.output_changed {
             signal.notify_waiters();
         }
-        for target in targets {
-            #[cfg(debug_assertions)]
-            output_metrics::record(text.len());
-            let _ = target
-                .channel
-                .send(TerminalStreamEvent::Output(TerminalOutputEvent {
-                    session_id: self.session_id.clone(),
-                    subscription_id: target.subscription_id,
-                    data: text.clone(),
-                    start_offset,
-                    end_offset,
-                }));
-        }
+        #[cfg(debug_assertions)]
+        output_metrics::record(text.len());
+        delivery.publish(&self.session_id, &text);
     }
 }
 
@@ -4534,6 +4544,33 @@ mod tests {
     }
 
     #[test]
+    fn output_overflow_does_not_prevent_interrupt_from_entering_the_pty_input_queue() {
+        let (mut handle, mut rx, _closed) = interactive_test_session();
+        handle
+            .subscribe_output(
+                "pty",
+                "main",
+                "stalled",
+                tauri::ipc::Channel::new(|_| Ok(())),
+                None,
+            )
+            .unwrap();
+        let sink = super::OutputSink {
+            session_id: "pty".into(),
+            output: handle.output.clone(),
+            output_changed: None,
+            pending: Arc::default(),
+            delivery: handle.output_delivery.clone(),
+        };
+        sink.push(&"x".repeat(5 * 1024 * 1024));
+        sink.flush();
+        queue_session_input(&mut handle, "\x03".into(), true).unwrap();
+        assert!(
+            matches!(rx.try_recv().unwrap(), SessionCommand::Input { data, interactive:true } if data == "\x03")
+        );
+    }
+
+    #[test]
     fn failed_checkpoint_resume_keeps_original_subscriber_and_valid_resume_joins_live_output() {
         let (handle, _rx, _closed) = interactive_test_session();
         let sink = super::OutputSink {
@@ -4565,6 +4602,20 @@ mod tests {
             .unwrap();
         sink.push(&"x".repeat(crate::ssh::retained_output::RETAINED_OUTPUT_BYTES + 1));
         sink.flush();
+        loop {
+            let end = events.lock().unwrap().last().unwrap()["endOffset"]
+                .as_u64()
+                .unwrap();
+            handle
+                .output_delivery
+                .lock()
+                .unwrap()
+                .acknowledge("pty", "main", "original", end)
+                .unwrap();
+            if end == handle.output_delivery.lock().unwrap().end_offset() {
+                break;
+            }
+        }
         let error = handle
             .subscribe_output(
                 "pty",

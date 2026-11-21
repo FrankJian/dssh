@@ -152,6 +152,7 @@ pub fn run() {
             commands::sessions::list_ssh_sessions,
             commands::sessions::read_ssh_session_output,
             commands::sessions::subscribe_terminal_output,
+            commands::sessions::acknowledge_terminal_output,
             commands::sessions::unsubscribe_terminal_output,
             commands::sessions::start_local_session,
             commands::sessions::start_ssh_session,

@@ -1,5 +1,6 @@
-import { useId, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { SettingsSwitch } from "../ui/SettingsSwitch";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import {
   getTerminalCursorPreferences,
   setTerminalCursorPreferences,
@@ -16,7 +17,6 @@ const cursorStyles: { value: TerminalCursorStyle; label: string }[] = [
 ];
 
 export function TerminalCursorSettings() {
-  const shapeGroupId = useId();
   const preferences = useSyncExternalStore(subscribeTerminalCursorPreferences, getTerminalCursorPreferences);
   const [error, setError] = useState<string | null>(null);
   function update(patch: Partial<TerminalCursorPreferences>) {
@@ -31,22 +31,21 @@ export function TerminalCursorSettings() {
     <section className="terminal-settings__group" aria-label="终端光标设置">
       <h4>光标</h4>
       <div className="settings-field">
-        <span className="settings-field__label" id={shapeGroupId}>形状</span>
-        <div className="terminal-cursor-shapes" role="radiogroup" aria-labelledby={shapeGroupId}>
-          {cursorStyles.map(({ value, label }) => (
-            <label className="terminal-cursor-shapes__option" key={value}>
-              <input
-                type="radio"
-                name={shapeGroupId}
-                value={value}
-                checked={preferences.cursorStyle === value}
-                onChange={() => update({ cursorStyle: value })}
-              />
+        <span className="settings-field__label">形状</span>
+        <SegmentedControl
+          label="终端光标形状"
+          className="segmented-control--cursor"
+          value={preferences.cursorStyle}
+          onChange={(cursorStyle) => update({ cursorStyle })}
+          options={cursorStyles.map(({ value, label }) => ({
+            value,
+            label,
+            content: <>
               <span className="terminal-cursor-shapes__glyph" data-shape={value} aria-hidden="true" />
               <span>{label}</span>
-            </label>
-          ))}
-        </div>
+            </>,
+          }))}
+        />
       </div>
       <label className="terminal-settings__toggle-row">
         <span><strong>光标闪烁</strong></span>

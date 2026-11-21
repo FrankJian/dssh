@@ -48,6 +48,7 @@ import {
   respondHostKeyPrompt,
   respondSshAuthPrompt,
   type HostKeyPromptEvent,
+  type HostKeyChangedEvent,
   type SshAuthPromptEvent,
 } from "../services/sshSessionService";
 import { HostToolsPanel } from "../hosttools/HostToolsPanel";
@@ -72,6 +73,7 @@ import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
 import { SessionTree, type SessionNode } from "../ssh/SessionTree";
 import { HostKeyPrompt } from "../ssh/HostKeyPrompt";
+import { HostKeyChangedDialog } from "../ssh/HostKeyChangedDialog";
 import { SshAuthPrompt } from "../ssh/SshAuthPrompt";
 import { useProfiles } from "../ssh/useProfiles";
 import { useRecentConnections } from "../ssh/useRecentConnections";
@@ -258,6 +260,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [hostKeyPrompts, setHostKeyPrompts] = useState<HostKeyPromptEvent[]>([]);
+  const [hostKeyChanges, setHostKeyChanges] = useState<HostKeyChangedEvent[]>([]);
   const [sshAuthPrompts, setSshAuthPrompts] = useState<SshAuthPromptEvent[]>([]);
   const cancelledAuthProfiles = useRef(new Set<string>());
   const [startupUpdate, setStartupUpdate] = useState<Update | null>(null);
@@ -481,7 +484,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     focusBrowserTab(id);
     setFileTreeSessionId(null);
     setActiveActivity("sessions");
-  });
+  }, Boolean(initialWorkspace && !initialState.sessionIds.length && !initialState.sftpTabs.length));
   // Keep the browser surface selected until focus reconciliation completes;
   // rendering a terminal during the removal event would steal keyboard focus.
   const isBrowserActive = activeBrowserId !== null;
@@ -952,12 +955,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     });
     const changedPromise = onHostKeyChanged(async (event) => {
       if (!await isPromptWindow()) return;
-      window.alert(
-        `⚠️ 主机密钥已变更：${event.host}:${event.port}\n\n` +
-          `已记录指纹：${event.storedFingerprint}\n` +
-          `本次指纹：${event.presentedFingerprint}\n\n` +
-          `连接已被拒绝。如果这是预期的变更（例如服务器重装），请在 known_hosts 中移除旧记录后重试。`,
-      );
+      setHostKeyChanges((current) => current.some((item) =>
+        item.host === event.host && item.port === event.port && item.storedFingerprint === event.storedFingerprint && item.presentedFingerprint === event.presentedFingerprint,
+      ) ? current : [...current, event]);
     });
     return () => {
       void promptPromise.then((unlisten) => unlisten());
@@ -1057,7 +1057,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     try {
       await toggleFavorite(profileId);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "更新收藏状态失败。");
+      toast(error instanceof Error ? error.message : "更新收藏状态失败。", "error");
     }
   }
 
@@ -2642,6 +2642,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       {isPaletteOpen ? (
         <CommandPalette items={buildPaletteItems()} onClose={() => setIsPaletteOpen(false)} />
       ) : null}
+      {hostKeyChanges.length > 0 ? <HostKeyChangedDialog
+        key={`${hostKeyChanges[0].host}:${hostKeyChanges[0].port}:${hostKeyChanges[0].presentedFingerprint}`}
+        event={hostKeyChanges[0]}
+        onClose={() => setHostKeyChanges((current) => current.slice(1))}
+      /> : null}
       {hostKeyPrompts.length > 0 ? (
         <HostKeyPrompt
           prompt={hostKeyPrompts[0]}

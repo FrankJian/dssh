@@ -1,0 +1,14 @@
+schema: spec-driven
+
+context: |
+  本项目用中文维护需求正文和评审说明，稳定路径和 capability 名使用英文 kebab-case。
+  当前行为在 openspec/specs；未实施行为通过独立 change 管理。docs/guides、architecture、verification、history 分别维护使用、实现、证据和历史。
+  docs/design.md 与 docs/design/interface-checklist.md 是所有编辑器与代理必须遵守的界面规则；不要把历史 Graphite 色值或固定布局当作新要求。
+  实现、发布与真实环境验收分开记录。保留未完成与部分完成状态，不以模拟测试或构建成功代替真实 SSH/原生窗口/两平台验收。
+rules:
+  proposal:
+    - 明确当前约定与未来增量，不把未实施功能描述为已支持。
+  specs:
+    - 每项要求有可验证场景；保留安全、兼容、授权和失败边界。
+  tasks:
+    - 每项任务写清完成验证；可选阶段显式标注，不因迁移勾选实现或实机验收。

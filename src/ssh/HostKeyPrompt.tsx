@@ -1,5 +1,7 @@
 import type { HostKeyPromptEvent } from "../services/sshSessionService";
 import { Icon } from "../ui/Icon";
+import { Button } from "../ui/Button";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface HostKeyPromptProps {
   prompt: HostKeyPromptEvent;
@@ -13,9 +15,11 @@ interface HostKeyPromptProps {
  * mismatch is rejected automatically (see HostKeyVerifier).
  */
 export function HostKeyPrompt({ prompt, onAccept, onReject }: HostKeyPromptProps) {
+  const dialogRef = useDialogFocus();
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="hostkey-dialog" role="dialog" aria-label="验证主机密钥">
+      <section ref={dialogRef} className="hostkey-dialog" role="dialog" aria-modal="true" aria-label="验证主机密钥"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); onReject(); } }}>
         <header className="hostkey-dialog__header">
           <Icon name="shield" height="16" width="16" />
           <h2>验证主机密钥</h2>
@@ -30,12 +34,12 @@ export function HostKeyPrompt({ prompt, onAccept, onReject }: HostKeyPromptProps
           </p>
         </div>
         <div className="hostkey-dialog__actions">
-          <button className="button" onClick={onReject} type="button">
+          <Button onClick={onReject} variant="secondary">
             拒绝
-          </button>
-          <button className="button button--primary" onClick={onAccept} type="button">
+          </Button>
+          <Button onClick={onAccept} variant="primary">
             信任并继续
-          </button>
+          </Button>
         </div>
       </section>
     </div>

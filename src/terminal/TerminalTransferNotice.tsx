@@ -29,7 +29,7 @@ export function TerminalTransferNotice({ transfers, onCancel }: TerminalTransfer
 
         return (
           <section
-            className={`terminal-transfer-notice${transfer.state === "failed" ? " is-error" : ""}`}
+            className={`terminal-transfer-notice is-glass-overlay${transfer.state === "failed" ? " is-error" : ""}`}
             key={transfer.detectionId}
           >
             <div className="terminal-transfer-notice__heading">

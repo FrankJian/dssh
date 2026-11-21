@@ -3,6 +3,7 @@ import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import type { AiModelConfig, AiReasoningLevel } from "../models/ai";
 import { AiReasoningLevels } from "./AiReasoningLevels";
 import { Button } from "../ui/Button";
+import { useConfirmation } from "../ui/useConfirmation";
 import { Icon } from "../ui/Icon";
 import { ComboBox } from "../ui/ComboBox";
 import { DEFAULT_MODEL_CONTEXT_WINDOW, DEFAULT_MODEL_MAX_OUTPUT_TOKENS, parseTokenCapacity, formatTokenCapacity, defaultReasoningLevels } from "./aiConfig";
@@ -36,6 +37,7 @@ export function AiModelCatalog({ ref, models, defaultModel, discovered, onChange
   const [entryOpen, setEntryOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { requestConfirmation, confirmationDialog } = useConfirmation();
   const pending = Boolean(editingId || id || displayName || contextWindow !== formatTokenCapacity(DEFAULT_MODEL_CONTEXT_WINDOW) || maxOutputTokens !== formatTokenCapacity(DEFAULT_MODEL_MAX_OUTPUT_TOKENS) || imageInput || reasoningEffort);
 
   useEffect(() => { onPendingChange(pending); }, [pending, onPendingChange]);
@@ -112,8 +114,12 @@ export function AiModelCatalog({ ref, models, defaultModel, discovered, onChange
                   {model.id === defaultModel ? <span className="settings-field__hint">默认</span> : (
                     <Button variant="ghost" onClick={() => onChange(models, model.id)} aria-label={`将 ${model.displayName} 设为默认`}>设为默认</Button>
                   )}
-                  <Button variant="ghost" aria-label={`编辑 ${model.displayName}`} onClick={() => {
-                    if (pending && !window.confirm("放弃当前尚未添加或保存的模型编辑？")) return;
+                  <Button variant="ghost" aria-label={`编辑 ${model.displayName}`} onClick={async (event) => {
+                    event.currentTarget.focus({ preventScroll: true });
+                    if (pending && !await requestConfirmation({
+                      title: "放弃模型编辑？", message: "当前尚未添加或保存的模型编辑将被丢弃。",
+                      confirmLabel: "放弃修改", cancelLabel: "继续编辑", destructive: true,
+                    })) return;
                     setId(model.id); setDisplayName(model.displayName); setContextWindow(formatTokenCapacity(model.contextWindow));
                     setMaxOutputTokens(formatTokenCapacity(model.maxOutputTokens)); setImageInput(model.inputTypes.includes("image")); setReasoningEffort(model.reasoningEffort); setReasoningLevels(model.reasoningLevels.length ? model.reasoningLevels.map((row) => ({ ...row })) : defaultReasoningLevels()); setExpanded(true);
                     setEditingId(model.id); setError(null);
@@ -139,7 +145,12 @@ export function AiModelCatalog({ ref, models, defaultModel, discovered, onChange
             <input aria-label="模型显示名称" value={displayName} onChange={(e) => setDisplayName(e.currentTarget.value)} placeholder="显示名称" />
             <button className="icon-button" type="button" aria-label={expanded ? "收起模型选项" : "展开模型选项"} aria-expanded={expanded}
               onClick={() => setExpanded((value) => !value)}><Icon name={expanded ? "chevron-down" : "chevron-right"} height="16" width="16" /></button>
-            <button className="icon-button" type="button" aria-label={models.length ? "关闭模型编辑" : "清空当前模型"} onClick={() => {
+            <button className="icon-button" type="button" aria-label={models.length ? "关闭模型编辑" : "清空当前模型"} onClick={async (event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              if (pending && !await requestConfirmation({
+                title: "放弃模型编辑？", message: "当前尚未添加或保存的模型编辑将被丢弃。",
+                confirmLabel: "放弃修改", cancelLabel: "继续编辑", destructive: true,
+              })) return;
               reset();
               setEntryOpen(false);
             }}>
@@ -185,6 +196,7 @@ export function AiModelCatalog({ ref, models, defaultModel, discovered, onChange
         {pending ? <span className="settings-field__hint">当前填写的模型会随配置一起保存，也可直接测试连接。</span> : null}
         {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
       </> : null}
+      {confirmationDialog}
     </section>
   );
 }

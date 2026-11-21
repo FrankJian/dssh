@@ -2,6 +2,8 @@ import { Suspense, useEffect, useId, useRef, useState } from "react";
 import { ToolAction } from "./ToolControls";
 import { IconButton } from "../ui/IconButton";
 import { Icon, type IconName } from "../ui/Icon";
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
 import { TOOL_CATALOG, type ToolId } from "./catalog";
 import "./tools.css";
 
@@ -21,9 +23,9 @@ const categoryIcons: Record<ToolCategory, IconName> = {
   "参考与计算": "gauge",
 };
 const filters = [
-  { id: "all", label: "全部工具", icon: "toolbox" },
-  { id: "favorites", label: "收藏", icon: "star" },
-  { id: "recent", label: "最近使用", icon: "clock" },
+  { id: "all", label: "全部工具" },
+  { id: "favorites", label: "收藏" },
+  { id: "recent", label: "最近使用" },
 ] as const;
 type Filter = typeof filters[number]["id"];
 interface ToolPreferences {
@@ -62,6 +64,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const searchRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const searchId = useId();
   const [searchHovered, setSearchHovered] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -70,6 +73,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
   const [collapsedCategories, setCollapsedCategories] = useState(loadCollapsedCategories);
   const [visited, setVisited] = useState<ToolId[]>([selected]);
   const [preferences, setPreferences] = useState(loadPreferences);
+  useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [selected]);
   if (active && !visited.includes(selected)) setVisited([...visited, selected]);
 
   useEffect(() => {
@@ -175,11 +179,15 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
                 {query ? <IconButton label="清除搜索" onClick={clearSearch}><Icon name="close" /></IconButton> : null}
               </div>
             </div>
-            <div className="tools-workspace__filters" role="group" aria-label="筛选工具">
-              {filters.map(({ id, label, icon }) => (
-                <ToolAction variant="ghost" key={id} label={label} icon={icon} aria-pressed={filter === id} onClick={() => setFilter(id)} />
-              ))}
-            </div>
+            <SegmentedControl
+              label="筛选工具"
+              value={filter}
+              onChange={setFilter}
+              options={filters.map(({ id, label }) => ({
+                value: id, label,
+                content: id === "all" ? "全部" : id === "recent" ? "最近" : label,
+              }))}
+            />
           </div>
           <div className="tools-workspace__groups">
             {!filtered.length ? <p className="tools-workspace__empty" role="status">{emptyMessage}</p>
@@ -215,19 +223,12 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
           </div>
         </nav>
         <div className="tools-workspace__main">
-          <div className="tools-workspace__body">
-            <header className="tools-workspace__heading">
-              <div className="tools-workspace__identity">
-                <div className="tools-workspace__symbol"><Icon name={categoryIcons[current.category]} /></div>
-                <div>
-                  <p>{current.category}</p>
-                  <h2>{current.label}</h2>
-                </div>
-              </div>
+            <WorkspaceToolbar label="工具" identity={<><Icon name={categoryIcons[current.category]} /><h2>{current.label}</h2></>}>
               <ToolAction variant="ghost" label={favorite ? "取消收藏" : "收藏工具"} icon="star" aria-pressed={favorite} onClick={toggleFavorite} />
-            </header>
+            </WorkspaceToolbar>
+          <div ref={contentRef} className="tools-workspace__body">
             {TOOL_CATALOG.filter((tool) => visited.includes(tool.id)).map(({ id, component: ToolPage }) => (
-              <div key={id} hidden={id !== selected}>
+              <div className="tools-workspace__page" key={id} hidden={id !== selected}>
                 <Suspense fallback={<p role="status">正在加载工具…</p>}>
                   <ToolPage />
                 </Suspense>

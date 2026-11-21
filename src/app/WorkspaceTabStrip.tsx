@@ -2,6 +2,7 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, us
 import { createPortal } from "react-dom";
 import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
+import { handleMenuNavigation } from "../ui/menuNavigation";
 
 export type WorkspaceTabKind = "ssh" | "local" | "sftp" | "browser";
 
@@ -393,17 +394,10 @@ export function WorkspaceTabStrip({
           aria-label="标签操作"
           className="context-menu is-glass-overlay"
           onContextMenu={(event) => event.preventDefault()}
-          onKeyDown={(event) => {
-            const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
-            const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-            const next = event.key === "ArrowDown" ? (index + 1) % buttons.length
-              : event.key === "ArrowUp" ? (index - 1 + buttons.length) % buttons.length
-              : event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : null;
-            if (next !== null) {
-              event.preventDefault();
-              buttons[next]?.focus();
-            }
-          }}
+          onKeyDown={(event) => handleMenuNavigation(event, () => {
+            setContextMenu(null);
+            menuTriggerRef.current?.focus();
+          })}
           ref={menuRef}
           role="menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}

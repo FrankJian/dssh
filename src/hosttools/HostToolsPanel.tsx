@@ -3,6 +3,10 @@ import type { HostTool, HostToolsSnapshot } from "../models/hosttools";
 import { hostToolsSnapshot } from "../services/hostToolsService";
 import { Icon } from "../ui/Icon";
 import type { IconName } from "../ui/Icon";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
+import { IconButton } from "../ui/IconButton";
+import { SelectMenu } from "../ui/SelectMenu";
+import { SegmentedControl } from "../ui/SegmentedControl";
 
 interface HostToolsPanelProps {
   /** SSH profile id of the active connection, or null when none / local. */
@@ -101,69 +105,29 @@ export function HostToolsPanel({ profileId, targetLabel, onClose }: HostToolsPan
 
   return (
     <section className="host-tools" aria-label="主机工具">
-      <div className="host-tools__header">
-        <div className="host-tools__title">
-          <Icon name="toolbox" height="16" width="16" />
-          <span className="host-tools__title-label">主机工具</span>
+      <WorkspaceToolbar label="主机工具" identity={<><Icon name="toolbox" width="18" height="18" /><strong>主机工具</strong></>}>
+        <IconButton label="刷新主机信息" disabled={!profileId || isLoading} onClick={() => void load()}><Icon name="refresh" width="16" height="16" /></IconButton>
+        <IconButton label="关闭主机工具" onClick={onClose}><Icon name="close" width="16" height="16" /></IconButton>
+      </WorkspaceToolbar>
+      <div className="host-tools__navigation">
+        <div className="host-tools__scope">
+          <span className="host-tools__target" title={targetLabel ?? undefined}>{targetLabel ?? "未连接主机"}</span>
+          <SelectMenu ariaLabel="定时刷新频率" value={String(refreshInterval)}
+            options={REFRESH_INTERVALS.map((interval) => ({ value: String(interval.value), label: interval.label }))}
+            onChange={(value) => setRefreshInterval(Number(value) as RefreshInterval)} />
         </div>
-        <div className="host-tools__head-actions">
-          {targetLabel ? <span className="host-tools__target">{targetLabel}</span> : null}
-          <button
-            className="host-tools__refresh"
-            onClick={() => void load()}
-            disabled={!profileId || isLoading}
-            title="刷新"
-            aria-label="刷新"
-            type="button"
-          >
-            <Icon name="refresh" height="15" width="15" />
-          </button>
-          <label className="host-tools__interval" title="定时刷新">
-            <Icon name="clock" height="15" width="15" />
-            <select
-              aria-label="定时刷新频率"
-              onChange={(event) => setRefreshInterval(Number(event.currentTarget.value) as RefreshInterval)}
-              value={refreshInterval}
-            >
-              {REFRESH_INTERVALS.map((interval) => (
-                <option key={interval.value} value={interval.value}>{interval.label}</option>
-              ))}
-            </select>
-          </label>
-          <button
-            aria-label="关闭主机工具"
-            className="host-tools__refresh"
-            onClick={onClose}
-            title="关闭"
-            type="button"
-          >
-            <Icon name="close" height="16" width="16" />
-          </button>
-        </div>
+        <SegmentedControl label="主机信息分类" value={tool} onChange={setTool} className="host-tools__categories"
+          options={TOOLS.map((item) => ({ value: item.id, label: item.label,
+            content: <><Icon name={item.icon} width="16" height="16" /><span>{item.label}</span></>,
+          }))} />
       </div>
 
-      <div className="host-tools__tabs" role="tablist">
-        {TOOLS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`host-tools__tab ${tool === item.id ? "is-active" : ""}`.trim()}
-            role="tab"
-            aria-selected={tool === item.id}
-            onClick={() => setTool(item.id)}
-          >
-            <Icon name={item.icon} height="15" width="15" />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="host-tools__body">
+      <div className="host-tools__body" key={tool}>
         {!profileId ? (
           <div className="host-tools__empty">
             <Icon name="unplug" height="26" width="26" />
             <p className="host-tools__empty-title">未选择活动 SSH 连接</p>
-            <p className="host-tools__empty-hint">连接一台主机（本地终端不支持主机工具）后，这里会显示它的实时状态。</p>
+            <p className="host-tools__empty-hint">本地终端不支持主机工具。</p>
           </div>
         ) : isLoading && !snapshot ? (
           <div className="host-tools__status">正在读取…</div>

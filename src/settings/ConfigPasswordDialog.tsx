@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface ConfigPasswordDialogProps {
   mode: "export" | "import";
@@ -17,6 +18,7 @@ export function ConfigPasswordDialog({
   onSubmit,
   onCancel,
 }: ConfigPasswordDialogProps) {
+  const dialogRef = useDialogFocus();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -42,10 +44,11 @@ export function ConfigPasswordDialog({
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="config-password" aria-label={isExport ? "设置导出密码" : "输入导入密码"}>
+      <section ref={dialogRef} className="config-password" role="dialog" aria-modal="true" aria-label={isExport ? "设置导出密码" : "输入导入密码"}
+        onKeyDown={(event) => { if (event.key === "Escape" && !busy && !event.defaultPrevented) onCancel(); }}>
         <header className="config-password__header">
           <h3>{isExport ? "设置导出密码" : "输入导入密码"}</h3>
-          <button aria-label="关闭" className="icon-button" onClick={onCancel} type="button">
+          <button aria-label="关闭" className="icon-button" disabled={busy} onClick={onCancel} type="button">
             <Icon name="close" height="16" width="16" />
           </button>
         </header>

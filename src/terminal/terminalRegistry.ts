@@ -1,4 +1,5 @@
 import { RESTORE_CURSOR } from "./terminalRecovery";
+import { getTerminalScrollback, subscribeTerminalScrollback } from "../settings/terminalScrollbackStore";
 import { openTerminalLink } from "../services/terminalLinkService";
 import { toast } from "../ui/ToastHost";
 import { FitAddon } from "@xterm/addon-fit";
@@ -115,9 +116,31 @@ interface RegistryEntry {
   dispose: () => void;
   transparent: boolean;
   applyCursor: () => void;
+  setOutputPaused: (resume: (() => Promise<void>) | null) => void;
+  replaceOutput: (data: string) => Promise<void>;
 }
 
 const instances = new Map<string, RegistryEntry>();
+const outputPauses = new Map<string, () => Promise<void>>();
+
+subscribeTerminalScrollback(() => {
+  const lines = getTerminalScrollback();
+  for (const entry of instances.values()) entry.handle.terminal.options.scrollback = lines;
+});
+
+export function showTerminalOutputPaused(sessionId: string, resume: () => Promise<void>) {
+  outputPauses.set(sessionId, resume);
+  instances.get(sessionId)?.setOutputPaused(resume);
+}
+
+export function clearTerminalOutputPaused(sessionId: string) {
+  outputPauses.delete(sessionId);
+  instances.get(sessionId)?.setOutputPaused(null);
+}
+
+export function replaceTerminalOutput(sessionId: string, data: string) {
+  return instances.get(sessionId)?.replaceOutput(data) ?? Promise.resolve();
+}
 
 subscribeTerminalThemeStore(() => {
   const colors = getActiveTerminalColors();
@@ -182,11 +205,13 @@ export function acquireTerminal(setup: TerminalSetup): TerminalHandle {
   }
 
   const entry = createInstance(key, setup);
+  entry.setOutputPaused(outputPauses.get(key) ?? null);
   instances.set(key, entry);
   return entry.handle;
 }
 
 export function releaseTerminal(sessionId: string) {
+  outputPauses.delete(sessionId);
   instances.get(sessionId)?.dispose();
   pendingSnapshots.delete(sessionId);
 }
@@ -198,6 +223,7 @@ export function releaseTerminal(sessionId: string) {
  */
 export function pruneTerminals(liveSessionIds: Iterable<string>) {
   const live = new Set(liveSessionIds);
+  for (const key of outputPauses.keys()) if (!live.has(key)) outputPauses.delete(key);
   for (const key of [...instances.keys()]) {
     if (key !== WELCOME_KEY && !live.has(key)) {
       instances.get(key)?.dispose();
@@ -221,6 +247,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   let fitDeferred = false;
   let opened = false;
   let replaying = false;
+  let replayGeneration = 0;
   let restoringSnapshot = false;
   let unsubscribeOutput: (() => void) | undefined;
   const commandInput = new CommandInputTracker();
@@ -234,6 +261,29 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   // than with whichever view is currently showing it.
   const host = document.createElement("div");
   host.className = "terminal-view__surface";
+  const pausedNotice = document.createElement("div");
+  pausedNotice.className = "terminal-output-paused";
+  pausedNotice.setAttribute("role", "status");
+  pausedNotice.hidden = true;
+  const pausedText = document.createElement("span");
+  pausedText.textContent = "输出过快，显示已暂停，部分输出未显示。任务不会因此停止，仍可按 Ctrl+C。";
+  const resumeOutputButton = document.createElement("button");
+  resumeOutputButton.type = "button";
+  resumeOutputButton.textContent = "清屏并显示最近输出";
+  resumeOutputButton.title = "丢弃未显示的积压，清屏后继续。全屏程序可能需要手动刷新。";
+  pausedNotice.append(pausedText, resumeOutputButton);
+  host.appendChild(pausedNotice);
+  function setOutputPaused(resume: (() => Promise<void>) | null) {
+    pausedNotice.hidden = resume === null;
+    resumeOutputButton.disabled = false;
+    resumeOutputButton.onclick = resume ? () => {
+      resumeOutputButton.disabled = true;
+      void resume().then(() => terminal.focus()).catch((error: unknown) => {
+        resumeOutputButton.disabled = false;
+        toast(error instanceof Error ? error.message : "恢复输出显示失败。", "error");
+      });
+    } : null;
+  }
   const suggestionMenu = document.createElement("div");
   suggestionMenu.className = "terminal-completion";
   suggestionMenu.setAttribute("role", "listbox");
@@ -257,7 +307,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     fontSize: FONT_SIZE_DEFAULT,
     letterSpacing: TERMINAL_LETTER_SPACING_DEFAULT,
     lineHeight: TERMINAL_LINE_HEIGHT_DEFAULT,
-    scrollback: 5000,
+    scrollback: getTerminalScrollback(),
     tabStopWidth: 4,
     minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
     // CSS owns the terminal background layer so wallpaper and opacity work
@@ -296,6 +346,23 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   const serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
+
+  function writeReplay(data: string, done: () => void = () => {}) {
+    const generation = ++replayGeneration;
+    replaying = true;
+    return new Promise<void>((resolve, reject) => {
+      try {
+        terminal.write(data, () => {
+          if (generation === replayGeneration) replaying = false;
+          done();
+          resolve();
+        });
+      } catch (error) {
+        if (generation === replayGeneration) replaying = false;
+        reject(error);
+      }
+    });
+  }
   const activateLink = (event: MouseEvent, uri: string) => {
     event.preventDefault();
     if (!event.ctrlKey) {
@@ -533,7 +600,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
   window.addEventListener(commandHistoryClearedEvent, onHistoryCleared);
 
   function handleTerminalData(data: string) {
-    if (replaying || (suppressFocusReports && FOCUS_REPORTS.has(data))) {
+    // Parser-generated query replies must stay suppressed during history
+    // replay; an actual Ctrl+C must remain available even while it catches up.
+    if ((replaying && data !== "\x03") || (suppressFocusReports && FOCUS_REPORTS.has(data))) {
       return;
     }
     if (sessionId && commandCompletionEnabled() && terminal.buffer.active.type === "normal") {
@@ -561,6 +630,9 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     // see; a failed write must at least leave a trace.
     void Promise.resolve(props.onData?.(data)).catch((error: unknown) => {
       console.error("终端输入写入失败", key, error);
+      if (data.includes("\x03")) {
+        toast("中断请求发送失败，请检查连接后重试。", "error");
+      }
     });
     if (!sessionId) {
       terminal.write(data === "\r" ? "\r\n$ " : data);
@@ -634,7 +706,13 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     if (matchesShortcut(event, "copyTerminalSelection")) {
       const selection = terminal.getSelection();
       if (selection) {
-        void navigator.clipboard?.writeText(selection);
+        event.preventDefault();
+        void navigator.clipboard?.writeText(selection).catch(() => {
+          toast("复制失败，请检查剪贴板权限。", "error");
+        });
+        // Release the copy gesture. Otherwise every subsequent Ctrl+C copies
+        // the same selection forever instead of interrupting a running command.
+        terminal.clearSelection();
         return false;
       }
     }
@@ -872,12 +950,10 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
           // returning window. This avoids zsh prompt EOL markers (`%`) becoming
           // visible extra lines when the two windows have different widths.
           restoringSnapshot = true;
-          replaying = true;
-          terminal.write(restoredSnapshot.data, () => {
-            replaying = false;
+          void writeReplay(restoredSnapshot.data, () => {
             restoringSnapshot = false;
             scheduleFit();
-          });
+          }).catch((error: unknown) => toast(error instanceof Error ? error.message : "恢复终端显示失败。", "error"));
         } else {
           const backlog = setup.getBacklog?.(sessionId) ?? "";
           if (backlog) {
@@ -888,15 +964,11 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
             // PSReadLine then waits mid-sequence and swallows the next key the
             // user presses, which is how the first character typed into a freshly
             // detached local terminal disappeared.
-            replaying = true;
-            terminal.write(backlog, () => {
-              replaying = false;
-            });
+            void writeReplay(backlog).catch((error: unknown) => toast(error instanceof Error ? error.message : "恢复终端显示失败。", "error"));
           }
         }
-        unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) => {
-          terminal.write(data);
-        });
+        unsubscribeOutput = setup.subscribeOutput?.(sessionId, (data) =>
+          new Promise<void>((resolve) => terminal.write(data, resolve)));
       } else {
         terminal.write(welcomeOutput.join("\r\n"));
       }
@@ -964,6 +1036,7 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     webgl?.dispose();
     webgl = null;
     terminal.dispose();
+    resumeOutputButton.onclick = null;
     host.remove();
   }
 
@@ -992,5 +1065,11 @@ function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
     dispose,
     transparent,
     applyCursor,
+    setOutputPaused,
+    replaceOutput: (data: string) => {
+      // In-band reset is ordered behind earlier writes. A synchronous reset
+      // would race xterm's pending parser and corrupt the replacement screen.
+      return writeReplay("\x18\x1bc" + data, applyCursor);
+    },
   };
 }

@@ -77,9 +77,9 @@ export function ConnectionCard({
         <div className="conn-card__tools" role="group" aria-label="连接操作">
           {onOpenSftp ? <IconButton label="打开 SFTP" onClick={onOpenSftp}><Icon name="folder" height="16" width="16" /></IconButton> : null}
           {onDisconnect ? <IconButton label="断开盘符映射" onClick={onDisconnect}><Icon name="close" height="16" width="16" /></IconButton> : null}
-          <IconButton label="编辑" onClick={onEdit}><Icon name="edit" height="16" width="16" /></IconButton>
-          <IconButton label="克隆" onClick={onClone}><Icon name="copy" height="16" width="16" /></IconButton>
-          <IconButton className="conn-card__delete" label="删除" onClick={onDelete}><Icon name="trash" height="16" width="16" /></IconButton>
+          <IconButton label="编辑" onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onEdit(); }}><Icon name="edit" height="16" width="16" /></IconButton>
+          <IconButton label="克隆" onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onClone(); }}><Icon name="copy" height="16" width="16" /></IconButton>
+          <IconButton className="conn-card__delete" label="删除" onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onDelete(); }}><Icon name="trash" height="16" width="16" /></IconButton>
         </div>
       </div>
     </article>

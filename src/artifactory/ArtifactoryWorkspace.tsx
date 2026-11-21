@@ -1,7 +1,12 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Icon } from "../ui/Icon";
+import { IconButton } from "../ui/IconButton";
+import { Button } from "../ui/Button";
+import { Breadcrumbs } from "../ui/Breadcrumbs";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
 import { toast } from "../ui/ToastHost";
+import { useConfirmation } from "../ui/useConfirmation";
 import {
   artifactoryItemInfo, artifactoryListFolder, artifactoryRepositories,
   cancelArtifactoryTransfer, clearArtifactoryTransfers, deleteArtifactoryProfile,
@@ -23,6 +28,7 @@ function nameOf(child: ArtifactoryChild) {
 }
 
 export function ArtifactoryWorkspace() {
+  const { requestConfirmation, confirmationDialog } = useConfirmation();
   const [profiles, setProfiles] = useState<ArtifactoryProfile[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [editor, setEditor] = useState<ArtifactoryProfile | "new" | null>(null);
@@ -127,11 +133,11 @@ export function ArtifactoryWorkspace() {
     finally { setSaving(false); }
   }
   async function remove(profile: ArtifactoryProfile) {
-    if (!window.confirm(`删除连接“${profile.name}”？仓库文件不会被删除。`)) return;
+    if (!await requestConfirmation({ title: "删除 Artifactory 连接？", message: `删除连接“${profile.name}”？仓库文件不会被删除。`, confirmLabel: "删除连接", destructive: true })) return;
     try {
       await deleteArtifactoryProfile(profile.id);
       setProfiles((items) => items.filter((item) => item.id !== profile.id));
-      if (active === profile.id) setActive(null);
+      setActive((current) => current === profile.id ? null : current);
     } catch (reason) { toast(message(reason), "error"); }
   }
   function enterRepo(key: string) { setRepo(key); setPath(""); }
@@ -160,7 +166,9 @@ export function ArtifactoryWorkspace() {
     for (const localPath of paths) {
       const fileName = localPath.split(/[\\/]/).pop();
       if (!fileName) continue;
-      if (children.some((item) => nameOf(item) === fileName) && !window.confirm(`“${fileName}”已存在。继续上传将覆盖远端文件，是否继续？`)) continue;
+      if (children.some((item) => nameOf(item) === fileName) && !await requestConfirmation({
+        title: "覆盖远端文件？", message: `“${fileName}”已存在。继续上传将覆盖远端文件。`, confirmLabel: "覆盖并上传", cancelLabel: "跳过", destructive: true,
+      })) continue;
       try { await enqueueArtifactoryTransfer({ profileId: active, repo, path: `${path}${fileName}`, localPath, kind: "upload" }); setQueueOpen(true); }
       catch (reason) { toast(`${fileName}：${message(reason)}`, "error"); }
     }
@@ -178,7 +186,9 @@ export function ArtifactoryWorkspace() {
     catch (reason) { toast(message(reason), "error"); }
   }
   async function retryTask(task: ArtifactoryTransfer) {
-    const overwrite = Boolean(task.error?.includes("本地文件已存在") && window.confirm(`本地“${task.name}”已存在。覆盖此文件？`));
+    const overwrite = Boolean(task.error?.includes("本地文件已存在") && await requestConfirmation({
+      title: "覆盖本地文件？", message: `本地“${task.name}”已存在。覆盖此文件？`, confirmLabel: "覆盖并重试", destructive: true,
+    }));
     if (task.error?.includes("本地文件已存在") && !overwrite) return;
     try { await retryArtifactoryTransfer(task.id, overwrite); setQueueOpen(true); }
     catch (reason) { toast(message(reason), "error"); }
@@ -198,14 +208,14 @@ export function ArtifactoryWorkspace() {
     toast("属性已移除。", "success");
   }
 
-  return <section className="artifactory-workspace" aria-label="Artifactory 工作台">
+  return <div className="artifactory-surface"><section className="artifactory-workspace" aria-label="Artifactory 工作台">
     <aside className="artifactory-sidebar">
       <div className="artifactory-sidebar__head"><span><Icon name="database" />Artifactory</span><button aria-label="添加 Artifactory 连接" onClick={() => edit("new")} title="添加连接" type="button"><Icon name="plus" /></button></div>
       <div className="artifactory-sidebar__section">连接</div>
       {profiles.map((profile) => <div className={`artifactory-profile${active === profile.id ? " is-active" : ""}`} key={profile.id}>
         <button className="artifactory-profile__open" onClick={() => setActive(profile.id)} type="button"><Icon name="database" /><span>{profile.name}<small>{profile.baseUrl}</small></span></button>
         <button aria-label={`编辑 ${profile.name}`} onClick={() => edit(profile)} title="编辑" type="button"><Icon name="edit" /></button>
-        <button aria-label={`删除 ${profile.name}`} onClick={() => void remove(profile)} title="删除" type="button"><Icon name="trash" /></button>
+        <button aria-label={`删除 ${profile.name}`} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); void remove(profile); }} title="删除" type="button"><Icon name="trash" /></button>
       </div>)}
       {!profiles.length && <p className="artifactory-sidebar__empty">暂无连接</p>}
       {active && <><div className="artifactory-sidebar__section">仓库 <span>{repos.length}</span></div>
@@ -214,22 +224,28 @@ export function ArtifactoryWorkspace() {
       </>}
     </aside>
     <div className="artifactory-main">
-      <header className="artifactory-toolbar">
-        <div className="artifactory-heading"><strong>{currentRepo?.key ?? currentProfile?.name ?? "Artifactory"}</strong><span>{currentRepo ? `${currentRepo.type} · ${currentRepo.packageType}` : currentProfile?.baseUrl ?? "构件仓库浏览器"}</span></div>
-        <div className="artifactory-actions">
+      <WorkspaceToolbar label="Artifactory 浏览器" identity={
+        <><Icon name="database" width="18" height="18" /><div className="artifactory-heading"><strong>{currentRepo?.key ?? currentProfile?.name ?? "Artifactory"}</strong><span>{currentRepo ? `${currentRepo.type} · ${currentRepo.packageType}` : currentProfile?.baseUrl}</span></div></>
+      }>
           {repo && <>
-            <button disabled={busy} onClick={() => void refresh()} title="刷新目录" type="button"><Icon name="refresh" /></button>
-            <button onClick={() => void upload()} type="button"><Icon name="upload" />上传文件</button>
-            <button disabled={!selected || (selected.folder && !canArchive)} onClick={() => void download()} type="button"><Icon name="download" />下载</button>
-            <button disabled={!canArchive} onClick={() => void download(null, true)} title={canArchive ? "下载当前目录为 ZIP" : "仅支持本地或缓存仓库"} type="button"><Icon name="fileArchive" />当前目录</button>
+            <IconButton disabled={busy} onClick={() => void refresh()} label="刷新目录"><Icon name="refresh" width="16" height="16" /></IconButton>
+            <Button onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); void upload(); }} variant="ghost"><Icon name="upload" width="16" height="16" />上传</Button>
+            <Button disabled={!selected || (selected.folder && !canArchive)} onClick={() => void download()} variant="ghost"><Icon name="download" width="16" height="16" />下载</Button>
+            <IconButton disabled={!canArchive} onClick={() => void download(null, true)} label={canArchive ? "下载当前目录为 ZIP" : "仅本地或缓存仓库支持目录 ZIP"}><Icon name="fileArchive" width="16" height="16" /></IconButton>
           </>}
-          <button aria-expanded={queueOpen} onClick={() => setQueueOpen((value) => !value)} type="button"><Icon name="stackedHexagon" />传输{activeTaskCount > 0 ? ` ${activeTaskCount}` : ""}</button>
-        </div>
-      </header>
+          <Button aria-expanded={queueOpen} onClick={() => setQueueOpen((value) => !value)} variant="ghost"><Icon name="stackedHexagon" width="16" height="16" />传输{activeTaskCount > 0 ? ` ${activeTaskCount}` : ""}</Button>
+      </WorkspaceToolbar>
       {error && <div className="artifactory-error" role="alert">{error}<button onClick={() => { if (repo) void refresh(); else void retryRepositories(); }} type="button">重试</button></div>}
       {!active ? <div className="artifactory-welcome"><div className="artifactory-welcome__icon"><Icon name="database" /></div><div className="artifactory-welcome__body"><span className="artifactory-welcome__eyebrow">开始使用</span><h2>添加 Artifactory 连接</h2><p>输入 JFrog Platform 地址和 Access Token，即可浏览仓库、查看文件属性并上传或下载构件。</p><button onClick={() => edit("new")} type="button"><Icon name="plus" />添加连接</button></div></div>
         : !repo ? <div className="artifactory-welcome"><div className="artifactory-welcome__icon"><Icon name="folder" /></div><div className="artifactory-welcome__body"><span className="artifactory-welcome__eyebrow">{currentProfile?.name}</span><h2>{busy ? "正在读取仓库" : "选择一个仓库"}</h2><p>{busy ? "仓库列表加载中…" : "在左侧选择仓库，浏览其中的目录和文件。"}</p></div></div>
-        : <div className="artifactory-content"><div className="artifactory-browser"><nav aria-label="文件路径" className="artifactory-breadcrumb"><button onClick={() => setPath("")} type="button">{repo}</button>{path.split("/").filter(Boolean).map((part, index, all) => <span key={`${part}-${index}`}><Icon name="chevron-right" /><button onClick={() => setPath(`${all.slice(0, index + 1).join("/")}/`)} type="button">{part}</button></span>)}</nav>
+        : <div className="artifactory-content"><div className="artifactory-browser">
+          <Breadcrumbs label="仓库路径" items={[
+            { id: "repository", label: repo, onClick: () => setPath("") },
+            ...path.split("/").filter(Boolean).map((part, index, all) => {
+              const target = `${all.slice(0, index + 1).join("/")}/`;
+              return { id: target, label: part, onClick: () => setPath(target) };
+            }),
+          ]} />
           <div className="artifactory-listhead"><span>名称</span><span>类型</span></div>
           <div className="artifactory-list" role="listbox" aria-label="仓库文件">{path && <button className="artifactory-row" onClick={parent} type="button"><Icon name="arrowLeft" /><span>返回上一级</span></button>}{sortedChildren.map((child) => <button aria-selected={selected?.uri === child.uri} className={`artifactory-row${selected?.uri === child.uri ? " is-selected" : ""}`} key={child.uri} onClick={() => setSelected(child)} onDoubleClick={() => child.folder ? enterFolder(child) : void download(child)} role="option" type="button"><Icon name={child.folder ? "folder" : "file"} /><span>{nameOf(child)}</span><small>{child.folder ? "目录" : "文件"}</small></button>)}{!busy && !children.length && <p className="artifactory-muted">此目录为空。</p>}{busy && <p className="artifactory-muted">正在加载…</p>}</div>
         </div><ArtifactoryDetails
@@ -239,6 +255,7 @@ export function ArtifactoryWorkspace() {
           name={selected ? nameOf(selected) : ""}
           onAddProperty={() => setPropertyEditor("new")}
           onDownload={() => void download()}
+          onClose={() => setSelected(null)}
           onEditProperty={(key, values) => setPropertyEditor({ key, values })}
           path={path}
           repo={repo}
@@ -309,5 +326,6 @@ export function ArtifactoryWorkspace() {
         </form>
       </div>
     )}
-  </section>;
+    {confirmationDialog}
+  </section></div>;
 }

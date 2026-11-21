@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { loadMonaco } from "../sftp/monacoLoader";
-import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { ImageExportTool } from "./TextImageTool";
-import { ToolSelect } from "./ToolControls";
+import { ToolSelect, ToolSwitch } from "./ToolControls";
 import { renderCodeImage, type CodeImageTheme } from "./codeImage";
 
 const LANGUAGES = [
@@ -38,10 +37,7 @@ export default function CodeImageTool() {
           <ToolSelect label="语言" value={language} onChange={setLanguage} options={LANGUAGES} searchable />
           <ToolSelect label="主题" value={theme} onChange={(value) => setTheme(value === "light" ? "light" : "dark")}
             options={[{ value: "dark", label: "深色" }, { value: "light", label: "浅色" }]} />
-          <label className="tool-form__switch">
-            <SettingsSwitch checked={lineNumbers} onChange={(event) => setLineNumbers(event.target.checked)} />
-            行号
-          </label>
+          <ToolSwitch label="行号" checked={lineNumbers} onChange={setLineNumbers} />
           <label className="tool-form__setting">
             图片标题
             <input className="tool-form__title-input" type="text" value={title} maxLength={80} placeholder={selected.label}

@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { S3CannedAcl } from "../models";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
+import { SelectMenu } from "../ui/SelectMenu";
 
 const ACLS: Array<{ value: S3CannedAcl; label: string }> = [
   { value: "private", label: "私有（推荐）" },
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export function CannedAclDialog({ objectKey, onClose, onLoadAcl, onSubmit }: Props) {
+  const dialogRef = useDialogFocus();
   const [acl, setAcl] = useState<S3CannedAcl>("private");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +47,7 @@ export function CannedAclDialog({ objectKey, onClose, onLoadAcl, onSubmit }: Pro
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (loading || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -58,25 +62,24 @@ export function CannedAclDialog({ objectKey, onClose, onLoadAcl, onSubmit }: Pro
 
   return (
     <div className="profile-editor-backdrop" role="presentation">
-      <section className="s3-acl-dialog" aria-label="设置对象 ACL">
+      <section ref={dialogRef} className="s3-acl-dialog" role="dialog" aria-modal="true" aria-label="设置对象 ACL"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !saving) { event.stopPropagation(); onClose(); } }}>
         <header className="profile-editor__topbar">
           <h2>设置对象 ACL</h2>
-          <button className="icon-button" aria-label="关闭" onClick={onClose} type="button">
+          <button className="icon-button" aria-label="关闭" disabled={saving} onClick={onClose} type="button">
             <Icon name="close" />
           </button>
         </header>
         <form className="s3-acl-dialog__body" onSubmit={submit}>
           <div className="s3-dialog-key" title={objectKey}>{objectKey}</div>
-          <label className="field">
+          <div className="field">
             <span>预设访问控制</span>
-            <select disabled={loading || saving} value={acl} onChange={(event) => setAcl(event.currentTarget.value as S3CannedAcl)}>
-              {ACLS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </select>
-          </label>
+            <SelectMenu ariaLabel="预设访问控制" disabled={loading || saving} value={acl} options={ACLS} onChange={(value) => setAcl(value as S3CannedAcl)} />
+          </div>
           <p className="s3-dialog-warning">公开 ACL 可能使对象可被互联网访问，请确认存储桶策略允许该操作。</p>
-          {error ? <div className="form-errors">{error}</div> : null}
+          {error ? <div className="form-errors" role="alert">{error}</div> : null}
           <footer className="s3-dialog-actions">
-            <Button onClick={onClose} variant="ghost">取消</Button>
+            <Button disabled={saving} onClick={onClose} variant="ghost">取消</Button>
             <Button disabled={loading || saving} type="submit" variant="primary">{loading ? "读取 ACL..." : saving ? "应用中..." : "应用"}</Button>
           </footer>
         </form>

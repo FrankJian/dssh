@@ -1,45 +1,62 @@
 # Duo SSH Agent Guide
 
-## Project
-- Duo SSH (internal package / repository name: `dssh`) is a Windows/macOS desktop SSH manager built with React 19 + TypeScript + Vite and Tauri 2 + Rust.
-- Use `pnpm` for frontend work. Use stable Rust (edition 2024) inside `src-tauri/`.
-- Keep changes focused; do not edit generated output such as `dist/` or `src-tauri/target/`.
-- [`README.md`](README.md) is the user-facing overview; [`TODO.md`](TODO.md) tracks known gaps, deliberate deferrals, and their rationale — read TODO before starting anything sizable so you don't redo a decision that was already made.
+## 技术栈与工具
 
-## Architecture
-- Frontend source lives in `src/`: `models/` define shared payload types, `services/` wrap Tauri `invoke`, hooks own state, and feature folders own UI.
-- Rust source lives in `src-tauri/src/`: add DTOs in `models/`, commands in `commands/`, register commands in `lib.rs`, and keep business logic in feature managers/repositories (`ssh/`, `sftp/`, `forwarding/`, `hosttools/`, `s3/`, `ai/`, `storage/`, `workspace/`).
-- Tauri payloads use camelCase. Update both Rust serde DTOs and TypeScript types/services when a command or event changes.
-- Persist server-side data through the SQLite repository and numbered SQL migrations in `src-tauri/migrations/`; preserve compatibility for existing databases. Some frontend-only, per-machine state (recent connections, tab order, panel widths, zen/theme/terminal prefs, update proxy) is intentionally kept in `localStorage` rather than the DB.
+- 面向 Windows/macOS；React 19、TypeScript、Vite、Tauri 2、Rust（edition 2024）。前端使用 `pnpm`，Rust 使用 stable 工具链。
+- 产品名称使用 Duo SSH；内部包名、存储键和兼容标识不得因文案调整而随意更名。
 
-## Layout & workspace
-- The shell (`app/AppLayout.tsx`) is: **title bar → [activity rail | left sidebar | main column (top tab strip / content) | right dock]**. `app/App.tsx` wires it together.
-- Left activities (`app/ActivityBar.tsx`, `ActivityId`): `sessions` (the active-session tree, `ssh/SessionTree.tsx`), `connections` (the full-page Session Manager hub, `ssh/SessionManager.tsx`), `s3`. The right dock (`RightPanelId`) toggles `assistant` (AI) or `hosttools` (`hosttools/HostToolsPanel.tsx`).
-- The main surface is chosen in App: Connections → SessionManager; S3 → S3Workspace; split layout → `terminal/PaneGrid.tsx`; else a single terminal or an SFTP tab. `app/useWorkspace.ts` coordinates SFTP tabs, tab ordering, and which surface is active; terminals stay in `terminal/useTerminalSessions.ts`.
-- The unified top strip is `app/WorkspaceTabStrip.tsx` (terminals + SFTP, drag to reorder, middle-click to close, detach to a native window). Terminal-wide actions that must survive splitting (the split buttons) live in the strip, not inside a pane — `PaneGrid` replaces `TerminalWorkspace` when split, so anything inside a single pane disappears once the user splits.
-- Signature interaction: a session-tree node (a host) expands into New Terminal / SFTP / Port Forwarding / Terminal N / Disconnect. SFTP and forwards are opened per-node.
-- Splits (`terminal/usePaneLayout.ts`) are per-terminal-window nested pane trees without a pane count limit. A split is applied to the currently focused pane and may mix horizontal and vertical branches. Same-direction panes divide that axis equally by default; splitting across the other axis preserves its proportions. A new pane inherits the host of the pane it was split from — never silently open a local shell from an SSH pane.
-- Detached workspaces are coordinated by `workspace/DetachedWorkspaceManager`, `app/App.tsx`, and `workspace://detached-window-*` events. A detached terminal keeps the same Rust session IDs and moves the entire pane tree; the child uses the same complete workbench as the main window and owns its new tabs too. Closing a native window closes only its sessions (with running-command confirmation), and never restores tabs to another window. Detached labels match `detached-*` and must remain covered by `src-tauri/capabilities/detached-workspace.json`; Tauri capability changes require a full app restart, not only Vite HMR.
-- Command palette: `app/CommandPalette.tsx` (⌘K / Ctrl+K) is the home for quick actions; context-sensitive entries (split, reconnect, SFTP, port forward) appear only when they apply. Zen mode hides all chrome (Esc to exit).
+## 编码行为
 
-## SSH connection paths & security
-- SSH features acquire transports from `SshConnectionPool` (`ssh/connection_pool.rs`) using a non-secret connection key that includes profile version, authentication kind, and proxy route. Terminal PTY, SFTP subsystem, host tools / AI exec, and all forwarding modes open independent channels on the shared transport. Channel ownership and limits are explicit; do not bypass the pool with a new ad-hoc connection path.
-- Every pooled transport holds the shared `Arc<HostKeyVerifier>` (`ssh/host_keys.rs`, `AppState.host_keys`). **Host keys are verified TOFU** — first use prompts (`ssh://hostkey-prompt` → `HostKeyPrompt` modal → `respond_host_key_prompt`), matches connect silently, a changed key is rejected (`ssh://hostkey-changed`). Never reintroduce an "accept any key" handler.
-- SSH terminals auto-reconnect within a 30s grace window with exponential backoff (`ssh/session_manager.rs`, `SessionStatus::Reconnecting`, `cancel_reconnect`); a clean `exit` does not reconnect.
-- The pool also performs single-flight transport recovery and emits `ssh://transport-status`; terminal panes still reconnect their shell channel separately. Real-host, low-`MaxSessions`, network-jitter, and cross-platform acceptance remains tracked in TODO.md.
-- Never expose SSH passwords, private keys, passphrases, S3 secret keys, API keys, or updater signing keys to the frontend, logs, tests, or commits. Resolve saved credentials in Rust only (currently stored in SQLite; OS-keychain migration is a planned follow-up).
-- Destructive or remote-command AI actions require an explicit user approval flow.
-- Treat backend error payloads as user-facing errors: use the project `AppError` conventions and normalize Tauri rejections in the frontend service layer.
+- 实施前阅读相关需求、已有变更和 `TODO.md`，避免重复实现已延后的工作；功能现状以规格与源码为准。
+- 修改范围围绕用户目标，保留工作区已有改动；不编辑 `dist/`、`src-tauri/target/` 等生成产物。
+- 仓库已被 CodeGraph 索引时，先用它定位和理解代码；未索引时不要自行创建索引。
+- 遵守模块职责与已有服务边界；修改 Tauri 契约时同步 Rust DTO、TypeScript 类型和服务层，载荷使用 camelCase。
+- 持久化变更使用编号迁移并保持旧数据库兼容；不得未经需求确认改变已有配置的保存或导入导出语义。
+- 错误处理沿用 `AppError` 与服务层规范，避免向用户展示未经处理的内部错误。
+- 禁止将真实密码、私钥、令牌或其他秘密写入日志、测试样本、文档或提交；不得绕过主机身份验证和既有授权流程。
+- 远端命令及破坏性 AI 操作必须保留显式用户批准；安全与会话归属约束见相关架构文档和规格。
+- 所有界面改动（含小修复）必须先阅读并遵守设计规范及强制清单；不要在本文件复述视觉规则。
 
-## UI conventions
-- The default interface uses soft mineral surfaces, sea-glass focus color, restrained warm details, and coherent rounded geometry. Follow [`features/interface-redesign.md`](features/interface-redesign.md) for page redesigns. Graphite Glass is an older implementation record, not a constraint on current colors or radii. The custom app palette color is separate from light/dark appearance and terminal schemes; preserve semantic token coverage across both appearances.
-- All colors, spacing, radii, and metrics use semantic CSS variables in `src/theme/global.css`; components reference tokens only, never literal colors. Glass belongs on stable chrome and overlays; terminal, Monaco, and scroll-heavy file content stay unblurred. The terminal palette lives in `terminal/terminalTheme.ts`.
-- Terminal selection colors are kept close to the terminal background on purpose: xterm's WebGL renderer bakes the cell background into the glyph texture, so a high-contrast selection visibly changes how the text is antialiased. Don't "brighten" them without re-checking that.
-- Follow `.cursor/rules/design.mdc`: efficient desktop workflow, coherent rounded layout, restrained motion, and clear content hierarchy.
-- Use outlined icons through the existing `Icon` component (add new glyphs there); icon names should describe the glyph, not the feature that happens to use it.
-- Keep controls accessible: meaningful labels, keyboard-safe interactions, visible disabled states, and confirmations for irreversible actions.
+## 需求与文档纪律
 
-## Validation
-- Frontend changes: run `pnpm exec tsc --noEmit`; use `pnpm build` for production-build validation.
-- Rust changes: run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` from `src-tauri/`. CI runs exactly these on macOS and Windows (`.github/workflows/ci.yml`) and treats clippy warnings as errors, so check locally before pushing.
-- Prefer verifying UI changes in `pnpm tauri dev`. Add focused regression tests for storage, parsing, validation, and security-sensitive behavior when practical.
+- 新增或改变行为使用 OpenSpec 变更；按所选工作流执行，进度维护在该变更的任务文件。流程细节查文档索引。
+- `openspec/` 只放 OpenSpec 配置、规格、流程产物及归档；自定义 README、索引和辅助说明放在 `docs/`。
+- 每项需求或任务保持单一维护来源；不在导航、历史快照或验收记录中新增重复的需求与实施清单。
+- 区分实现、发布和真实环境验收；未完成项如实保留，不以模拟测试或构建通过代替实机验证。
+- `AGENTS.md` 只维护长期执行规则、技术栈、文档索引和命令用途；现状清单、临时进度、算法/事件机制与常量放到对应规格或文档。
+
+## 文档索引
+
+| 内容 | 权威入口 |
+| --- | --- |
+| 产品说明与构建指南 | [README.md](README.md) |
+| 文档导航 | [docs/README.md](docs/README.md) |
+| 行为规格 | [需求索引](docs/requirements.md) → `openspec/specs/` |
+| 需求变更与任务 | [OpenSpec 使用流程](docs/openspec-workflow.md) → `openspec/changes/` |
+| 未排期与明确延后事项 | [TODO.md](TODO.md) |
+| 工程组织、工作区与数据边界 | [工程架构](docs/architecture/project-structure.md) |
+| SSH 传输、身份与凭据边界 | [SSH 架构](docs/architecture/ssh-transport.md) |
+| 其他模块实现依据 | [架构索引](docs/architecture/README.md) |
+| 界面规则 | [设计规范](docs/design.md)、[强制清单](docs/design/interface-checklist.md) |
+| 验证证据与局限 | [验收索引](docs/verification/README.md) |
+| 历史决策与来源 | [历史索引](docs/history/README.md) |
+
+## 验证要求与命令用途
+
+前端改动运行类型检查、生产构建及相关模块回归；Rust 改动运行格式、严格 Clippy 和测试。界面改动还须按设计清单验证。纯文档改动检查受影响链接和格式，涉及 OpenSpec 产物时运行对应校验。报告实际执行结果及未验证范围。
+
+命令默认在仓库根目录运行；Rust 命令在 `src-tauri/` 运行。模块测试脚本以 `package.json` 为准，CI 约定以 `.github/workflows/ci.yml` 为准。
+
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm exec tsc --noEmit` | 前端类型检查 |
+| `pnpm build` | 前端生产构建校验 |
+| `pnpm test:sftp`、`pnpm test:ai-config` 等相关脚本 | 模块回归测试 |
+| `pnpm tauri dev` | 原生开发环境与界面验证 |
+| `cargo fmt --check` | Rust 格式检查；需修正时运行 `cargo fmt` |
+| `cargo clippy --all-targets -- -D warnings` | Rust 严格静态检查 |
+| `cargo test` | Rust 测试 |
+| `openspec context --json` | 确认操作所用的 OpenSpec 根目录 |
+| `openspec list`、`openspec list --specs` | 查询变更与能力规格 |
+| `openspec validate --all --strict --no-interactive` | 校验活动变更与主规格 |
+| `openspec validate --archived --strict --no-interactive` | 校验归档任务完成状态 |

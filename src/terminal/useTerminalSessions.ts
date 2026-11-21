@@ -8,7 +8,7 @@ import { TerminalOutputStream } from "./terminalOutputStream";
 import { OFFLINE_TERMINAL_MODES } from "./terminalRecovery";
 import { TerminalCommandActivityTracker, type CommandActivity } from "./commandActivity";
 import { TerminalTargetTracker, type JumpServerSftpTarget } from "./terminalTarget";
-import { hasTerminalInstance, pruneTerminals } from "./terminalRegistry";
+import { hasTerminalInstance, pruneTerminals, showTerminalOutputPaused, clearTerminalOutputPaused, replaceTerminalOutput } from "./terminalRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../ui/ToastHost";
 import {
@@ -22,6 +22,7 @@ import {
   onTerminalTransferStatus,
   subscribeTerminalOutput,
   unsubscribeTerminalOutput,
+  acknowledgeTerminalOutput,
   reconnectSshSession,
   respondZmodemPrompt,
   respondZmodemConflict,
@@ -34,7 +35,7 @@ import {
   type TerminalTransferConflictEvent,
 } from "../services/sshSessionService";
 
-export type TerminalOutputListener = (data: string) => void;
+export type TerminalOutputListener = (data: string) => void | Promise<void>;
 
 const initialSize: TerminalSize = {
   cols: 100,
@@ -156,12 +157,17 @@ export function useTerminalSessions(
     appendToBacklog(backlog, data);
 
     const listeners = listenersRef.current.get(sessionId);
+    const consumption: (void | Promise<void>)[] = [];
     if (listeners) {
       for (const listener of listeners) {
-        listener(data);
+        consumption.push(listener(data));
       }
     }
-    return activity;
+    const consumed = Promise.all(consumption).then(() => {});
+    // Local lifecycle messages do not have an ACK caller; still observe their
+    // rejection. The live caller receives the original promise and reports it.
+    void consumed.catch(() => {});
+    return { activity, consumed };
   }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const getBacklog = useCallback((sessionId: string) => {
@@ -199,27 +205,32 @@ export function useTerminalSessions(
     [],
   );
 
-  const liveOutputRef = useRef<(event: { sessionId: string; data: string }) => void>(() => {});
+  const liveOutputRef = useRef<(event: { sessionId: string; data: string }) => void | Promise<void>>(() => {});
   liveOutputRef.current = (event) => {
-    if (pushOutput(event.sessionId, event.data) === "idle") {
+    const pushed = pushOutput(event.sessionId, event.data);
+    if (pushed?.activity === "idle") {
       const status = latestSessionStatusesRef.current.get(event.sessionId);
       if (status === undefined || status === "connected") commandCompleted(event.sessionId);
     }
+    return pushed?.consumed;
   };
   const statusOutputRef = useRef<(event: TerminalStatusEvent) => void>(() => {});
+  const outputPausedRef = useRef<(sessionId: string) => void>(() => {});
   const outputStream = useCallback(() => {
     outputStreamRef.current ??= new TerminalOutputStream({
       subscribe: subscribeTerminalOutput,
       unsubscribe: unsubscribeTerminalOutput,
+      acknowledge: acknowledgeTerminalOutput,
       token: () => crypto.randomUUID(),
     }, (event) => liveOutputRef.current(event), (event) => statusOutputRef.current(event),
-      (error) => toast(error.message, "error"));
+      (error) => toast(error.message, "error"), (sessionId) => outputPausedRef.current(sessionId));
     return outputStreamRef.current;
   }, []);
 
-  const connectOutput = useCallback((sessionId: string, restoreActivity = false, activityHint?: CommandActivity) =>
-    outputStream().start(sessionId, (snapshot) => {
+  const connectOutput = useCallback((sessionId: string, restoreActivity = false, activityHint?: CommandActivity, resetDisplay = false) =>
+    outputStream().start(sessionId, async (snapshot) => {
       buffersRef.current.set(sessionId, createBacklog(snapshot.data));
+      const displayReady = resetDisplay ? replaceTerminalOutput(sessionId, snapshot.data) : undefined;
       const tracker = new TerminalTargetTracker();
       targetTrackersRef.current.set(sessionId, tracker);
       const address = tracker.observeOutput(snapshot.data);
@@ -234,7 +245,15 @@ export function useTerminalSessions(
       if (RECONNECT_ON_INPUT_STATUSES.has(status) || status === "reconnecting") {
         pushOutput(sessionId, OFFLINE_TERMINAL_MODES);
       }
+      await displayReady;
     }), [outputStream, pushOutput, updateCommandActivity]);
+
+  outputPausedRef.current = (sessionId) => {
+    showTerminalOutputPaused(sessionId, async () => {
+      await connectOutput(sessionId, true, undefined, true);
+      if (!outputStream().isPaused(sessionId)) clearTerminalOutputPaused(sessionId);
+    });
+  };
 
   useEffect(() => () => outputStreamRef.current?.stopAll(), []);
 

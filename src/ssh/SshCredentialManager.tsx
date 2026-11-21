@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { SaveSshCredentialRequest, SshCredential } from "../models/sshCredential";
-import { useDialogFocus } from "../rdp/useDialogFocus";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import { deleteSshCredential, listSshCredentials, saveSshCredential } from "../services/sshCredentialService";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -100,8 +100,8 @@ export function SshCredentialManager({ onClose }: { onClose: () => void }) {
                 <p className="ssh-credentials__message">删除“{view.credential.name}”及其保存的认证信息？</p>
                 <footer className="ssh-credentials__footer">
                   <Button autoFocus disabled={busy} onClick={back}>取消</Button>
-                  <Button className="ssh-delete-dialog__confirm" disabled={busy}
-                    onClick={() => void remove(view.credential)} variant="primary">
+                  <Button disabled={busy}
+                    onClick={() => void remove(view.credential)} variant="danger">
                     {busy ? "正在删除…" : "删除凭据"}
                   </Button>
                 </footer>

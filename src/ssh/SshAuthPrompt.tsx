@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import type { SshAuthPromptEvent } from "../services/sshSessionService";
 import { Icon } from "../ui/Icon";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface SshAuthPromptProps {
   prompt: SshAuthPromptEvent;
@@ -10,12 +11,14 @@ interface SshAuthPromptProps {
 
 /** A transient keyboard-interactive challenge, most commonly an OTP prompt. */
 export function SshAuthPrompt({ prompt, onCancel, onSubmit }: SshAuthPromptProps) {
+  const dialogRef = useDialogFocus();
   const [responses, setResponses] = useState(() => prompt.prompts.map(() => ""));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -27,6 +30,7 @@ export function SshAuthPrompt({ prompt, onCancel, onSubmit }: SshAuthPromptProps
   }
 
   async function handleCancel() {
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -40,11 +44,13 @@ export function SshAuthPrompt({ prompt, onCancel, onSubmit }: SshAuthPromptProps
   return (
     <div className="profile-editor-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         aria-describedby="ssh-auth-description"
         aria-labelledby="ssh-auth-title"
         aria-modal="true"
         className="hostkey-dialog ssh-auth-dialog"
         role="dialog"
+        onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented && !submitting) { event.stopPropagation(); void handleCancel(); } }}
       >
         <header className="hostkey-dialog__header">
           <Icon name="shield" height="16" width="16" />

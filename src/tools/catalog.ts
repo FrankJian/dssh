@@ -39,6 +39,7 @@ export const TOOL_CATALOG = [
   { id: "sha256", label: "SHA-256 文本哈希", category: "编码与生成", keywords: "sha256 sha-256 hash digest 摘要 散列 校验", component: developerPage("HashTool") },
   { id: "ipv4", label: "IPv4 子网计算", category: "运维", keywords: "ipv4 cidr subnet mask network ip 网段 掩码 广播", component: developerPage("SubnetTool") },
   { id: "chmod", label: "chmod 权限换算", category: "运维", keywords: "chmod rwx permissions octal linux 八进制 权限", component: developerPage("ChmodTool") },
+  { id: "linux-memo", label: "Linux 命令速查", category: "运维", keywords: "linux shell command man 参数 命令 速查 ls cp mv rm mkdir chmod head tail grep find df du tar ps systemctl journalctl ss curl ssh cat touch ln chown chgrp stat readlink realpath sort uniq wc cut tr tee sed awk xargs diff gzip sha256sum date id whoami uname env timeout nohup sleep top free vmstat pgrep pkill watch lsblk lscpu findmnt dmesg ip ping dig scp sftp rsync", component: lazy(() => import("./LinuxCommandTool")) },
   { id: "cron", label: "Cron 表达式解析", category: "运维", keywords: "cron crontab schedule 定时 调度", component: developerPage("CronTool") },
   { id: "url-parser", label: "URL 解析", category: "Web 与认证", keywords: "url parse host query parameter 链接 参数 主机", component: morePage("UrlParserTool") },
   { id: "jwt", label: "JWT 解码", category: "Web 与认证", keywords: "jwt jws token base64url header payload 令牌 解析", component: morePage("JwtTool") },

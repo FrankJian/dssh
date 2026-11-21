@@ -317,9 +317,9 @@ export function SessionManager({
           <Button aria-label="凭据管理" className="session-manager__credentials" onClick={() => setManageCredentials(true)} variant="ghost">
             <Icon name="fileKey" height="16" width="16" /><span>凭据管理</span>
           </Button>
-          <button className="session-manager__new" onClick={createConnection} type="button" aria-label="新建连接">
+          <Button onClick={createConnection} variant="primary" aria-label="新建连接">
             <Icon name="plus" height="15" width="15" /><span>新建连接</span>
-          </button>
+          </Button>
         </div>
       </header>
       <div className="session-manager__body">

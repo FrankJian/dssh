@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useDialogFocus } from "../rdp/useDialogFocus";
+import { useDialogFocus } from "../ui/useDialogFocus";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { renamedConnectionFolderPath } from "./connectionFolders";

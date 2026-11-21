@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isMacOS } from "../platform";
+import { useConfirmation } from "../ui/useConfirmation";
 import { nativeDropClientPoint } from "./nativeFileDrop";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -24,6 +25,9 @@ import {
   type SftpEntry,
 } from "../services/sftpService";
 import { Icon } from "../ui/Icon";
+import { handleMenuNavigation, dismissMenu } from "../ui/menuNavigation";
+import { Dialog } from "../ui/Dialog";
+import { Button } from "../ui/Button";
 import { FileEntryIcon } from "./FileEntryIcon";
 
 interface RemoteFileTreeProps {
@@ -181,6 +185,8 @@ export function RemoteFileTree({
   const panelRef = useRef<HTMLElement | null>(null);
   const treeBodyRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const contextTriggerRef = useRef<HTMLElement | null>(null);
+  function closeContextMenu() { dismissMenu(() => setContextMenu(null), contextMenu ? contextTriggerRef.current : null); }
   const transferOperationIdRef = useRef<string | null>(null);
   const remoteDragPathsRef = useRef<string[] | null>(null);
   const remoteDropTargetRef = useRef<string | null>(null);
@@ -270,6 +276,7 @@ export function RemoteFileTree({
     if (!contextMenu || !contextMenuRef.current) {
       return;
     }
+    contextMenuRef.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     const menu = contextMenuRef.current.getBoundingClientRect();
     const panel = panelRef.current?.getBoundingClientRect();
     const margin = 8;
@@ -611,7 +618,7 @@ export function RemoteFileTree({
   }, [rootPath, uploadFiles]);
 
   function beginInlineAction(action: InlineAction) {
-    setContextMenu(null);
+    closeContextMenu();
     setActionError(null);
     setInlineAction(action);
     setInlineName(action.kind === "rename" ? action.entry?.name ?? "" : "");
@@ -760,6 +767,7 @@ export function RemoteFileTree({
 
   function openContextMenu(event: React.MouseEvent, entry: SftpEntry) {
     event.preventDefault();
+    if (event.currentTarget instanceof HTMLElement) contextTriggerRef.current = event.currentTarget;
     if (!selectedPaths.has(entry.path)) {
       setSelectedPaths(new Set([entry.path]));
       setSelectionAnchor(entry.path);
@@ -769,7 +777,7 @@ export function RemoteFileTree({
   }
 
   function setDirectoryAsRoot(path: string) {
-    setContextMenu(null);
+    closeContextMenu();
     setSelectedPaths(new Set());
     setSelectionAnchor(null);
     setInlineAction(null);
@@ -1221,10 +1229,12 @@ export function RemoteFileTree({
       </div>
       {contextMenu ? (
         <div
-          className="context-menu"
+          className="context-menu is-glass-overlay"
           ref={contextMenuRef}
           onClick={(event) => event.stopPropagation()}
           role="menu"
+          aria-label="文件操作"
+          onKeyDown={(event) => handleMenuNavigation(event, closeContextMenu)}
           style={{ left: contextMenu.x, maxHeight: `${contextMenu.maxHeight}px`, top: contextMenu.y }}
         >
           {!contextMenu.entry.isDir ? (
@@ -1232,7 +1242,7 @@ export function RemoteFileTree({
               className="context-menu__item"
               onClick={() => {
                 const entry = contextMenu.entry;
-                setContextMenu(null);
+                closeContextMenu();
                 onOpenFile(entry);
               }}
               role="menuitem"
@@ -1284,7 +1294,7 @@ export function RemoteFileTree({
             disabled={isTransferring}
             onClick={() => {
               const entry = contextMenu.entry;
-              setContextMenu(null);
+              closeContextMenu();
               void downloadEntry(entry);
             }}
             role="menuitem"
@@ -1310,8 +1320,9 @@ export function RemoteFileTree({
           <button
             className="context-menu__item"
             onClick={() => {
-              setPropertiesEntry(contextMenu.entry);
-              setContextMenu(null);
+              const entry = contextMenu.entry;
+              closeContextMenu();
+              setPropertiesEntry(entry);
             }}
             role="menuitem"
             type="button"
@@ -1324,7 +1335,7 @@ export function RemoteFileTree({
             disabled={isMutating}
             onClick={() => {
               const entry = contextMenu.entry;
-              setContextMenu(null);
+              closeContextMenu();
               void requestDelete([entry]);
             }}
             role="menuitem"
@@ -1336,31 +1347,15 @@ export function RemoteFileTree({
         </div>
       ) : null}
       {deleteConfirmation ? (
-        <div className="remote-file-tree__confirm-backdrop" role="presentation">
-          <section
-            aria-label="确认删除远程文件"
-            aria-modal="true"
-            className="remote-file-tree__confirm"
-            role="dialog"
-          >
-            <h2>确认删除？</h2>
-            <p>
-              将删除 {deleteConfirmation.files} 个文件、{deleteConfirmation.directories} 个目录和 {deleteConfirmation.symlinks} 个符号链接。此操作无法恢复。
-            </p>
-            {deleteConfirmation.paths.length > 0 ? (
-              <p className="remote-file-tree__delete-preview">
-                {deleteConfirmation.paths.slice(0, 5).join("\n")}
-                {deleteConfirmation.truncated ? "\n…" : ""}
-              </p>
-            ) : null}
-            <div className="remote-file-tree__confirm-actions">
-              <button className="button button--ghost" disabled={isMutating} onClick={() => setDeleteConfirmation(null)} type="button">取消</button>
-              <button className="button button--primary" disabled={isMutating} onClick={() => void confirmDelete()} type="button">
-                {isMutating ? "正在删除…" : "删除"}
-              </button>
-            </div>
-          </section>
-        </div>
+        <Dialog title="确认删除远程文件" busy={isMutating} onClose={() => setDeleteConfirmation(null)} footer={<>
+          <Button disabled={isMutating} onClick={() => setDeleteConfirmation(null)} variant="ghost">取消</Button>
+          <Button disabled={isMutating} onClick={() => void confirmDelete()} variant="danger">{isMutating ? "正在删除…" : "删除"}</Button>
+        </>}>
+          <p>将删除 {deleteConfirmation.files} 个文件、{deleteConfirmation.directories} 个目录和 {deleteConfirmation.symlinks} 个符号链接。此操作无法恢复。</p>
+          {deleteConfirmation.paths.length > 0 ? <pre className="app-dialog__preview">
+            {deleteConfirmation.paths.slice(0, 5).join("\n")}{deleteConfirmation.truncated ? "\n…" : ""}
+          </pre> : null}
+        </Dialog>
       ) : null}
       {propertiesEntry ? (
         <FilePropertiesDialog
@@ -1382,6 +1377,7 @@ interface FilePropertiesDialogProps {
 }
 
 function FilePropertiesDialog({ entry, onClose, onSaved, profileId }: FilePropertiesDialogProps) {
+  const { requestConfirmation, confirmationDialog } = useConfirmation();
   const [info, setInfo] = useState<Awaited<ReturnType<typeof sftpFileInfo>> | null>(null);
   const [permissions, setPermissions] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -1409,11 +1405,12 @@ function FilePropertiesDialog({ entry, onClose, onSaved, profileId }: FileProper
   }, [entry.path, profileId]);
 
   async function savePermissions() {
+    if (saving) return;
     if (!/^[0-7]{3,4}$/.test(permissions)) {
       setError("请输入 3 或 4 位八进制权限，例如 644 或 0755。");
       return;
     }
-    if (!window.confirm(`确认将“${entry.name}”的权限修改为 ${permissions}？`)) {
+    if (!await requestConfirmation({ title: "修改文件权限？", message: `确认将“${entry.name}”的权限修改为 ${permissions}？`, confirmLabel: "修改权限" })) {
       return;
     }
     setSaving(true);
@@ -1429,42 +1426,28 @@ function FilePropertiesDialog({ entry, onClose, onSaved, profileId }: FileProper
     }
   }
 
+
   return (
-    <div className="remote-file-tree__confirm-backdrop" role="presentation">
-      <section aria-label="远程文件属性" aria-modal="true" className="remote-file-tree__confirm" role="dialog">
-        <h2>属性</h2>
-        {error ? <p className="remote-file-tree__error">{error}</p> : null}
-        {info ? (
-          <div className="remote-file-tree__properties">
-            <p>路径：{info.path}</p>
-            <p>类型：{info.isSymlink ? "符号链接" : info.isDir ? "目录" : "文件"}</p>
-            <p>大小：{formatSize(info.size)}</p>
-            <p>修改时间：{info.modified === null ? "不可用" : new Date(info.modified * 1000).toLocaleString()}</p>
-            <p>属主：{info.user ?? "不可用"}{info.group ? ` / ${info.group}` : ""}</p>
-            <label>
-              权限（八进制）
-              <input
-                aria-label="八进制权限"
-                disabled={saving || info.permissions === null}
-                onChange={(event) => setPermissions(event.currentTarget.value)}
-                value={permissions}
-              />
-            </label>
-            {info.permissions === null ? <p>此服务器未返回 POSIX 权限。</p> : null}
-          </div>
-        ) : !error ? <p>正在读取属性…</p> : null}
-        <div className="remote-file-tree__confirm-actions">
-          <button className="button button--ghost" disabled={saving} onClick={onClose} type="button">关闭</button>
-          <button
-            className="button button--primary"
-            disabled={saving || !info || info.permissions === null}
-            onClick={() => void savePermissions()}
-            type="button"
-          >
-            {saving ? "正在保存…" : "保存权限"}
-          </button>
-        </div>
-      </section>
-    </div>
+    <Dialog title="远程文件属性" busy={saving} onClose={onClose} footer={<>
+      <Button disabled={saving} onClick={onClose} variant="ghost">关闭</Button>
+      <Button disabled={saving || !info || info.permissions === null} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); void savePermissions(); }} variant="primary">
+        {saving ? "正在保存…" : "保存权限"}
+      </Button>
+    </>}>
+      {error ? <p className="app-dialog__error" role="alert">{error}</p> : null}
+      {info ? <>
+        <dl className="app-dialog__details">
+          {[
+            ["路径", info.path], ["类型", info.isSymlink ? "符号链接" : info.isDir ? "目录" : "文件"],
+            ["大小", formatSize(info.size)], ["修改时间", info.modified === null ? "不可用" : new Date(info.modified * 1000).toLocaleString()],
+            ["属主", `${info.user ?? "不可用"}${info.group ? ` / ${info.group}` : ""}`],
+          ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl>
+        <label className="field"><span>权限（八进制）</span><input aria-label="八进制权限" disabled={saving || info.permissions === null}
+          onChange={(event) => setPermissions(event.currentTarget.value)} value={permissions} /></label>
+        {info.permissions === null ? <p>此服务器未返回 POSIX 权限。</p> : null}
+      </> : !error ? <p role="status">正在读取属性…</p> : null}
+      {confirmationDialog}
+    </Dialog>
   );
 }

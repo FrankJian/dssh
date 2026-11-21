@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -18,7 +18,10 @@ import {
 } from "../services/sftpService";
 import type { EditorOptions } from "../settings/settings";
 import { Icon } from "../ui/Icon";
+import { handleMenuNavigation, dismissMenu } from "../ui/menuNavigation";
 import { toast } from "../ui/ToastHost";
+import { Dialog } from "../ui/Dialog";
+import { Button } from "../ui/Button";
 
 interface RemoteFileEditorProps {
   activePath: string | null;
@@ -35,6 +38,7 @@ interface RemoteFileEditorProps {
 interface EditorDocument {
   content: string;
   error: string | null;
+  saveError: string | null;
   isLoading: boolean;
   isSaving: boolean;
   savedContent: string;
@@ -104,6 +108,8 @@ export function RemoteFileEditor({
   const [images, setImages] = useState<Record<string, ImageDocument>>({});
   const [closePrompt, setClosePrompt] = useState<ClosePrompt | null>(null);
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenu | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [markdownPreviewPath, setMarkdownPreviewPath] = useState<string | null>(null);
   const [previewWidth, setPreviewWidth] = useState(DEFAULT_PREVIEW_WIDTH);
   const [languageOverrides, setLanguageOverrides] = useState<Record<string, string>>({});
@@ -113,10 +119,25 @@ export function RemoteFileEditor({
   const imagesRef = useRef(images);
   imagesRef.current = images;
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentWidth, setContentWidth] = useState(0);
+  const previewResizeCleanup = useRef<(() => void) | null>(null);
+  const previewMaxWidth = Math.max(MIN_PREVIEW_WIDTH, Math.min(MAX_PREVIEW_WIDTH, Math.floor(contentWidth * 0.6)));
+  const visiblePreviewWidth = Math.min(previewWidth, previewMaxWidth);
   const editorMaxScrollTopRef = useRef(0);
   const editorScrollTopRef = useRef(0);
   const programmaticEditorScrollRef = useRef<number | null>(null);
   const programmaticPreviewScrollRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const measure = () => setContentWidth(content.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => { observer.disconnect(); previewResizeCleanup.current?.(); };
+  }, []);
 
   useEffect(() => {
     // Each SFTP profile has an independent remote namespace. Clear cached
@@ -142,6 +163,7 @@ export function RemoteFileEditor({
       [activePath]: {
         content: "",
         error: null,
+        saveError: null,
         isLoading: true,
         isSaving: false,
         savedContent: "",
@@ -157,6 +179,7 @@ export function RemoteFileEditor({
           [activePath]: {
             content: file.content,
             error: null,
+            saveError: null,
             isLoading: false,
             isSaving: false,
             savedContent: file.content,
@@ -172,6 +195,7 @@ export function RemoteFileEditor({
           [activePath]: {
             content: "",
             error: error instanceof Error ? error.message : `无法读取${isLocalFileSystem ? "本地" : "远程"}文件。`,
+            saveError: null,
             isLoading: false,
             isSaving: false,
             savedContent: "",
@@ -237,6 +261,15 @@ export function RemoteFileEditor({
       return Object.keys(next).length === Object.keys(current).length ? current : next;
     });
   }, [filePaths]);
+
+  useLayoutEffect(() => {
+    if (!tabContextMenu || !menuRef.current) return;
+    const menu = menuRef.current;
+    const bounds = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(tabContextMenu.x, window.innerWidth - bounds.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(tabContextMenu.y, window.innerHeight - bounds.height - 8))}px`;
+    menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [tabContextMenu]);
 
   useEffect(() => {
     if (!tabContextMenu) {
@@ -325,12 +358,16 @@ export function RemoteFileEditor({
     if (activeDocument.isSaving) {
       return "正在保存…";
     }
+    if (activeDocument.error) return "读取失败";
+    if (activeDocument.saveError) return "保存失败";
     return activeIsDirty ? "未保存" : "已保存";
   }, [activeDocument, activeImage?.isLoading, activeIsBinary, activeIsDirty, activeIsImage]);
   const statusIcon = activeIsImage
     ? "fileImage"
     : activeIsBinary
       ? "file"
+    : activeDocument?.error || activeDocument?.saveError
+      ? "info"
     : activeDocument?.isLoading || activeDocument?.isSaving
       ? "refresh"
       : activeIsDirty
@@ -340,7 +377,7 @@ export function RemoteFileEditor({
   function updateContent(path: string, content: string) {
     setDocuments((current) => ({
       ...current,
-      [path]: { ...current[path], content, error: null },
+      [path]: { ...current[path], content, error: null, saveError: null },
     }));
   }
 
@@ -369,7 +406,7 @@ export function RemoteFileEditor({
     const content = document.content;
     setDocuments((current) => ({
       ...current,
-      [path]: { ...current[path], error: null, isSaving: true },
+      [path]: { ...current[path], saveError: null, isSaving: true },
     }));
     try {
       if (isLocalFileSystem) {
@@ -391,7 +428,7 @@ export function RemoteFileEditor({
       const message = error instanceof Error ? error.message : `保存${isLocalFileSystem ? "本地" : "远程"}文件失败。`;
       setDocuments((current) => ({
         ...current,
-        [path]: { ...current[path], error: message, isSaving: false },
+        [path]: { ...current[path], saveError: message, isSaving: false },
       }));
       toast(message, "error");
       return false;
@@ -429,26 +466,34 @@ export function RemoteFileEditor({
   }
 
   function requestTabClose(paths: string[]) {
-    setTabContextMenu(null);
+    dismissMenu(() => setTabContextMenu(null), tabContextMenu ? menuTriggerRef.current : null);
     closeQueuedFiles(paths);
   }
 
   function startPreviewResize(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
     event.preventDefault();
+    previewResizeCleanup.current?.();
     const startX = event.clientX;
-    const startWidth = previewWidth;
+    const startWidth = visiblePreviewWidth;
+    const oldCursor = document.body.style.cursor;
+    const oldSelect = document.body.style.userSelect;
     const handleMove = (moveEvent: MouseEvent) => {
       const nextWidth = startWidth + startX - moveEvent.clientX;
-      setPreviewWidth(Math.min(MAX_PREVIEW_WIDTH, Math.max(MIN_PREVIEW_WIDTH, Math.round(nextWidth))));
+      setPreviewWidth(Math.min(previewMaxWidth, Math.max(MIN_PREVIEW_WIDTH, Math.round(nextWidth))));
     };
     const handleUp = () => {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      window.removeEventListener("blur", handleUp);
+      document.body.style.cursor = oldCursor;
+      document.body.style.userSelect = oldSelect;
+      previewResizeCleanup.current = null;
     };
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
+    window.addEventListener("blur", handleUp);
+    previewResizeCleanup.current = handleUp;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }
@@ -528,6 +573,7 @@ export function RemoteFileEditor({
               key={path}
               onContextMenu={(event) => {
                 event.preventDefault();
+                menuTriggerRef.current = event.currentTarget.querySelector<HTMLButtonElement>(".remote-file-editor__tab-label");
                 setTabContextMenu({ path, x: event.clientX, y: event.clientY });
               }}
               role="tab"
@@ -574,7 +620,7 @@ export function RemoteFileEditor({
         {status ? (
           <span
             aria-label={status}
-            className={`remote-file-editor__status${activeIsDirty ? " is-dirty" : ""}`}
+            className={`remote-file-editor__status${activeDocument?.error || activeDocument?.saveError ? " is-error" : activeIsDirty ? " is-dirty" : ""}`}
             title={status}
           >
             <Icon name={statusIcon} height="14" width="14" />
@@ -621,8 +667,12 @@ export function RemoteFileEditor({
       ) : activeDocument ? null : (
         <p className="remote-file-editor__message">从左侧文件列表选择一个文本文件以打开编辑器。</p>
       )}
+      {activeDocument?.saveError && closePrompt?.path !== activePath ? (
+        <p className="remote-file-editor__message remote-file-editor__message--error" role="alert">{activeDocument.saveError}</p>
+      ) : null}
       <div
         className="remote-file-editor__content"
+        ref={contentRef}
         data-hidden={activeIsImage || activeIsBinary || !activeDocument || activeDocument.isLoading || Boolean(activeDocument.error)}
       >
         <MonacoRemoteEditor
@@ -644,11 +694,22 @@ export function RemoteFileEditor({
               <div
                 aria-label="调整 Markdown 预览宽度"
                 aria-orientation="vertical"
+                aria-valuemin={MIN_PREVIEW_WIDTH}
+                aria-valuemax={previewMaxWidth}
+                aria-valuenow={visiblePreviewWidth}
                 className="remote-file-editor__preview-divider"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
+                  event.preventDefault(); event.stopPropagation();
+                  const next = event.key === "Home" ? MIN_PREVIEW_WIDTH : event.key === "End" ? previewMaxWidth
+                    : visiblePreviewWidth + (event.key === "ArrowLeft" ? 1 : -1) * (event.shiftKey ? 40 : 16);
+                  setPreviewWidth(Math.max(MIN_PREVIEW_WIDTH, Math.min(previewMaxWidth, next)));
+                }}
                 onMouseDown={startPreviewResize}
                 role="separator"
               />
-              <aside className="remote-file-editor__preview" style={{ width: `${previewWidth}px` }}>
+              <aside className="remote-file-editor__preview" style={{ "--editor-preview-width": `${visiblePreviewWidth}px` } as CSSProperties}>
                 <header className="remote-file-editor__preview-header">
                   <span>预览</span>
                   <button
@@ -684,9 +745,12 @@ export function RemoteFileEditor({
       </div>
       {tabContextMenu ? (
         <div
-          className="context-menu"
+          className="context-menu is-glass-overlay"
+          ref={menuRef}
           onClick={(event) => event.stopPropagation()}
           role="menu"
+          aria-label="文件标签操作"
+          onKeyDown={(event) => handleMenuNavigation(event, () => { setTabContextMenu(null); menuTriggerRef.current?.focus(); })}
           style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
         >
           <button
@@ -739,48 +803,22 @@ export function RemoteFileEditor({
         </div>
       ) : null}
       {closePrompt ? (
-        <div className="remote-file-editor__confirm-backdrop" role="presentation">
-          <section
-            aria-label="未保存修改"
-            aria-modal="true"
-            className="remote-file-editor__confirm"
-            role="dialog"
-          >
-            <h2>保存修改？</h2>
-            <p>“{fileName(closePrompt.path)}”有未保存的修改。</p>
-            <div className="remote-file-editor__confirm-actions">
-              <button className="button button--ghost" onClick={() => setClosePrompt(null)} type="button">取消</button>
-              <button
-                className="button button--ghost"
-                onClick={() => {
-                  const { path, remainingPaths } = closePrompt;
-                  setClosePrompt(null);
-                  closeFileNow(path);
-                  closeQueuedFiles(remainingPaths);
-                }}
-                type="button"
-              >
-                放弃修改
-              </button>
-              <button
-                className="button button--primary"
-                onClick={() => {
-                  const { path, remainingPaths } = closePrompt;
-                  void saveFile(path).then((saved) => {
-                    if (saved) {
-                      setClosePrompt(null);
-                      closeFileNow(path);
-                      closeQueuedFiles(remainingPaths);
-                    }
-                  });
-                }}
-                type="button"
-              >
-                保存并关闭
-              </button>
-            </div>
-          </section>
-        </div>
+        <Dialog title="保存修改？" busy={Boolean(documents[closePrompt.path]?.isSaving)} onClose={() => setClosePrompt(null)} footer={<>
+          <Button disabled={documents[closePrompt.path]?.isSaving} onClick={() => setClosePrompt(null)} variant="ghost">取消</Button>
+          <Button disabled={documents[closePrompt.path]?.isSaving} onClick={() => {
+            const { path, remainingPaths } = closePrompt;
+            setClosePrompt(null); closeFileNow(path); closeQueuedFiles(remainingPaths);
+          }}>放弃修改</Button>
+          <Button disabled={documents[closePrompt.path]?.isSaving} onClick={() => {
+            const { path, remainingPaths } = closePrompt;
+            void saveFile(path).then((saved) => {
+              if (saved) { setClosePrompt(null); closeFileNow(path); closeQueuedFiles(remainingPaths); }
+            });
+          }} variant="primary">{documents[closePrompt.path]?.isSaving ? "正在保存…" : "保存并关闭"}</Button>
+        </>}>
+          <p>“{fileName(closePrompt.path)}”有未保存的修改。</p>
+          {documents[closePrompt.path]?.saveError ? <p className="app-dialog__error" role="alert">{documents[closePrompt.path].saveError}</p> : null}
+        </Dialog>
       ) : null}
     </section>
   );

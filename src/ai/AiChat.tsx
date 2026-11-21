@@ -3,6 +3,7 @@ import { MAX_AI_QUESTION_ANSWER_LENGTH, type AiQuestionAnswer, type AiServerCont
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
+import { useConfirmation } from "../ui/useConfirmation";
 import { SelectMenu } from "../ui/SelectMenu";
 import { Markdown } from "./Markdown";
 import type { ChatItem } from "./useAiChat";
@@ -45,6 +46,9 @@ export function AiChat({
   currentServer = null,
 }: AiChatProps) {
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const { requestConfirmation, confirmationDialog } = useConfirmation();
+  const latestChat = useRef(chat);
+  latestChat.current = chat;
   const listRef = useRef<HTMLDivElement | null>(null);
   const { options, providers } = config;
   const { answerQuestion, approve, cancel, conversation, isHistoryReady, send, setDraft } = chat;
@@ -88,6 +92,8 @@ export function AiChat({
   }, [items, conversation?.id, isRunning]);
 
   const canSend = Boolean(conversation && chat.eventsReady && isConfigured && isHistoryReady && !locked && !isRunning && !resetting && draft.trim());
+  const showComposer = Boolean(isConfigured || items?.length || isRunning);
+  const composerVisible = showComposer || Boolean(chat.error || config.error);
 
   function handleSend() {
     if (!activeProvider || !canSend) {
@@ -103,10 +109,18 @@ export function AiChat({
     }
   }
 
-  function handleClear() {
-    if (window.confirm("清空当前会话的聊天记录和草稿，并关闭它尚未接管的后台终端？聊天记录无法恢复。")) {
-      chat.reset(false);
-    }
+  async function handleReset(remove: boolean) {
+    const id = chat.activeId;
+    if (!id) return;
+    const confirmed = await requestConfirmation({
+      title: remove ? "删除 AI 会话？" : "清空聊天记录？",
+      message: remove
+        ? "删除当前会话及其聊天记录，并关闭它尚未接管的后台终端？聊天记录无法恢复。"
+        : "清空当前会话的聊天记录和草稿，并关闭它尚未接管的后台终端？聊天记录无法恢复。",
+      confirmLabel: remove ? "删除会话" : "清空记录", destructive: true,
+    });
+    const current = latestChat.current;
+    if (confirmed && current.activeId === id && !current.running.includes(id) && !current.resetting.includes(id)) current.reset(remove);
   }
 
   const placeholder = locked
@@ -120,7 +134,7 @@ export function AiChat({
       : "请先配置模型后端";
 
   return (
-    <section className={`ai-chat ai-chat--${layout}${layout === "panel" ? ` ai-chat--${dockPosition}` : ""}`} aria-label="AI 对话">
+    <section className={`ai-chat ai-chat--${layout}${layout === "panel" ? ` ai-chat--${dockPosition}` : ""}${composerVisible ? "" : " ai-chat--setup"}`} aria-label="AI 对话">
       <header className="ai-chat__header">
         <SelectMenu ariaLabel="切换 AI 会话" className="ai-chat__session-select"
           options={sessionOptions.length ? sessionOptions : [{ value: "", label: "AI 助手", disabled: true }]}
@@ -141,10 +155,8 @@ export function AiChat({
               if (selected) setRenaming({ id: selected.value, title: selected.title });
             }}
             sessionActionsDisabled={!conversation || isRunning || resetting}
-            onClear={handleClear}
-            onDelete={() => {
-              if (window.confirm("删除当前会话及其聊天记录，并关闭它尚未接管的后台终端？")) chat.reset(true);
-            }}
+            onClear={() => void handleReset(false)}
+            onDelete={() => void handleReset(true)}
           />
           {onClose ? (
             <IconButton label="关闭 AI 助手" onClick={onClose}>
@@ -204,58 +216,61 @@ export function AiChat({
         )}
       </div>
 
-      <div className="ai-chat__composer">
+      {composerVisible ? <div className="ai-chat__composer">
         {chat.error || config.error ? <div className="ai-provider__error" role="alert">{chat.error ?? config.error}</div> : null}
-        <textarea
-          aria-label="向 AI 提问"
-          className="ai-chat__input"
-          disabled={!conversation || !isConfigured || !isHistoryReady || locked || resetting}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          rows={layout === "panel" ? 2 : 3}
-          value={draft}
-        />
-        <div className="ai-chat__composer-actions">
-          {modelOptions.length ? (
-            <SelectMenu
-              ariaLabel="切换厂商与模型"
-              className="ai-chat__model-select"
-              disabled={!conversation || isRunning || resetting || !config.isReady}
-              searchable
-              searchPlaceholder="搜索厂商或模型…"
-              value={activeProvider ? JSON.stringify([activeProvider.id, activeProvider.model]) : ""}
-              options={[{ label: "选择模型", value: "", disabled: true }, ...modelOptions]}
-              onChange={(value) => {
-                const [id, model] = JSON.parse(value) as [string, string];
-                const selected = providers.find((provider) => provider.id === id)?.models.find((entry) => entry.id === model);
-                if (selected) chat.setSelection({ providerId: id, model, reasoningLevel: selected.reasoningEffort ?? selected.reasoningLevels[0]?.level ?? null });
-              }}
-            />
-          ) : (
-            <Button className="ai-chat__configure" onClick={onOpenConfig} title="打开模型配置">
-              <Icon name="settings" height="16" width="16" />配置模型
-            </Button>
-          )}
-          {activeProvider && currentModel?.reasoningLevels.length ? (
-            <SelectMenu ariaLabel="选择推理档位" className="ai-chat__reasoning-select" disabled={!conversation || isRunning || resetting}
-              value={reasoningLevel ?? ""}
-              options={currentModel.reasoningLevels.map((row) => ({ value: row.level, label: row.level }))}
-              onChange={(level) => chat.setSelection({ providerId: activeProvider.id, model: currentModel.id, reasoningLevel: level })} />
-          ) : null}
-          {isRunning ? (
-            <button className="ai-chat__send is-stop" onClick={cancel} disabled={stopping} type="button">
-              <Icon name="stop" height="16" width="16" />
-              {stopping ? "正在停止…" : "停止"}
-            </button>
-          ) : (
-            <button className="ai-chat__send" disabled={!canSend} onClick={handleSend} type="button">
-              <Icon name="send" height="16" width="16" />
-              发送
-            </button>
-          )}
-        </div>
-      </div>
+        {showComposer ? <div className="ai-chat__input-surface">
+          <textarea
+            aria-label="向 AI 提问"
+            className="ai-chat__input"
+            disabled={!conversation || !isConfigured || !isHistoryReady || locked || resetting}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            rows={layout === "panel" ? 2 : 3}
+            value={draft}
+          />
+          <div className="ai-chat__composer-actions">
+            {modelOptions.length ? (
+              <SelectMenu
+                ariaLabel="切换厂商与模型"
+                className="ai-chat__model-select"
+                disabled={!conversation || isRunning || resetting || !config.isReady}
+                searchable
+                searchPlaceholder="搜索厂商或模型…"
+                value={activeProvider ? JSON.stringify([activeProvider.id, activeProvider.model]) : ""}
+                options={[{ label: "选择模型", value: "", disabled: true }, ...modelOptions]}
+                onChange={(value) => {
+                  const [id, model] = JSON.parse(value) as [string, string];
+                  const selected = providers.find((provider) => provider.id === id)?.models.find((entry) => entry.id === model);
+                  if (selected) chat.setSelection({ providerId: id, model, reasoningLevel: selected.reasoningEffort ?? selected.reasoningLevels[0]?.level ?? null });
+                }}
+              />
+            ) : (
+              <Button className="ai-chat__configure" onClick={onOpenConfig} title="打开模型配置">
+                <Icon name="settings" height="16" width="16" />配置模型
+              </Button>
+            )}
+            {activeProvider && currentModel?.reasoningLevels.length ? (
+              <SelectMenu ariaLabel="选择推理档位" className="ai-chat__reasoning-select" disabled={!conversation || isRunning || resetting}
+                value={reasoningLevel ?? ""}
+                options={currentModel.reasoningLevels.map((row) => ({ value: row.level, label: row.level }))}
+                onChange={(level) => chat.setSelection({ providerId: activeProvider.id, model: currentModel.id, reasoningLevel: level })} />
+            ) : null}
+            {isRunning ? (
+              <Button className="ai-chat__send is-stop" onClick={cancel} disabled={stopping}>
+                <Icon name="stop" height="16" width="16" />
+                {stopping ? "正在停止…" : "停止"}
+              </Button>
+            ) : (
+              <Button className="ai-chat__send" variant="primary" disabled={!canSend} onClick={handleSend}>
+                <Icon name="send" height="16" width="16" />
+                发送
+              </Button>
+            )}
+          </div>
+        </div> : null}
+      </div> : null}
+      {confirmationDialog}
     </section>
   );
 }
@@ -333,12 +348,11 @@ function AiEmptyState({
         </>
       ) : (
         <>
-          <p className="ai-chat__empty-title">尚未配置模型后端</p>
-          <p className="ai-chat__empty-hint">请先配置 API 地址、密钥与模型，即可开始使用 AI 助手。</p>
-          <button className="ai-chat__send" onClick={onOpenConfig} type="button">
+          <p className="ai-chat__empty-title">尚未配置模型服务</p>
+          <Button onClick={onOpenConfig} variant="primary">
             <Icon name="settings" height="16" width="16" />
-            前往配置
-          </button>
+            配置模型
+          </Button>
         </>
       )}
     </div>

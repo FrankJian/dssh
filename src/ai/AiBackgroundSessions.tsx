@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { TerminalSession } from "../models";
 import { closeAiBackgroundSession, listAiBackgroundSessions, takeOverAiSession } from "../services/aiService";
 import { Button } from "../ui/Button";
+import { useConfirmation } from "../ui/useConfirmation";
 
 const STATUS: Record<TerminalSession["status"], string> = {
   connecting: "连接中", connected: "已连接", reconnecting: "重连中", disconnecting: "断开中",
@@ -15,6 +16,7 @@ export function AiBackgroundSessions({ conversationId, onTakeOver }: {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { requestConfirmation, confirmationDialog } = useConfirmation();
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +41,11 @@ export function AiBackgroundSessions({ conversationId, onTakeOver }: {
 
   async function act(session: TerminalSession, takeOver: boolean) {
     if (busy) return;
-    if (!takeOver && !window.confirm(`关闭后台会话“${session.title}”？这可能中断正在运行的任务。`)) return;
+    if (!takeOver && !await requestConfirmation({
+      title: "关闭后台会话？",
+      message: `关闭“${session.title}”可能中断正在运行的任务。`,
+      confirmLabel: "关闭会话", destructive: true,
+    })) return;
     setBusy(true); setError(null);
     try {
       if (takeOver) {
@@ -52,16 +58,17 @@ export function AiBackgroundSessions({ conversationId, onTakeOver }: {
     } finally { setBusy(false); }
   }
 
-  if (!sessions.length && !error) return null;
+  if (!sessions.length && !error) return confirmationDialog;
   return <div className="ai-background-sessions" aria-label="AI 后台会话">
     {sessions.length ? <details>
       <summary>后台会话 · {sessions.length}</summary>
       {sessions.map((session) => <div className="ai-background-sessions__row" key={session.id}>
         <span title={session.id}>{session.title}<small>{STATUS[session.status]}</small></span>
         {onTakeOver ? <Button variant="ghost" disabled={busy} onClick={() => void act(session, true)} title="显示原终端并停止 AI 输入">接管</Button> : null}
-        <Button variant="ghost" disabled={busy} onClick={() => void act(session, false)}>关闭</Button>
+        <Button variant="ghost" disabled={busy} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); void act(session, false); }}>关闭</Button>
       </div>)}
     </details> : null}
     {error ? <div className="ai-provider__error" role="alert">{error}</div> : null}
+    {confirmationDialog}
   </div>;
 }

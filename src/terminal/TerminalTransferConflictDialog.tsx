@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { TerminalTransferConflictEvent } from "../services/sshSessionService";
 import { toast } from "../ui/ToastHost";
+import { Button } from "../ui/Button";
+import { useDialogFocus } from "../ui/useDialogFocus";
 
 interface TerminalTransferConflictDialogProps {
   conflict: TerminalTransferConflictEvent;
@@ -8,6 +10,7 @@ interface TerminalTransferConflictDialogProps {
 }
 
 export function TerminalTransferConflictDialog({ conflict, onResolve }: TerminalTransferConflictDialogProps) {
+  const dialogRef = useDialogFocus();
   const [busy, setBusy] = useState(false);
 
   async function resolve(overwrite: boolean) {
@@ -24,6 +27,7 @@ export function TerminalTransferConflictDialog({ conflict, onResolve }: Terminal
   return (
     <div className="profile-editor-backdrop terminal-transfer-conflict-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         aria-describedby="zmodem-conflict-description"
         aria-label="处理同名下载文件"
         aria-modal="true"
@@ -31,6 +35,7 @@ export function TerminalTransferConflictDialog({ conflict, onResolve }: Terminal
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
+            event.stopPropagation();
             void resolve(false);
           }
         }}
@@ -47,12 +52,12 @@ export function TerminalTransferConflictDialog({ conflict, onResolve }: Terminal
           </p>
         </div>
         <div className="hostkey-dialog__actions">
-          <button autoFocus className="button" disabled={busy} onClick={() => void resolve(false)} type="button">
+          <Button autoFocus disabled={busy} onClick={() => void resolve(false)} variant="secondary">
             跳过
-          </button>
-          <button className="button button--primary" disabled={busy} onClick={() => void resolve(true)} type="button">
+          </Button>
+          <Button disabled={busy} onClick={() => void resolve(true)} variant="danger">
             覆盖
-          </button>
+          </Button>
         </div>
       </section>
     </div>

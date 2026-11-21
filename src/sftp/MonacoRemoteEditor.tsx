@@ -277,7 +277,7 @@ export function MonacoRemoteEditor({
 
   return (
     <div className="remote-file-editor__monaco" data-hidden={hidden}>
-      <div aria-label="远程文件内容" className="remote-file-editor__monaco-host" ref={hostRef} />
+      <div aria-label="文件内容" className="remote-file-editor__monaco-host" ref={hostRef} />
       {error ? <p className="remote-file-editor__message remote-file-editor__message--error">{error}</p> : null}
     </div>
   );

@@ -3,6 +3,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TerminalSession } from "../models";
 import { Icon, type IconName } from "../ui/Icon";
+import { handleMenuNavigation } from "../ui/menuNavigation";
 
 interface TerminalSessionMenuProps {
   session: TerminalSession;
@@ -81,21 +82,7 @@ export function TerminalSessionMenu({ session, onReconnect, onCancelReconnect,
         aria-label="会话工具"
         className="context-menu is-glass-overlay"
         id={menuId}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" || event.key === "Tab") {
-            if (event.key === "Escape") event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-            triggerRef.current?.focus();
-            return;
-          }
-          const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")];
-          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-          const next = event.key === "ArrowDown" ? (index + 1) % buttons.length
-            : event.key === "ArrowUp" ? (index - 1 + buttons.length) % buttons.length
-            : event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : null;
-          if (next !== null) { event.preventDefault(); buttons[next]?.focus(); }
-        }}
+        onKeyDown={(event) => handleMenuNavigation(event, () => { setOpen(false); triggerRef.current?.focus(); })}
         ref={menuRef}
         role="menu"
       >

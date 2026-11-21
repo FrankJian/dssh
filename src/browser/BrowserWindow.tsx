@@ -4,6 +4,7 @@ import { isMacOS } from "../platform";
 import { useTheme } from "../theme/useTheme";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { WorkspaceToolbar } from "../ui/WorkspaceToolbar";
 import { useBrowserTabs } from "./useBrowserTabs";
 import "./browser.css";
 
@@ -31,6 +32,14 @@ export function BrowserWorkspace({ tab, visible }: { tab: BrowserTab; visible: b
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
+  function focusAddress() {
+    if (visibleRef.current && !document.querySelector('[aria-modal="true"], dialog[open]')) input.current?.focus({ preventScroll: true });
+  }
+
+  useEffect(() => {
+    if (!opened && !tab.url) focusAddress();
+  }, [tab.id, tab.url, visible, opened]);
+
   function bounds() {
     const rect = region.current!.getBoundingClientRect();
     return { x: Math.max(0, rect.x), y: Math.max(0, rect.y), width: Math.max(1, rect.width), height: Math.max(1, rect.height) };
@@ -46,6 +55,7 @@ export function BrowserWorkspace({ tab, visible }: { tab: BrowserTab; visible: b
     } catch (cause) {
       mounted.current = false;
       setError(cause instanceof Error ? cause.message : "打开网页失败。"); setLoading(false);
+      focusAddress();
     }
   }
   useEffect(() => {
@@ -120,16 +130,24 @@ export function BrowserWorkspace({ tab, visible }: { tab: BrowserTab; visible: b
   }
 
   return <main className="browser-window" aria-label="内置浏览器">
-    <form className="browser-toolbar" onSubmit={submit}>
-      <IconButton disabled={!opened} label="后退" onClick={() => void action("back")}><Icon name="arrowLeft" /></IconButton>
-      <IconButton disabled={!opened} label="前进" onClick={() => void action("forward")}><Icon name="arrowRight" /></IconButton>
-      <IconButton disabled={!opened} label={loading ? "停止加载" : "刷新"} onClick={() => void action(loading ? "stop" : "reload")}><Icon name={loading ? "stop" : "refresh"} /></IconButton>
-      <input ref={input} aria-label="网页地址" placeholder="https://example.com 或 http://127.0.0.1:8080" value={address} onChange={(event) => setAddress(event.target.value)} onFocus={(event) => event.currentTarget.select()} spellCheck={false} autoComplete="off" />
+    <WorkspaceToolbar label="浏览器导航" className="browser-toolbar" identity={<>
+      <div className="browser-toolbar__navigation" role="group" aria-label="页面导航">
+        <IconButton disabled={!opened} label="后退" onClick={() => void action("back")}><Icon name="arrowLeft" /></IconButton>
+        <IconButton disabled={!opened} label="前进" onClick={() => void action("forward")}><Icon name="arrowRight" /></IconButton>
+        <IconButton disabled={!opened} label={loading ? "停止加载" : "刷新"} onClick={() => void action(loading ? "stop" : "reload")}><Icon name={loading ? "stop" : "refresh"} /></IconButton>
+      </div>
+      <form className="browser-address" onSubmit={submit}>
+        <Icon name="globe" height="14" width="14" />
+        <input ref={input} aria-label="网页地址" placeholder="https://example.com 或 http://127.0.0.1:8080" value={address} onChange={(event) => setAddress(event.target.value)} onFocus={(event) => event.currentTarget.select()} spellCheck={false} autoComplete="off" />
+      </form>
+    </>}>
       <IconButton label="移至独立窗口" onClick={() => void detachBrowserTab(tab.id).catch((cause: Error) => setError(cause.message))}><Icon name="externalWindow" /></IconButton>
       <IconButton label="新建浏览器标签" onClick={() => void openBrowser().catch((cause: Error) => setError(cause.message))}><Icon name="plus" /></IconButton>
-    </form>
+    </WorkspaceToolbar>
     {error ? <div className="browser-status browser-status--error" role="alert">
-      {error}
+      <Icon name="info" height="16" width="16" />
+      <span>{error}</span>
+      <IconButton label="关闭浏览器提示" onClick={() => { setError(""); focusAddress(); }}><Icon name="close" height="14" width="14" /></IconButton>
     </div> : null}
     {/* Loading must not change this region's geometry: native page-load events
         can arrive repeatedly during redirects or embedded content loads. */}

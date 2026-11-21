@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "../ui/Button";
-import { useId } from "react";
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { SettingsSwitch } from "../ui/SettingsSwitch";
 import type { SshAuthDraft } from "./authDraft";
 
 interface Props {
@@ -18,7 +19,6 @@ export function SshAuthenticationFields({
   draft, onChange, onError, keepPassword, keepPassphrase,
   clearPassphrase, onClearPassphrase, disabled,
 }: Props) {
-  const authId = useId();
 
   async function selectKey() {
     try {
@@ -39,31 +39,10 @@ export function SshAuthenticationFields({
           onChange={(event) => onChange({ username: event.currentTarget.value })} />
       </label>
       <div className="field">
-        <span id={authId}>认证方式</span>
-        <div className="ssh-auth-toggle" role="radiogroup" aria-labelledby={authId}>
-          <label className="ssh-auth-toggle__option">
-            <input
-              checked={draft.authType === "password"}
-              disabled={disabled}
-              name={authId}
-              onChange={() => onChange({ authType: "password" })}
-              type="radio"
-              value="password"
-            />
-            <span>密码</span>
-          </label>
-          <label className="ssh-auth-toggle__option">
-            <input
-              checked={draft.authType === "privateKey"}
-              disabled={disabled}
-              name={authId}
-              onChange={() => onChange({ authType: "privateKey" })}
-              type="radio"
-              value="privateKey"
-            />
-            <span>私钥</span>
-          </label>
-        </div>
+        <span>认证方式</span>
+        <SegmentedControl label="SSH 认证方式" className="ssh-auth-toggle" value={draft.authType}
+          options={[{ value: "password", label: "密码", disabled }, { value: "privateKey", label: "私钥", disabled }]}
+          onChange={(authType) => onChange({ authType })} />
       </div>
       {draft.authType === "password" ? (
         <label className="field">
@@ -91,10 +70,10 @@ export function SshAuthenticationFields({
             </label>
           </div>
           {keepPassphrase && onClearPassphrase ? (
-            <label className="ssh-credentials__clear">
-              <input checked={clearPassphrase} disabled={disabled} type="checkbox"
+            <label className="settings-control-row">
+              <span>清除已保存的私钥口令</span>
+              <SettingsSwitch checked={clearPassphrase} disabled={disabled}
                 onChange={(event) => onClearPassphrase(event.currentTarget.checked)} />
-              清除已保存的私钥口令
             </label>
           ) : null}
         </>

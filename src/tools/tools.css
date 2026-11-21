@@ -17,6 +17,8 @@
   grid-template-columns: minmax(var(--tool-catalog-min-width), var(--tool-catalog-max-width)) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+  gap: var(--workspace-inset);
+  padding: var(--workspace-inset);
 }
 
 .tools-workspace__catalog {
@@ -24,7 +26,9 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-inline-end: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
   background: var(--bg-sidebar);
 }
 
@@ -69,6 +73,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
+  transition: width var(--motion-standard) var(--ease-standard), background var(--motion-fast) ease;
 }
 
 .tools-workspace__search[data-expanded="true"] {
@@ -107,29 +112,8 @@
   border-radius: var(--radius-sm);
 }
 
-.tools-workspace__filters {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-sunken);
-}
 
-.tools-workspace__filters .button {
-  width: 100%;
-  min-width: 0;
-  padding-inline: var(--space-1);
-  white-space: nowrap;
-}
 
-.tools-workspace__filters .button[aria-pressed="true"] {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-weight: 600;
-}
 
 .tools-workspace__groups {
   display: flex;
@@ -239,66 +223,31 @@ button.tools-workspace__category[data-current="true"] {
 
 .tools-workspace__main {
   container: tool-content / inline-size;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
-  background: var(--bg-app);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
 }
 
 .tools-workspace__body {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
   max-width: var(--tool-content-max-width);
   margin-inline: auto;
   padding: var(--tool-page-padding);
 }
 
-.tools-workspace__heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-3);
-  margin-block-end: var(--space-6);
-}
+.tools-workspace__main > .workspace-toolbar { flex: 0 0 auto; }
+.tools-workspace__main > .workspace-toolbar h2 { font-size: 13px; font-weight: 600; }
+.tools-workspace__page:not([hidden]) { animation: workspace-reveal var(--motion-standard) var(--ease-standard); }
 
-.tools-workspace__identity {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.tools-workspace__symbol {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: var(--tool-symbol-size);
-  height: var(--tool-symbol-size);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.tools-workspace__identity p {
-  font-size: var(--tool-caption-size);
-  color: var(--text-muted);
-}
-
-.tools-workspace__identity h2 {
-  margin-block-start: var(--space-1);
-  color: var(--text-strong);
-  font-size: var(--tool-heading-size);
-  letter-spacing: -.02em;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.tools-workspace__heading .button {
-  gap: var(--space-2);
-  flex: none;
-}
-
-.tools-workspace__heading .button[aria-pressed="true"] {
-  border-color: var(--accent-border);
+.tools-workspace__main > .workspace-toolbar .button[aria-pressed="true"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -352,7 +301,10 @@ button.tools-workspace__category[data-current="true"] {
 
 .tool-form__switch {
   cursor: pointer;
+  min-height: var(--control-height);
 }
+
+.tool-form__toolbar > .search-field { flex: 1; min-width: 0; }
 
 .tool-form__setting > span {
   flex: none;
@@ -476,9 +428,6 @@ button.tools-workspace__category[data-current="true"] {
   padding: 0;
 }
 
-.tools-workspace__filters .tool-action {
-  width: 100%;
-}
 
 .tool-result-dialog {
   width: calc(100vw - var(--space-6) * 2);
@@ -647,15 +596,14 @@ button.tools-workspace__category[data-current="true"] {
   }
 }
 
-@container toolbox (width < 36rem) {
+@container toolbox (width < 680px) {
   .tools-workspace__layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, var(--tool-catalog-max-stacked-height)) minmax(0, 1fr);
   }
 
   .tools-workspace__catalog {
-    border-inline-end: 0;
-    border-block-end: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-subtle);
   }
 
   .tools-workspace__catalog-head {
@@ -664,9 +612,6 @@ button.tools-workspace__category[data-current="true"] {
     padding: var(--space-3) var(--space-4) var(--space-2);
   }
 
-  .tools-workspace__filters {
-    grid-column: 1 / -1;
-  }
 }
 
 .tool-stopwatch {
@@ -696,4 +641,256 @@ button.tools-workspace__category[data-current="true"] {
 .tools-workspace .tool-emoji__empty {
   padding: var(--space-3);
   color: var(--text-muted);
+}
+
+.tool-form__toolbar.linux-memo__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--tool-catalog-min-width)) auto;
+  align-items: end;
+  padding: var(--space-3);
+}
+
+.linux-memo__toolbar > .search-field,
+.linux-memo__toolbar > .tool-form__setting {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--tool-catalog-row-font-size);
+  line-height: var(--tool-catalog-row-line-height);
+}
+
+.linux-memo__toolbar .tool-form__setting .select-menu {
+  width: 100%;
+  min-width: 0;
+}
+
+.linux-memo__toolbar .search-field input,
+.linux-memo__toolbar .select-menu__trigger {
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+.linux-memo__toolbar .tool-form__note {
+  display: flex;
+  align-items: center;
+  height: var(--toolbar-height);
+  margin: 0;
+}
+
+.linux-memo__layout {
+  display: grid;
+  grid-template-columns: minmax(0, var(--tool-catalog-min-width)) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.linux-memo__commands {
+  display: grid;
+  align-content: start;
+  max-height: var(--tool-preview-max-height);
+  overflow-y: auto;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+
+.linux-memo__commands button {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: calc(var(--tool-item-height) + var(--space-4));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  line-height: var(--tool-catalog-row-line-height);
+  text-align: start;
+  cursor: pointer;
+}
+
+.linux-memo__commands button:hover {
+  background: var(--bg-hover);
+}
+
+.linux-memo__commands button[aria-current] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.linux-memo__commands button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.linux-memo__commands span,
+.linux-memo__source,
+.linux-memo__examples p {
+  color: var(--text-muted);
+  font-size: var(--tool-caption-size);
+}
+
+.linux-memo__detail {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.linux-memo__overview {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+
+.linux-memo__detail > .tool-panel {
+  background: var(--bg-panel);
+}
+
+.linux-memo__heading,
+.linux-memo__examples > div {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.linux-memo__heading {
+  align-items: center;
+}
+
+.linux-memo__heading p {
+  color: var(--text-muted);
+  line-height: var(--tool-catalog-row-line-height);
+}
+
+.linux-memo__heading h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--tool-catalog-heading-size);
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+}
+
+.linux-memo code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.linux-memo__syntax {
+  display: block;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--accent-strong);
+}
+
+.linux-memo__parameters {
+  margin: 0;
+  padding: 0 var(--space-3);
+  overflow: auto;
+  min-height: 0;
+}
+
+.linux-memo__parameters > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.linux-memo__parameters > div + div,
+.linux-memo__examples > div + div {
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.linux-memo__parameters dt {
+  min-width: 0;
+  overflow-x: auto;
+  color: var(--text-strong);
+  line-height: 1.6;
+}
+
+.linux-memo__parameters dt code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.linux-memo__parameters dd {
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.linux-memo__examples {
+  padding-inline: var(--space-3);
+}
+
+.linux-memo__examples > div {
+  align-items: center;
+  padding-block: var(--space-3);
+}
+
+.linux-memo__examples > div > div {
+  min-width: 0;
+}
+
+.linux-memo__examples p {
+  padding-block-start: var(--space-1);
+}
+
+.linux-memo__note {
+  display: flex;
+  align-items: start;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.linux-memo__note .icon {
+  flex: none;
+}
+
+@container tool-content (width < 38rem) {
+  .tool-form__toolbar.linux-memo__toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .linux-memo__toolbar > .search-field {
+    grid-column: 1 / -1;
+  }
+
+  .linux-memo__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .linux-memo__commands {
+    grid-template-columns: repeat(auto-fit, minmax(var(--tool-short-input-width), 1fr));
+  }
+
+  .linux-memo__commands button {
+    min-height: var(--tool-item-height);
+    text-align: center;
+  }
+
+  .linux-memo__commands span {
+    display: none;
+  }
+
+  .linux-memo__parameters > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
 }
