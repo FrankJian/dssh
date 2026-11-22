@@ -66,9 +66,11 @@ pub struct DetachedSftpAsset {
     pub account: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenDetachedTerminalRequest {
+    #[serde(default)]
+    pub command_outputs: CommandOutputHandoff,
     pub parent_label: String,
     pub title: String,
     pub terminal: DetachedTerminalWorkspace,
@@ -139,3 +141,21 @@ mod activity_compatibility_tests {
         assert_eq!(restored.running_session_ids, Some(vec!["pty".into()]));
     }
 }
+
+/// Only carried by an explicit handoff request, never a workspace descriptor.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOutputRecord {
+    pub id: String,
+    pub session_id: String,
+    pub generation: u64,
+    pub sequence: u64,
+    pub command: String,
+    pub started_at: u64,
+    pub completed_at: u64,
+    pub output: String,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<u32>,
+}
+pub type CommandOutputHandoff = HashMap<String, Vec<CommandOutputRecord>>;

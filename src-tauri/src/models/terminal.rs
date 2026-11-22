@@ -169,3 +169,28 @@ pub enum SessionStatus {
     Exited,
     Failed,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellIntegrationShell {
+    Bash,
+    Zsh,
+}
+
+/// Read-only preparation; no terminal contents or arbitrary script are returned.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellIntegrationApproval {
+    pub window_label: String,
+    pub session_id: String,
+    pub label: String,
+    pub input_revision: u64,
+    pub output_revision: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableShellIntegrationRequest {
+    pub approval: ShellIntegrationApproval,
+    pub shell: ShellIntegrationShell,
+}

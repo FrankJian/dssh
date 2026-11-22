@@ -160,7 +160,7 @@
 ### 终端多配色方案与自定义颜色
 
 - 首轮实现已落地：35 套预设（含海玻璃与矿雾的深浅成对方案）、自定义颜色编辑与预览、按深浅外观独立保存的背景色叠加、独立本机存储、存活终端动态应用；默认跟随应用深浅外观，并分别记住浅色与深色方案；自动检查已通过。
-- 真实终端视觉、生命周期、协议边界和 Tauri 双窗口跨平台验收仍待完成，见 [`tasks.md`](docs/verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
+- 真实终端视觉、生命周期、协议边界和 Tauri 双窗口跨平台验收仍待完成，见 [终端配色实施与验收记录](docs/verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
 - 保持 Graphite 默认及现有字体/透明背景设置；覆盖存活终端、隐藏标签、分屏与独立窗口，不因切换配色重建会话。
 - 详见 [功能规格](docs/guides/terminal-appearance.md) 和 [实施任务](docs/verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
 

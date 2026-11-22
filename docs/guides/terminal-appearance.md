@@ -8,7 +8,7 @@
 
 
 > 状态：首轮实现已落地；真实终端视觉与跨平台验收待完成（2026-10-15）。
-> 实施记录与验收进度见 [tasks.md](../verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
+> 实施记录与验收进度见 [终端配色实施与验收记录](../verification/terminal-appearance-tasks.md#终端多配色方案与自定义颜色)。
 
 ## 1. 目标与研究结论
 

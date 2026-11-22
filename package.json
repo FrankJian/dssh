@@ -18,6 +18,7 @@
     "test:assistant-dock": "node --experimental-strip-types --test src/app/assistantDock.test.mjs",
     "test:browser": "node --experimental-strip-types --test src/browser/*.test.mjs src/app/workspaceTabFocus.test.mjs",
     "test:interactive-input": "node --experimental-strip-types --test src/terminal/interactiveInput.test.mjs",
+    "test:command-output": "node --experimental-strip-types --test src/terminal/commandOutput*.test.mjs src/terminal/shellIntegration.test.mjs",
     "test:terminal-cursor": "node --experimental-strip-types --test src/settings/terminalCursorStore.test.mjs",
     "test:terminal-themes": "node --experimental-strip-types --test src/terminal/themes/terminalThemes.test.mjs",
     "preview": "vite preview",

@@ -15,3 +15,5 @@
 - [SFTP 连接库方案](sftp-connections.md)
 - [SFTP 双栏工作台](sftp.md)
 - [终端多配色方案与自定义颜色](terminal-appearance.md)
+
+- [复制命令输出](terminal-command-output.md)

@@ -772,6 +772,49 @@ impl SessionManager {
         })
     }
 
+    pub(crate) fn prepare_shell_integration(
+        &self,
+        id: &str,
+        window: &str,
+    ) -> AppResult<crate::models::terminal::ShellIntegrationApproval> {
+        let sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get(id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端已关闭。"))?;
+        check_shell_integration_handle(handle)?;
+        let output = handle.output.lock().map_err(lock_error)?;
+        super::shell_integration::validate_prompt(&output.snapshot())?;
+        Ok(crate::models::terminal::ShellIntegrationApproval {
+            window_label: window.into(),
+            session_id: id.into(),
+            label: handle.title.clone(),
+            input_revision: handle.input_revision,
+            output_revision: output.revision(),
+        })
+    }
+
+    pub(crate) fn enable_shell_integration(
+        &self,
+        request: &crate::models::terminal::EnableShellIntegrationRequest,
+        on_queued: impl FnOnce(String),
+    ) -> AppResult<()> {
+        let approval = &request.approval;
+        let mut sessions = self.sessions.lock().map_err(lock_error)?;
+        let handle = sessions
+            .get_mut(&approval.session_id)
+            .ok_or_else(|| AppError::new("session_not_found", "终端已关闭。"))?;
+        check_shell_integration_handle(handle)?;
+        let output = handle.output.lock().map_err(lock_error)?.snapshot();
+        super::shell_integration::validate_prompt(&output)?;
+        let snapshot = TerminalInputSnapshot {
+            output,
+            input_revision: approval.input_revision,
+            output_revision: approval.output_revision,
+        };
+        let input = super::shell_integration::command(&request.shell);
+        queue_approved_input(handle, &snapshot, input.clone(), || on_queued(input))
+    }
+
     pub(crate) fn write_approved_input(
         &self,
         session_id: &str,
@@ -4282,6 +4325,21 @@ fn local_terminal_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("local_terminal_error", error.to_string())
 }
 
+fn check_shell_integration_handle(handle: &SessionHandle) -> AppResult<()> {
+    if !matches!(handle.status, SessionStatus::Connected)
+        || !matches!(handle.kind, TerminalSessionKind::Ssh)
+        || handle.hidden()
+        || crate::jumpserver::is_target(&handle.profile_id)
+        || *handle.closed.borrow()
+    {
+        return Err(AppError::new(
+            "shell_integration_session",
+            "请在已连接的普通 SSH 终端中启用命令识别。",
+        ));
+    }
+    Ok(())
+}
+
 fn queue_session_input(
     handle: &mut SessionHandle,
     data: String,
@@ -4427,6 +4485,49 @@ mod tests {
             rx,
             closed_tx,
         )
+    }
+
+    #[test]
+    fn shell_integration_rejects_non_live_or_private_shells_and_stale_confirmation() {
+        use crate::models::terminal::{SessionStatus, ShellIntegrationShell, TerminalSessionKind};
+        let (mut handle, mut rx, closed) = interactive_test_session();
+        assert!(super::check_shell_integration_handle(&handle).is_ok());
+        for status in [
+            SessionStatus::Reconnecting,
+            SessionStatus::Disconnected,
+            SessionStatus::Exited,
+        ] {
+            handle.status = status;
+            assert!(super::check_shell_integration_handle(&handle).is_err());
+        }
+        handle.status = SessionStatus::Connected;
+        handle.kind = TerminalSessionKind::Local;
+        assert!(super::check_shell_integration_handle(&handle).is_err());
+        handle.kind = TerminalSessionKind::Ssh;
+        let snapshot = input_snapshot(&handle);
+        let input = super::super::shell_integration::command(&ShellIntegrationShell::Bash);
+        queue_session_input(&mut handle, "user input".into(), true).unwrap();
+        rx.try_recv().unwrap();
+        assert!(
+            queue_approved_input(&mut handle, &snapshot, input.clone(), || panic!(
+                "expired approval must not notify"
+            ))
+            .is_err()
+        );
+        assert!(rx.try_recv().is_err());
+        let snapshot = input_snapshot(&handle);
+        queue_approved_input(&mut handle, &snapshot, input, || {}).unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            SessionCommand::Input {
+                interactive: false,
+                ..
+            }
+        ));
+        closed.send(true).unwrap();
+        assert!(super::check_shell_integration_handle(&handle).is_err());
+        let (private, _rx, _closed) = background_test_session();
+        assert!(super::check_shell_integration_handle(&private).is_err());
     }
 
     fn input_snapshot(handle: &SessionHandle) -> TerminalInputSnapshot {

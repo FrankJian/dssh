@@ -33,6 +33,7 @@ export interface DetachedWorkspace {
 }
 
 export interface OpenDetachedTerminalRequest {
+  commandOutputs?: Record<string, readonly import("../terminal/commandOutput").CommandOutputRecord[]>;
   parentLabel: string;
   title: string;
   terminal: DetachedTerminalWorkspace;

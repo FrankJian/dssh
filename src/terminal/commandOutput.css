@@ -1,0 +1,27 @@
+.terminal-view-frame { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+.command-output-tools { position: absolute; z-index: 4; top: var(--space-2); right: var(--space-5); border-radius: var(--radius-sm); background: var(--bg-panel); color: var(--text-muted); }
+.command-output-panel { position: fixed; z-index: 90; display: flex; flex-direction: column; gap: var(--space-2); box-sizing: border-box; width: min(440px, calc(100vw - 16px)); padding: var(--space-2); overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-elevated); box-shadow: var(--shadow-menu); color: var(--text-base); }
+.command-output-panel--tools { width: min(210px, calc(100vw - 16px)); }
+.command-output-panel--tools > button { justify-content: flex-start; gap: var(--space-2); }
+.command-output-panel header { display: flex; align-items: center; justify-content: space-between; padding-left: var(--space-2); font-size: 12px; }
+.command-output-list { overflow: auto; min-height: 48px; flex: 1 1 auto; }
+.command-output-row { display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-sm); }
+.command-output-row:hover, .command-output-row:focus-within { background: var(--bg-hover); }
+.command-output-record { flex: 1; min-width: 0; padding: var(--space-2); border: 0; border-radius: var(--radius-sm); color: inherit; background: none; text-align: left; cursor: pointer; }
+.command-output-record code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; }
+.command-output-record > span { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); color: var(--text-muted); font-size: 11px; }
+.command-output-empty { padding: var(--space-3); color: var(--text-muted); font-size: 12px; }
+.command-output-preview { flex: 0 0 auto; max-height: 180px; overflow: auto; border-top: 1px solid var(--border-subtle); padding: var(--space-2); background: var(--bg-sunken); border-radius: var(--radius-sm); font-size: 12px; }
+.command-output-preview pre, .command-output-detail pre { margin: 0; white-space: pre; font-family: var(--font-mono); user-select: text; }
+.command-output-preview > span { display: block; color: var(--text-muted); margin-bottom: var(--space-2); }
+.command-output-detail { display: grid; gap: var(--space-2); min-width: 0; }
+.command-output-detail > code { font-family: var(--font-mono); overflow-wrap: anywhere; user-select: text; }
+.command-output-detail time { color: var(--text-muted); font-size: 12px; }
+.command-output-detail pre { min-height: 100px; max-height: 55vh; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); font-size: 12px; line-height: 1.6; }
+
+.command-output-empty p { margin: 0 0 var(--space-2); }
+.command-output-empty .button { max-width: 100%; white-space: normal; }
+.command-integration-dialog { display: grid; gap: var(--space-3); }
+.command-integration-dialog p { margin: 0; line-height: 1.6; }
+
+.command-integration-ready { margin-left: auto; margin-right: var(--space-2); color: var(--text-muted); font-size: 11px; }

@@ -19,3 +19,5 @@
 - [SFTP 连接库方案](sftp-connections.md)
 - [终端 ZMODEM 与 JumpServer 文件传输规格](terminal-file-transfer.md)
 - [终端输出消费确认与过载保护](terminal-output-flow-control.md)
+
+- [命令输出记录](terminal-command-output.md)

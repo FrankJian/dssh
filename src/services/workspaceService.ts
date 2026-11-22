@@ -44,3 +44,9 @@ export function onDetachedWorkspaceUpdated(handler: (workspace: DetachedWorkspac
 export function updateDetachedWorkbench(workbench: import("../models/workspace").DetachedWorkbench) {
   return invokeCommand<void>("update_detached_workbench", { workbench });
 }
+
+
+/** One-time body handoff addressed by the invoking window, never by a supplied label. */
+export function takeTerminalCommandOutputs() {
+  return invokeCommand<Record<string, import("../terminal/commandOutput").CommandOutputRecord[]>>("take_terminal_command_outputs");
+}

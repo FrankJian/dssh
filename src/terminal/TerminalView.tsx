@@ -1,3 +1,4 @@
+import { CommandOutputTools } from "./CommandOutputTools";
 import { useEffect, useRef } from "react";
 import type { TerminalSize } from "../models";
 import { type RightClickAction } from "../settings/settings";
@@ -153,6 +154,7 @@ export function TerminalView({
   }, [autoFocus, currentSessionId]);
 
   return (
+    <div className="terminal-view-frame">
     <div
       className="terminal-view"
       data-wallpaper={hasWallpaper ? "true" : "false"}
@@ -161,5 +163,7 @@ export function TerminalView({
       }}
       ref={containerRef}
     />
+    {sessionId && <CommandOutputTools key={sessionId} sessionId={sessionId} canEnableIntegration={!isLocalShell} />}
+    </div>
   );
 }

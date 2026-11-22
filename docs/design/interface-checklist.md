@@ -53,7 +53,7 @@
 
 ## 与既有文档的关系
 
-- [`docs/design.md`](../design.md) 是适用于所有编辑器与编码代理的日常 UI 实施规则；[`spec.md`](../../spec.md) 记录当前界面与后续方向。
+- [`docs/design.md`](../design.md) 是适用于所有编辑器与编码代理的日常 UI 实施规则；[需求索引](../requirements.md)提供当前行为规格入口，后续需求按 [OpenSpec 流程](../openspec-workflow.md)管理。
 - [`graphite-glass-theme.md`](../history/graphite-glass-theme.md) 与 [`graphite-glass-theme-tasks.md`](../history/graphite-glass-theme-tasks.md) 记录上一轮主题实施、色值和验收，不再约束未来页面必须保持冷黑 / 冰蓝或小圆角。
 - [`liquid-glass.md`](../../openspec/changes/native-window-material/design.md) 只负责原生窗口材质规划，不能代替应用配色与布局重设计。
 
@@ -69,4 +69,4 @@
 - [Microsoft Fluent 2 Design Tokens](https://fluent2.microsoft.design/design-tokens/)：以语义 token 管理颜色、间距、圆角等，支撑系统性换肤。
 - [Microsoft Mica](https://learn.microsoft.com/en-us/windows/apps/design/style/mica)：桌面背景材质应服务于层级与性能，不能靠透明效果承担全部视觉设计。
 
-> 迁移后的文档职责：根 spec.md 仅为导航；当前需求在 OpenSpec，页面实施与验收进度在 [验证记录](../verification/interface-redesign.md)，不在本清单维护。
+> 当前需求在 OpenSpec，页面实施与验收进度在 [验证记录](../verification/interface-redesign.md)，不在本清单维护。

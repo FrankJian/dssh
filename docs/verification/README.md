@@ -46,3 +46,5 @@
 - [Artifactory 验证记录](artifactory.md)
 - [JumpServer 资产工作台验证记录](jumpserver-workspace.md)
 - [快捷键验证记录](keyboard-shortcuts.md)
+
+- [命令输出记录](terminal-command-output.md)

@@ -7,6 +7,7 @@ pub mod host_keys;
 mod output_delivery;
 mod retained_output;
 pub mod session_manager;
+mod shell_integration;
 pub(crate) mod zmodem;
 
 pub use auth_prompts::{SSH_AUTH_PROMPT_EVENT, SshAuthPromptManager};

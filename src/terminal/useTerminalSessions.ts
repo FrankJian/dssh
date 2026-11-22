@@ -1,3 +1,4 @@
+import { attachCommandOutput, commandOutputTracker, forgetCommandOutput, invalidateCommandOutputs } from "./commandOutputStore";
 import { onJumpServerTargetsClosed } from "../services/jumpserverService";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { listDetachedWorkspaces } from "../services/workspaceService";
@@ -207,6 +208,7 @@ export function useTerminalSessions(
 
   const liveOutputRef = useRef<(event: { sessionId: string; data: string }) => void | Promise<void>>(() => {});
   liveOutputRef.current = (event) => {
+    commandOutputTracker(event.sessionId)?.output(event.data);
     const pushed = pushOutput(event.sessionId, event.data);
     if (pushed?.activity === "idle") {
       const status = latestSessionStatusesRef.current.get(event.sessionId);
@@ -223,12 +225,13 @@ export function useTerminalSessions(
       acknowledge: acknowledgeTerminalOutput,
       token: () => crypto.randomUUID(),
     }, (event) => liveOutputRef.current(event), (event) => statusOutputRef.current(event),
-      (error) => toast(error.message, "error"), (sessionId) => outputPausedRef.current(sessionId));
+      (error) => { invalidateCommandOutputs(); toast(error.message, "error"); }, (sessionId) => outputPausedRef.current(sessionId));
     return outputStreamRef.current;
   }, []);
 
   const connectOutput = useCallback((sessionId: string, restoreActivity = false, activityHint?: CommandActivity, resetDisplay = false) =>
     outputStream().start(sessionId, async (snapshot) => {
+      attachCommandOutput(sessionId, snapshot.data);
       buffersRef.current.set(sessionId, createBacklog(snapshot.data));
       const displayReady = resetDisplay ? replaceTerminalOutput(sessionId, snapshot.data) : undefined;
       const tracker = new TerminalTargetTracker();
@@ -249,13 +252,17 @@ export function useTerminalSessions(
     }), [outputStream, pushOutput, updateCommandActivity]);
 
   outputPausedRef.current = (sessionId) => {
+    commandOutputTracker(sessionId)?.reset();
     showTerminalOutputPaused(sessionId, async () => {
       await connectOutput(sessionId, true, undefined, true);
       if (!outputStream().isPaused(sessionId)) clearTerminalOutputPaused(sessionId);
     });
   };
 
-  useEffect(() => () => outputStreamRef.current?.stopAll(), []);
+  useEffect(() => () => {
+    outputStreamRef.current?.stopAll();
+    for (const id of buffersRef.current.keys()) forgetCommandOutput(id);
+  }, []);
 
   const connectCreatedOutput = useCallback(async (created: TerminalSession) => {
     try { return await connectOutput(created.id); } catch (error) {
@@ -329,6 +336,7 @@ export function useTerminalSessions(
 
   statusOutputRef.current = (event) => {
     if (!outputStreamRef.current?.has(event.sessionId)) return;
+    if (event.status !== "connected") commandOutputTracker(event.sessionId)?.reset(event.status === "reconnecting");
     latestSessionStatusesRef.current.set(event.sessionId, event.status);
     if (event.status === "reconnecting") {
       const address = targetTrackerForSession(event.sessionId).resetConnection();
@@ -373,6 +381,7 @@ export function useTerminalSessions(
   useEffect(() => {
     const inputPromise = onTerminalInputObserved((event) => {
       if (!outputStreamRef.current?.has(event.sessionId)) return;
+      commandOutputTracker(event.sessionId)?.input(event.data);
       updateCommandActivity(event.sessionId, trackerForSession(event.sessionId).observeInput(event.data));
       targetTrackerForSession(event.sessionId).observeInput(event.data);
     });
@@ -469,6 +478,7 @@ export function useTerminalSessions(
   const reconnectSession = useCallback(async (sessionId: string) => {
     if (manualReconnectsRef.current.has(sessionId)) return;
     manualReconnectsRef.current.add(sessionId);
+    commandOutputTracker(sessionId)?.reset(true);
     try {
       await reconnectSshSession(sessionId, terminalSizesRef.current.get(sessionId) ?? initialSize);
     } catch (error) {
@@ -518,12 +528,11 @@ export function useTerminalSessions(
         return;
       }
 
+      commandOutputTracker(activeSessionId)?.input(data);
       updateCommandActivity(activeSessionId, trackerForSession(activeSessionId).observeInput(data));
       targetTrackerForSession(activeSessionId).observeInput(data);
-      await writeSshSession({
-        data,
-        sessionId: activeSessionId,
-      });
+      try { await writeSshSession({ data, sessionId: activeSessionId }); }
+      catch (error) { commandOutputTracker(activeSessionId)?.reset(); throw error; }
     },
     [activeSessionId, targetTrackerForSession, trackerForSession, updateCommandActivity],
   );
@@ -538,9 +547,11 @@ export function useTerminalSessions(
     const status = latestSessionStatusesRef.current.get(sessionId) ?? session.status;
     if (RECONNECT_ON_INPUT_STATUSES.has(status) || status === "reconnecting"
       || status === "exited" || status === "disconnecting" || manualReconnectsRef.current.has(sessionId)) return;
+    commandOutputTracker(sessionId)?.input(data);
     updateCommandActivity(sessionId, trackerForSession(sessionId).observeInput(data));
     targetTrackerForSession(sessionId).observeInput(data);
-    await writeSshSession({ data, sessionId });
+    try { await writeSshSession({ data, sessionId }); }
+    catch (error) { commandOutputTracker(sessionId)?.reset(); throw error; }
   }, [targetTrackerForSession, trackerForSession, updateCommandActivity]);
 
   const resizeSession = useCallback(async (sessionId: string, size: TerminalSize) => {
@@ -550,6 +561,7 @@ export function useTerminalSessions(
 
   const forgetSession = useCallback((sessionId: string) => {
     outputStreamRef.current?.stop(sessionId);
+    forgetCommandOutput(sessionId);
     terminalSizesRef.current.delete(sessionId);
     buffersRef.current.delete(sessionId);
     listenersRef.current.delete(sessionId);

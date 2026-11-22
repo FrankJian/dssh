@@ -6,6 +6,7 @@
 | --- | --- |
 | 终端外观与配色 | [terminal-appearance](../openspec/specs/terminal-appearance/spec.md) |
 | 终端输出与历史 | [terminal-output](../openspec/specs/terminal-output/spec.md) |
+| 命令输出预览与复制 | [terminal-command-output](../openspec/specs/terminal-command-output/spec.md) |
 | 终端文件传输 | [terminal-file-transfer](../openspec/specs/terminal-file-transfer/spec.md) |
 | 助手后台会话 | [assistant-sessions](../openspec/specs/assistant-sessions/spec.md) |
 | 工作区布局与助手停靠 | [workspace-layout](../openspec/specs/workspace-layout/spec.md) |

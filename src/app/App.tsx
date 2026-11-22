@@ -1,3 +1,5 @@
+import { exportCommandOutputs, importCommandOutputs } from "../terminal/commandOutputStore";
+import { takeTerminalCommandOutputs } from "../services/workspaceService";
 import { TOOL_CATALOG, type ToolId } from "../tools/catalog";
 import { ToolsWorkspace } from "../tools/ToolsWorkspace";
 import { DEFAULT_NAVIGATION_ICONS, isActivityId, parseNavigationIcons } from "./navigationPreferences";
@@ -1758,6 +1760,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       const layout = panes.findLayoutByTab(tab.id);
       const sessionIds = layout ? paneSessionIds(layout) : [tab.id];
       const workspace = await openDetachedTerminalWorkspace({
+        commandOutputs: exportCommandOutputs(sessionIds),
         parentLabel,
         title: tab.title,
         terminal: {
@@ -2718,6 +2721,10 @@ function WorkspaceApp() {
       return;
     }
     void getDetachedWorkspace(label)
+      .then(async (workspace) => {
+        if (workspace) importCommandOutputs(await takeTerminalCommandOutputs());
+        return workspace;
+      })
       .then((workspace) => {
         if (mounted) setDetachedWorkspace(workspace);
       })

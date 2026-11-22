@@ -27,12 +27,20 @@ pub async fn open_detached_terminal_workspace(
     app_handle: AppHandle,
     state: State<'_, AppState>,
     request: OpenDetachedTerminalRequest,
+    webview: Webview,
 ) -> AppResult<DetachedWorkspace> {
+    crate::browser::trusted(&webview)?;
+    state.detached_workspaces.validate_output_source(
+        webview.label(),
+        &request.terminal.session_ids,
+        &request.command_outputs,
+    )?;
     state.detached_workspaces.open_terminal(
         &app_handle,
         request.parent_label,
         request.title,
         request.terminal,
+        request.command_outputs,
     )
 }
 
@@ -90,4 +98,15 @@ pub fn update_detached_workbench(
     state
         .detached_workspaces
         .update_workbench(&app, webview.label(), workbench)
+}
+
+#[tauri::command]
+pub fn take_terminal_command_outputs(
+    state: State<'_, AppState>,
+    webview: Webview,
+) -> AppResult<crate::models::workspace::CommandOutputHandoff> {
+    crate::browser::trusted(&webview)?;
+    state
+        .detached_workspaces
+        .take_command_outputs(webview.label())
 }

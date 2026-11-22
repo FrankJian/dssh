@@ -227,3 +227,18 @@ export function onTerminalTransferStatus(handler: (event: TerminalTransferStatus
 export function onTerminalTransferConflict(handler: (event: TerminalTransferConflictEvent) => void) {
   return listen<TerminalTransferConflictEvent>("terminal://zmodem-conflict", (event) => handler(event.payload));
 }
+
+export type ShellIntegrationShell = "bash" | "zsh";
+export interface ShellIntegrationApproval {
+  windowLabel: string;
+  sessionId: string;
+  label: string;
+  inputRevision: number;
+  outputRevision: number;
+}
+export function prepareShellIntegration(sessionId: string) {
+  return invokeCommand<ShellIntegrationApproval>("prepare_shell_integration", { sessionId });
+}
+export function enableShellIntegration(approval: ShellIntegrationApproval, shell: ShellIntegrationShell) {
+  return invokeCommand<void>("enable_shell_integration", { request: { approval, shell } });
+}

@@ -1,3 +1,4 @@
+use tauri::Emitter;
 use tauri::{AppHandle, State, Webview};
 
 use crate::{
@@ -230,4 +231,60 @@ pub fn respond_ssh_auth_prompt(
     responses: Option<Vec<String>>,
 ) -> AppResult<()> {
     state.ssh_auth_prompts.respond(&prompt_id, responses)
+}
+
+fn check_shell_integration_access(state: &AppState, webview: &Webview) -> AppResult<()> {
+    crate::browser::trusted(webview)?;
+    if state.app_lock.status()?.locked {
+        return Err(AppError::new("app_locked", "请先解锁 Duo SSH。"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn prepare_shell_integration(
+    state: State<'_, AppState>,
+    webview: Webview,
+    session_id: String,
+) -> AppResult<crate::models::terminal::ShellIntegrationApproval> {
+    check_shell_integration_access(&state, &webview)?;
+    state
+        .detached_workspaces
+        .with_terminal_owner(webview.label(), &session_id, || {
+            state
+                .sessions
+                .prepare_shell_integration(&session_id, webview.label())
+        })
+}
+
+#[tauri::command]
+pub fn enable_shell_integration(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    webview: Webview,
+    request: crate::models::terminal::EnableShellIntegrationRequest,
+) -> AppResult<()> {
+    check_shell_integration_access(&state, &webview)?;
+    if request.approval.window_label != webview.label() {
+        return Err(AppError::new(
+            "shell_integration_owner",
+            "终端归属已变化，请重新确认。",
+        ));
+    }
+    state.detached_workspaces.with_terminal_owner(
+        webview.label(),
+        &request.approval.session_id,
+        || {
+            state.sessions.enable_shell_integration(&request, |data| {
+                let _ = app.emit_to(
+                    webview.label(),
+                    "terminal-input-observed",
+                    crate::models::terminal::TerminalInputEvent {
+                        session_id: request.approval.session_id.clone(),
+                        data,
+                    },
+                );
+            })
+        },
+    )
 }
