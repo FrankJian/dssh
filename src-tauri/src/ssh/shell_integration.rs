@@ -9,11 +9,18 @@ pub(super) fn command(shell: &ShellIntegrationShell) -> String {
         ShellIntegrationShell::Bash => include_str!("shell_integration/bash.sh"),
         ShellIntegrationShell::Zsh => include_str!("shell_integration/zsh.sh"),
     };
+    encode_script(script)
+}
+
+fn encode_script(script: &str) -> String {
     // ANSI-C quoting is supported by both shells. No literal CR/LF/ESC occurs
     // before the single final Enter, so an installer is one canonical PTY line.
+    // Windows checkouts may contain CRLF; those CRs are not shell source text.
     let encoded = script
+        .replace("\r\n", "\n")
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
+        .replace('\r', "\\r")
         .replace('\n', "\\n");
     format!(" builtin eval $'{encoded}'\r")
 }
@@ -99,6 +106,31 @@ mod tests {
             );
             assert!(input.starts_with(" builtin eval $'"));
         }
+    }
+    #[test]
+    fn windows_script_line_endings_encode_identically_to_unix() {
+        for script in [
+            include_str!("shell_integration/bash.sh"),
+            include_str!("shell_integration/zsh.sh"),
+        ] {
+            let unix = script.replace("\r\n", "\n");
+            let windows = unix.replace('\n', "\r\n");
+            let input = encode_script(&windows);
+            assert_eq!(input, encode_script(&unix));
+            assert!(input.len() < 3900);
+            assert_eq!(
+                input.chars().filter(|c| c.is_control()).collect::<String>(),
+                "\r"
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_carriage_return_is_quoted_instead_of_submitting_input() {
+        assert_eq!(
+            encode_script("printf 'a\rb'"),
+            " builtin eval $'printf \\'a\\rb\\''\r"
+        );
     }
     #[test]
     fn only_empty_shell_prompt_is_eligible_and_auth_and_tui_are_rejected() {
