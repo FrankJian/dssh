@@ -15,6 +15,7 @@ import type { EditorSettings } from "./useEditorSettings";
 import { TerminalColorSettings } from "./TerminalColorSettings";
 import { AppPaletteSettings } from "./AppPaletteSettings";
 import { TerminalCursorSettings } from "./TerminalCursorSettings";
+import { TerminalSuperKeySettings } from "./TerminalSuperKeySettings";
 import { TerminalScrollbackSettings } from "./TerminalScrollbackSettings";
 import {
   clampCommandHistoryLimit,
@@ -713,6 +714,7 @@ export function SettingsDialog({
                 <div className="terminal-settings__panel" role="tabpanel" id="terminal-preferences-interaction" aria-labelledby="terminal-preferences-tab-interaction" hidden={terminalSection !== "interaction"}>
                 <section className="terminal-settings__group" aria-label="终端交互设置">
                   <h4>鼠标与复制</h4>
+                  <TerminalSuperKeySettings />
                   <label className="terminal-settings__toggle-row">
                     <span><strong>选中即复制</strong></span>
                     <SettingsSwitch checked={copyOnSelect} onChange={(event) => onCopyOnSelectChange(event.currentTarget.checked)} aria-label="选中即复制" />

@@ -2,6 +2,8 @@
 
 行为以 [OpenSpec 主规格](../../openspec/specs/terminal-command-output/spec.md) 为准；任务记录保留于[归档变更](../../openspec/changes/archive/2026-11-22-terminal-command-output-copy/tasks.md)。
 
+超级键交互增量见 [terminal-super-key-controls](../../openspec/changes/terminal-super-key-controls/specs/terminal-command-output/spec.md)。右上角闪电固定，复制图标在左侧连续工具槽内横向滑出/收起，收起时禁用命中与 Tab；减少动效时即时切换。显示偏好独立保存在本机 `dssh.terminal.superKeyVisible`，未设置或无效时默认显示；同窗口订阅发布，其他窗口按 storage 事件重读。设置复用 SettingsSwitch，保存成功后才发布，失败保持原值。隐藏时卸载工具内层及 portal、取消定时器，记录捕获器和 xterm 会话继续存活。
+
 ## 识别与文本
 
 首版要求完整、有序的 OSC 133 A（提示符开始）、B（命令输入开始）、C（执行开始）、D（执行结束）。无标记、自定义不完整集成及网关菜单不生成记录，原有终端运行指示仍按自己的启发式规则工作。历史回放只能恢复尚未提交的提示符/输入状态；命令提交与执行 C/D 边界必须来自 live 流。不会自动执行探针或修改本地/远端 shell 配置。
