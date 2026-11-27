@@ -34,6 +34,7 @@ pub struct AppState {
     pub app_lock: lock::AppLockManager,
     pub rdp: crate::rdp::RdpManager,
     pub jumpserver: crate::jumpserver::JumpServerManager,
+    pub editor: crate::editor::workspaces::EditorManager,
 }
 
 impl AppState {
@@ -80,6 +81,7 @@ impl AppState {
             app_lock,
             rdp: crate::rdp::RdpManager::default(),
             jumpserver: crate::jumpserver::JumpServerManager::default(),
+            editor: crate::editor::workspaces::EditorManager::default(),
         })
     }
 }

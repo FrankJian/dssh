@@ -4,13 +4,15 @@ import type { IconName } from "../ui/Icon";
 import { Icon } from "../ui/Icon";
 import { handleMenuNavigation } from "../ui/menuNavigation";
 
-export type WorkspaceTabKind = "ssh" | "local" | "sftp" | "browser";
+export type WorkspaceTabKind = "ssh" | "local" | "sftp" | "browser" | "editor";
 
 export interface WorkspaceTabItem {
   id: string;
   kind: WorkspaceTabKind;
   icon: IconName;
   title: string;
+  sourceLabel?: string;
+  description?: string;
   /** The user-editable name, without display-only decorations such as the SFTP prefix. */
   renameValue: string;
   active: boolean;
@@ -49,7 +51,7 @@ function TabKindIcon({ icon, running = false }: Pick<WorkspaceTabItem, "icon" | 
   ><Icon name={icon} className={running && sustained ? "is-running" : undefined} /></span>;
 }
 
-function TabTitle({ value }: { value: string }) {
+function TabTitle({ value, description }: { value: string; description?: string }) {
   const containerRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [scrollDistance, setScrollDistance] = useState(0);
@@ -74,7 +76,7 @@ function TabTitle({ value }: { value: string }) {
       className={`tab__title${scrollDistance > 0 ? " is-overflowing" : ""}`}
       ref={containerRef}
       style={{ "--tab-title-scroll-distance": `${scrollDistance}px` } as CSSProperties}
-      title={value}
+      title={description ?? value}
     >
       <span className="tab__title-text" ref={textRef}>{value}</span>
     </span>
@@ -246,6 +248,7 @@ export function WorkspaceTabStrip({
         <div
           aria-label={tab.running ? `${tab.title}，命令正在运行` : tab.title}
           aria-selected={tab.active}
+          title={tab.description ?? (tab.sourceLabel ? `${tab.sourceLabel} · ${tab.title}` : tab.title)}
           className={`tab ${tab.active ? "is-active" : ""} ${
             dropTargetId === tab.id ? "is-drop-target" : ""
           } ${draggedId === tab.id ? "is-dragging" : ""}`
@@ -355,7 +358,7 @@ export function WorkspaceTabStrip({
               value={renameValue}
             />
           ) : (
-            <TabTitle value={tab.title} />
+            <TabTitle value={tab.title} description={tab.description} />
           )}
           <span
             aria-label="关闭"

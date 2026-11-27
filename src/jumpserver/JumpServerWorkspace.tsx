@@ -19,7 +19,8 @@ function loadAssetView(): ConnectionViewMode {
 }
 const message = (e: unknown) => e instanceof Error ? e.message : "操作失败，请稍后重试。";
 
-export function JumpServerWorkspace({ profile, loading = false, error, onBack, onCreate, onEdit, onDelete, onTerminal }: {
+export function JumpServerWorkspace({ profile, loading = false, error, onBack, onCreate, onEdit, onDelete, onTerminal, sidebarVisible = true }: {
+  sidebarVisible?: boolean;
   profile: JumpServerProfile | null;
   loading?: boolean;
   error?: string | null;
@@ -35,7 +36,7 @@ export function JumpServerWorkspace({ profile, loading = false, error, onBack, o
     </WorkspaceToolbar>
     {error && <p className="jumpserver__error" role="alert">{error}</p>}
     {loading ? <p className="jumpserver__empty" role="status">正在加载连接…</p> : profile ?
-      <Platform key={profile.id} profile={profile} onTerminal={onTerminal} onEdit={onEdit} onDelete={onDelete} /> :
+      <Platform sidebarVisible={sidebarVisible} key={profile.id} profile={profile} onTerminal={onTerminal} onEdit={onEdit} onDelete={onDelete} /> :
       <div className="jumpserver__empty"><Icon name="stackedHexagon" width="28" height="28" />
         <h2>尚未选择 JumpServer 连接</h2><p>从连接管理选择一个平台，或新建 JumpServer 连接后浏览授权资产。</p>
         <Button variant="primary" onClick={onCreate}>新建 JumpServer 连接</Button>
@@ -43,7 +44,7 @@ export function JumpServerWorkspace({ profile, loading = false, error, onBack, o
   </section>;
 }
 
-function Platform({ profile, onTerminal, onEdit, onDelete }: { profile: JumpServerProfile; onTerminal: (s: TerminalSession) => Promise<void>; onEdit: () => void; onDelete: () => void }) {
+function Platform({ profile, onTerminal, onEdit, onDelete, sidebarVisible }: { sidebarVisible: boolean; profile: JumpServerProfile; onTerminal: (s: TerminalSession) => Promise<void>; onEdit: () => void; onDelete: () => void }) {
   const [identity, setIdentity] = useState<JumpServerIdentity | null>(null);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
@@ -88,7 +89,7 @@ function Platform({ profile, onTerminal, onEdit, onDelete }: { profile: JumpServ
       {identity ? <Button disabled={loggingOut} onClick={() => setConfirmLogout(true)}>退出登录</Button> : <><Button disabled={checking} onClick={onEdit}>编辑连接</Button><Button disabled={checking} onClick={onDelete}>删除连接</Button></>}
     </div>
     {error && <p className="jumpserver__error" role="alert">{error}</p>}
-    {checking ? <p className="jumpserver__empty" role="status">正在读取登录状态…</p> : identity ? <AssetDirectory key={identity.generation} profile={profile} identity={identity} onTerminal={onTerminal} /> : <>
+    {checking ? <p className="jumpserver__empty" role="status">正在读取登录状态…</p> : identity ? <AssetDirectory sidebarVisible={sidebarVisible} key={identity.generation} profile={profile} identity={identity} onTerminal={onTerminal} /> : <>
       <JumpServerLogin profile={profile} onReady={setIdentity} />
       {profile.sshProfileId && <div className="jumpserver__ssh-fallback"><Button disabled={openingSsh} onClick={() => void openSsh()}>{openingSsh ? "正在打开…" : "使用现有 SSH 连接"}</Button>
         <p className="profile-form__hint">沿用已关联的 SSH 配置和密码 / OTP 认证，打开原交互终端；此入口不加载资产目录。</p>
@@ -98,7 +99,7 @@ function Platform({ profile, onTerminal, onEdit, onDelete }: { profile: JumpServ
   </>;
 }
 
-function AssetDirectory({ profile, identity, onTerminal }: { profile: JumpServerProfile; identity: JumpServerIdentity; onTerminal: (s: TerminalSession) => Promise<void> }) {
+function AssetDirectory({ profile, identity, onTerminal, sidebarVisible }: { sidebarVisible: boolean; profile: JumpServerProfile; identity: JumpServerIdentity; onTerminal: (s: TerminalSession) => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
@@ -132,9 +133,9 @@ function AssetDirectory({ profile, identity, onTerminal }: { profile: JumpServer
     return () => { live = false; };
   }, [profile.id, identity.generation, search, offset, node, revision]);
   function selectNode(id: string | null) { setNode(id); setOffset(0); setSelected(null); }
-  return <div className="jumpserver__directory" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); searchRef.current?.focus(); } }}>
+  return <div className="jumpserver__directory sidebar-motion" data-sidebar-visible={sidebarVisible} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); searchRef.current?.focus(); } }}>
     <div className="jumpserver__toolbar"><div className="jumpserver__search"><Icon name="search" width="16" height="16" /><input ref={searchRef} aria-label="搜索授权资产" placeholder="搜索服务器名称或地址" maxLength={256} spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)} />{query && <button className="icon-button" type="button" aria-label="清除搜索" onClick={() => setQuery("")}><Icon name="close" width="14" height="14" /></button>}</div><Button disabled={loading} onClick={() => setRevision((r) => r + 1)}><Icon name="refresh" width="16" height="16" />刷新</Button><ConnectionViewToggle label="资产显示方式" value={view} onChange={changeView} /></div>
-    <div className="jumpserver__body"><nav className="jumpserver__nodes" aria-label="授权资产目录"><button type="button" className={node === null ? "is-active" : ""} onClick={() => selectNode(null)}><Icon name="server" width="16" height="16" />全部授权资产</button>
+    <div className="jumpserver__body"><nav inert={!sidebarVisible} aria-hidden={!sidebarVisible} className="jumpserver__nodes sidebar-motion-content" aria-label="授权资产目录"><button type="button" className={node === null ? "is-active" : ""} onClick={() => selectNode(null)}><Icon name="server" width="16" height="16" />全部授权资产</button>
       {[...nodes].sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true })).map((n) => <button type="button" key={n.id} className={node === n.id ? "is-active" : ""} title={n.name} onClick={() => selectNode(n.id)}><Icon name="folder" width="16" height="16" /><span>{n.name}</span></button>)}
       {moreNodes && <Button onClick={() => setNodeOffset((n) => n + 50)}>加载更多目录</Button>}{nodeError && <p role="alert">目录加载失败，可继续浏览全部资产。<Button onClick={() => setRevision((r) => r + 1)}>重试</Button></p>}
     </nav><div className="jumpserver__assets">

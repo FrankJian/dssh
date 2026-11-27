@@ -9,6 +9,7 @@
 - [智能助手模型配置](assistant-model-config.md)
 - [AI 后台交互会话](assistant-sessions.md)
 - [内置 WebView 浏览器](browser.md)
+- [文本编辑器](editor.md)
 - [应用快捷键](keyboard-shortcuts.md)
 - [RDP 双向剪贴板调研与实施方案](rdp-clipboard.md)
 - [RDP 首版实施说明](rdp.md)

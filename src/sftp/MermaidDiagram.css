@@ -1,0 +1,6 @@
+.mermaid-diagram.editor-mermaid { display: block; place-items: normal; min-width: 0; max-width: 100%; margin: var(--space-3) 0; padding: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-elevated); overflow: hidden; }
+.mermaid-diagram.editor-mermaid > figcaption { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 34px; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border-subtle); background: var(--bg-app); color: var(--text-muted); font-size: 11px; }
+.mermaid-diagram.editor-mermaid > figcaption .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 4px; }
+.mermaid-diagram.editor-mermaid > .mermaid-diagram-image { display: block; width: 100%; max-width: 100%; height: auto; padding: var(--space-2); }
+.mermaid-diagram.editor-mermaid > p { padding: var(--space-2); margin: 0; font-size: 12px; overflow-wrap: anywhere; white-space: normal; }
+.mermaid-diagram.editor-mermaid > [role="alert"] { color: var(--danger); }

@@ -35,7 +35,7 @@ interface RemoteFileTreeProps {
   initialRootPath?: string;
   onFileRemoved: (path: string) => void;
   onFileRenamed: (oldPath: string, newPath: string) => void;
-  onOpenFile: (entry: SftpEntry) => void;
+  onOpenFile: (entry: SftpEntry, rootPath: string) => void;
   profileId: string;
   onClose: () => void;
 }
@@ -648,7 +648,7 @@ export function RemoteFileTree({
           name,
           path,
           size: 0,
-        });
+        }, rootPath);
       } else if (inlineAction.entry) {
         const path = await sftpRename(profileId, inlineAction.entry.path, name);
         onFileRenamed(inlineAction.entry.path, path);
@@ -953,7 +953,7 @@ export function RemoteFileTree({
                 }
                 selectEntry(event, entry);
                 if (!event.metaKey && !event.ctrlKey) {
-                  onOpenFile(entry);
+                  onOpenFile(entry, rootPath);
                 }
               }}
               onContextMenu={(event) => openContextMenu(event, entry)}
@@ -1243,7 +1243,7 @@ export function RemoteFileTree({
               onClick={() => {
                 const entry = contextMenu.entry;
                 closeContextMenu();
-                onOpenFile(entry);
+                onOpenFile(entry, rootPath);
               }}
               role="menuitem"
               type="button"

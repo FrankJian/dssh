@@ -1,0 +1,9 @@
+pub mod contracts;
+pub mod file_operations;
+pub mod handoff;
+pub mod local;
+pub mod open_context;
+pub mod search;
+pub mod text;
+pub mod watch;
+pub mod workspaces;

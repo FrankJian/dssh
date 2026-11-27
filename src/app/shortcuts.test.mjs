@@ -21,12 +21,21 @@ for (const platform of ['Macintosh', 'Windows NT']) {
         return { key: b.key, ctrlKey: b.primary && !mac, metaKey: b.primary && mac,
           shiftKey: b.shift, altKey: b.alt, repeat: false, isComposing: false, defaultPrevented: false, ...extra };
       }
-      assert.equal(s.getShortcutDefinitions().length, 26);
+      assert.equal(s.getShortcutDefinitions().length, 39);
       for (const def of s.getShortcutDefinitions()) {
         assert.equal(s.findShortcutConflict(def.id, def.defaultBinding), null, def.id);
         if (def.input === 'key') assert(s.matchesShortcut(key(def.id), def.id));
       }
-      for (const id of s.ACTION_SHORTCUT_IDS) {
+      for (const id of s.EDITOR_SHORTCUT_IDS) {
+        assert.equal(s.resolveEditorShortcut(key(id), [id]), id);
+        assert.equal(s.resolveEditorShortcut(key(id), []), null);
+        assert.equal(s.resolveEditorShortcut(key(id), [id], {blocked:true}), null);
+        for (const field of ['repeat', 'isComposing', 'defaultPrevented']) assert.equal(s.resolveEditorShortcut(key(id, {[field]:true}), [id]), null);
+        assert.equal(s.isAppShortcut(key(id)), false, 'editor bindings must remain shell input outside editors');
+      }
+      assert.equal(s.resolveEditorShortcut(key('editorSave'), ['editorSave'], {editing:true}), null);
+      assert.equal(s.resolveEditorShortcut(key('editorQuickOpen'), ['editorQuickOpen'], {editing:true}), 'editorQuickOpen');
+            for (const id of s.ACTION_SHORTCUT_IDS) {
         assert(s.isAppShortcut(key(id)), id + ' must not reach shell');
         assert.equal(s.resolveActionShortcut(key(id), [id]), id);
         assert.equal(s.resolveActionShortcut(key(id), []), null);

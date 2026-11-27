@@ -96,6 +96,10 @@ pub struct UpdateDetachedWorkspaceRequest {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetachedWorkbench {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_handoff_id: Option<String>,
+    #[serde(default)]
+    pub editor_workspaces: Vec<crate::editor::contracts::EditorWorkspaceReference>,
     pub session_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub running_session_ids: Option<Vec<String>>,

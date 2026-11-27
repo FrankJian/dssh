@@ -5,7 +5,9 @@ import react from "@vitejs/plugin-react";
 const host = env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
+  // Parallel QA servers must not replace the running desktop app's dependencies.
+  cacheDir: mode.endsWith("-qa") ? `node_modules/.vite-${mode}` : "node_modules/.vite",
   plugins: [react()],
   // Dependencies reached from toolbox workers are discovered only on first run
   // unless they are pre-bundled. Avoid reloading the workbench mid-conversion.

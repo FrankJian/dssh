@@ -15,6 +15,7 @@
 - [RDP 双向剪贴板调研与实施方案](rdp-clipboard.md)
 - [RDP 首版实施说明](rdp.md)
 - [Monaco 远程代码编辑器规格](remote-editor.md)
+- [文本编辑器工作区实现](editor-workspace.md)
 - [远程 Explorer 增强规格](remote-explorer.md)
 - [SFTP 连接库方案](sftp-connections.md)
 - [终端 ZMODEM 与 JumpServer 文件传输规格](terminal-file-transfer.md)

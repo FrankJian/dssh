@@ -142,8 +142,14 @@ impl DetachedWorkspaceManager {
         self.command_outputs
             .lock()
             .map_err(|_| output_handoff_error())?
-            .insert(label, command_outputs);
-        self.open(app_handle, workspace)
+            .insert(label.clone(), command_outputs);
+        let result = self.open(app_handle, workspace);
+        if result.is_err()
+            && let Ok(mut outputs) = self.command_outputs.lock()
+        {
+            outputs.remove(&label);
+        }
+        result
     }
 
     pub fn open_sftp(
@@ -183,6 +189,31 @@ impl DetachedWorkspaceManager {
                 terminal: None,
                 sftp: None,
                 workbench: Some(DetachedWorkbench::default()),
+            },
+        )
+    }
+
+    pub fn open_editor(
+        &self,
+        app: &AppHandle,
+        label: String,
+        reference: crate::editor::contracts::EditorWorkspaceReference,
+        handoff_id: String,
+    ) -> AppResult<DetachedWorkspace> {
+        self.open(
+            app,
+            DetachedWorkspace {
+                label,
+                parent_label: "main".into(),
+                kind: DetachedWorkspaceKind::Workbench,
+                title: reference.title.clone(),
+                terminal: None,
+                sftp: None,
+                workbench: Some(DetachedWorkbench {
+                    editor_workspaces: vec![reference],
+                    editor_handoff_id: Some(handoff_id),
+                    ..Default::default()
+                }),
             },
         )
     }
@@ -243,6 +274,16 @@ impl DetachedWorkspaceManager {
     }
 
     fn open(
+        &self,
+        app_handle: &AppHandle,
+        workspace: DetachedWorkspace,
+    ) -> AppResult<DetachedWorkspace> {
+        app_handle
+            .state::<crate::application_exit::ApplicationExit>()
+            .with_window_creation(|| self.open_window(app_handle, workspace))
+    }
+
+    fn open_window(
         &self,
         app_handle: &AppHandle,
         workspace: DetachedWorkspace,

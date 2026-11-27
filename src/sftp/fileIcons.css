@@ -1,0 +1,13 @@
+@font-face {
+  font-family: "Duo Seti";
+  src: url("../assets/seti/seti.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+.file-entry-icon[data-seti] { color: var(--file-type-color, var(--text-muted)); }
+[data-theme="light"] .file-entry-icon[data-seti] { color: var(--file-type-color-light, var(--file-type-color, var(--text-muted))); }
+.file-entry-icon__seti { display: inline-block; flex: none; width: 18px; height: 18px; font-family: "Duo Seti"; font-size: 24px; font-style: normal; font-weight: normal; font-variant: normal; line-height: 18px; text-align: center; text-transform: none; -webkit-font-smoothing: antialiased; }
+.editor-breadcrumb .file-entry-icon__seti { width: 14px; height: 14px; font-size: 20px; line-height: 14px; }
+
+.file-entry-icon__seti::before { content: attr(data-glyph); display: block; }

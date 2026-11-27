@@ -59,6 +59,7 @@ import { useNativeFileDrop } from "./useNativeFileDrop";
 import { nativeUploadEntries } from "./nativeFileDrop";
 import { useFilePaneDrag } from "./useFilePaneDrag";
 import { FilePane } from "./FilePane";
+import { isEditorImage } from "../editor/fileTypes";
 import { RemoteFileEditor } from "./RemoteFileEditor";
 import { LocalFileTree } from "./LocalFileTree";
 import { RemoteFileTree } from "./RemoteFileTree";
@@ -92,6 +93,7 @@ interface FileBrowserProps {
   /** Enter the given remote directory in the active terminal (`cd <dir>`). */
   onOpenInTerminal?: (dir: string) => void;
   onOpenSshTerminal?: () => void;
+  onOpenEditor?: (source: "local" | "remote", path: string, directory: boolean, rootPath?: string) => void;
 }
 
 type TransferDirection = "download" | "upload" | "copy";
@@ -179,6 +181,7 @@ export function FileBrowser({
   initialRemotePath,
   onOpenInTerminal,
   onOpenSshTerminal,
+  onOpenEditor,
   onTabPathsChange,
   profileId,
   singleRemote = false,
@@ -705,9 +708,13 @@ export function FileBrowser({
     }
   }
 
-  function enterEntry(side: BrowserSide, entry: PaneEntry) {
+  function enterEntry(side: BrowserSide, entry: PaneEntry, contextRoot?: string) {
     if (entry.isDir) {
       void (side === "remote" ? loadRemote(entry.path) : loadLocal(entry.path));
+      return;
+    }
+    if (onOpenEditor && !isEditorImage(entry.path)) {
+      onOpenEditor(isServerPane(side) ? "remote" : "local", entry.path, false, contextRoot ?? (side === "remote" ? remotePath : localPath));
       return;
     }
     setEditors((current) => ({
@@ -1295,9 +1302,14 @@ export function FileBrowser({
         onSelection={remote ? setSelectedRemotePaths : setSelectedLocalPaths}
         onEnter={(entry) => enterEntry(side, entry)}
         onOpenFileList={(path) => {
+          if (onOpenEditor) { onOpenEditor(server ? "remote" : "local", path, true); return; }
           setEditorVisible(false);
           setFileList({ side, path });
         }}
+        onOpenEditor={onOpenEditor && (!server || profileId) ? () => {
+          const entry = selection.length === 1 ? selection[0] : undefined;
+          onOpenEditor(server ? "remote" : "local", entry?.path ?? path, entry?.isDir ?? true, entry && !entry.isDir ? path : undefined);
+        } : undefined}
         onCreate={(file) =>
           file ? beginAction(side, "file") : beginCreateDirectory(side)
         }
@@ -1508,7 +1520,7 @@ export function FileBrowser({
           onClose: () => closeFileList(side),
           onFileRemoved: (path: string) => updateEditorPath(side, path),
           onFileRenamed: (oldPath: string, newPath: string) => updateEditorPath(side, oldPath, newPath),
-          onOpenFile: (entry: PaneEntry) => enterEntry(side, entry),
+          onOpenFile: (entry: PaneEntry, rootPath?: string) => enterEntry(side, entry, rootPath),
         } : null;
         return (
           <div

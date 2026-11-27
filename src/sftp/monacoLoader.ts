@@ -69,6 +69,9 @@ export function loadMonaco(): Promise<MonacoApi> {
       };
       applyTheme(monaco);
       return monaco;
+    }).catch((error: unknown) => {
+      loader = null;
+      throw error;
     });
   }
   return loader;

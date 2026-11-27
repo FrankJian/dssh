@@ -84,3 +84,6 @@ release/latest.json
 *.msi
 *.app
 *.dmg
+
+# Isolated editor UI test evidence
+test-results/

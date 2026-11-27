@@ -1,24 +1,29 @@
 import { Icon } from "../ui/Icon";
 import type { IconName } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { SIDEBAR_LABELS, type SidebarContext } from "./sidebarDetails";
 
 /** Left-sidebar selectors. */
 export type ActivityId = "sessions" | "connections" | "tools" | "sftp" | "s3" | "artifactory";
 /** Right-panel selectors. */
 export type RightPanelId = "assistant" | "hosttools";
 /** Configurable icons shown in the left activity rail. */
-export type NavigationIconId = ActivityId | "browser" | "assistant" | "newLocalTerminal";
+export type NavigationIconId = ActivityId | "editor" | "browser" | "assistant" | "newLocalTerminal";
 
 interface ActivityBarProps {
   activeActivity: ActivityId;
   visibleNavigationIcons: readonly NavigationIconId[];
   onSelectActivity: (activity: ActivityId) => void;
   sidebarCollapsed: boolean;
+  onToggleSidebar?: () => void;
+  sidebarContext?: SidebarContext | null;
+  activeNavigation?: NavigationIconId;
   rightPanel: RightPanelId | null;
   onToggleRightPanel: (panel: RightPanelId) => void;
   onNewLocalTerminal: () => void;
   onOpenSettings: () => void;
   onOpenBrowser: () => void;
+  onOpenEditor: () => void;
 }
 
 const ACTIVITIES: { id: ActivityId; label: string; icon: IconName }[] = [
@@ -35,11 +40,15 @@ export function ActivityBar({
   visibleNavigationIcons,
   onSelectActivity,
   sidebarCollapsed,
+  onToggleSidebar,
+  sidebarContext = activeActivity,
+  activeNavigation = activeActivity,
   rightPanel,
   onToggleRightPanel,
   onNewLocalTerminal,
   onOpenSettings,
   onOpenBrowser,
+  onOpenEditor,
 }: ActivityBarProps) {
   const visibleActivities = ACTIVITIES.filter((activity) => visibleNavigationIcons.includes(activity.id));
   const showAssistant = visibleNavigationIcons.includes("assistant");
@@ -48,14 +57,23 @@ export function ActivityBar({
   return (
     <nav className="activity-bar is-glass-chrome" aria-label="主导航">
       <div className="activity-bar__top">
+        <div className="activity-bar__details-control">
+          <IconButton className="activity-bar__details-toggle" data-sidebar-details-toggle
+            label={sidebarContext === null ? "当前页面没有侧边栏详情" : `${sidebarCollapsed ? "展开" : "收起"}侧边栏详情（${SIDEBAR_LABELS[sidebarContext]}）`}
+            disabled={sidebarContext === null || !onToggleSidebar}
+            active={sidebarContext !== null && !sidebarCollapsed}
+            aria-expanded={sidebarContext === null ? undefined : !sidebarCollapsed}
+            onClick={onToggleSidebar}>
+            <Icon name={sidebarCollapsed ? "panelLeftOpen" : "panelLeftClose"} />
+          </IconButton>
+        </div>
         {visibleActivities.map((activity) => {
-          const expanded = activeActivity === activity.id
-            && (activity.id === "connections" || activity.id === "tools" || !sidebarCollapsed);
+          const selected = activeNavigation === activity.id;
           return (
             <IconButton
               key={activity.id}
-              active={expanded}
-              aria-expanded={expanded}
+              active={selected}
+              aria-current={selected ? "page" : undefined}
               label={activity.label}
               onClick={() => onSelectActivity(activity.id)}
             >
@@ -63,8 +81,11 @@ export function ActivityBar({
             </IconButton>
           );
         })}
+        {visibleNavigationIcons.includes("editor") ? (
+          <IconButton label="打开文本编辑器" active={activeNavigation === "editor"} aria-current={activeNavigation === "editor" ? "page" : undefined} onClick={onOpenEditor}><Icon name="editor" /></IconButton>
+        ) : null}
         {visibleNavigationIcons.includes("browser") ? (
-          <IconButton label="打开浏览器" onClick={onOpenBrowser}><Icon name="globe" /></IconButton>
+          <IconButton label="打开浏览器" active={activeNavigation === "browser"} aria-current={activeNavigation === "browser" ? "page" : undefined} onClick={onOpenBrowser}><Icon name="globe" /></IconButton>
         ) : null}
         {showAssistant && visibleActivities.length > 0 ? <div className="activity-bar__divider" /> : null}
         {showAssistant ? (

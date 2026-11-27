@@ -1,6 +1,6 @@
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { useDialogFocus } from "../ui/useDialogFocus";
-import { isActivityId } from "../app/navigationPreferences";
+import { NavigationIconSettings } from "./NavigationIconSettings";
 import { SettingsSwitch } from "../ui/SettingsSwitch";
 import { BrowserLinkSettings } from "./BrowserLinkSettings";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -165,22 +165,6 @@ const themeOptions: Array<{
   { icon: "system", label: "跟随系统", mode: "system" },
   { icon: "sun", label: "浅色", mode: "light" },
   { icon: "moon", label: "深色", mode: "dark" },
-];
-
-const NAVIGATION_ICON_OPTIONS: Array<{
-  id: NavigationIconId;
-  label: string;
-  icon: "folder" | "sessions" | "connections" | "bucket" | "database" | "globe" | "bot" | "terminalTool" | "toolbox";
-}> = [
-  { id: "sessions", label: "活动会话", icon: "sessions" },
-  { id: "connections", label: "连接管理", icon: "connections" },
-  { id: "tools", label: "工具箱", icon: "toolbox" },
-  { id: "sftp", label: "SFTP", icon: "folder" },
-  { id: "browser", label: "浏览器", icon: "globe" },
-  { id: "s3", label: "S3 对象浏览器", icon: "bucket" },
-  { id: "artifactory", label: "Artifactory", icon: "database" },
-  { id: "assistant", label: "AI 助手", icon: "bot" },
-  { id: "newLocalTerminal", label: "新建本地终端", icon: "terminalTool" },
 ];
 
 function buildFontOptions(systemFamilies: readonly string[], currentValues: readonly string[]): FontFamilyOption[] {
@@ -604,34 +588,7 @@ export function SettingsDialog({
                 <div className="settings-section__head">
                   <h3>左侧导航栏</h3>
                 </div>
-                <div className="appearance-settings__navigation" role="group" aria-label="左侧导航栏">
-                  {NAVIGATION_ICON_OPTIONS.map((option) => {
-                    const checked = navigationIcons.includes(option.id);
-                    const visibleActivityCount = navigationIcons.filter(isActivityId).length;
-                    const disableLastActivity =
-                      checked &&
-                      isActivityId(option.id) &&
-                      visibleActivityCount === 1;
-                    return (
-                      <label className="settings-control-row" key={option.id}>
-                        <span className="settings-control-row__label">
-                          <Icon name={option.icon} height="16" width="16" />
-                          <span>{option.label}</span>
-                        </span>
-                        <SettingsSwitch
-                          checked={checked}
-                          disabled={disableLastActivity}
-                          onChange={(event) => {
-                            const next = event.currentTarget.checked
-                              ? [...navigationIcons, option.id]
-                              : navigationIcons.filter((item) => item !== option.id);
-                            onNavigationIconsChange(next);
-                          }}
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
+                <NavigationIconSettings value={navigationIcons} onChange={onNavigationIconsChange} />
               </section>
             ) : null}
 

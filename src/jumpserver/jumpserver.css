@@ -73,3 +73,8 @@
 }
 
 .jumpserver__ssh-fallback { width:min(100%, 480px); margin:0 auto; padding:var(--space-4) var(--space-6); border-top:1px solid var(--border-subtle); }
+
+
+.jumpserver__nodes { width: calc(220px * var(--sidebar-details-progress)); padding: calc(var(--space-2) * var(--sidebar-details-progress)); border-right-width: calc(1px * var(--sidebar-details-progress)); overflow: hidden auto; }
+@container jumpserver (max-width:760px) { .jumpserver__nodes { width:calc(160px * var(--sidebar-details-progress)); } }
+@container jumpserver (max-width:620px) { .jumpserver__nodes { width:auto; max-height:calc(112px * var(--sidebar-details-progress)); padding-block:calc(var(--space-2) * var(--sidebar-details-progress)); border-right-width:0; border-bottom-width:calc(1px * var(--sidebar-details-progress)); } }

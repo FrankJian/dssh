@@ -59,6 +59,7 @@ function loadTypeFilter(): ConnectionTypeFilter {
 }
 
 interface SessionManagerProps {
+  sidebarVisible?: boolean;
   groupRequest?: ConnectionGroupRequest | null;
   onGroupRequestHandled?: (requestId: number) => void;
   profiles: ConnectionProfile[];
@@ -83,6 +84,7 @@ interface SessionManagerProps {
 }
 
 export function SessionManager({
+  sidebarVisible = true,
   groupRequest,
   onGroupRequestHandled,
   profiles,
@@ -243,7 +245,7 @@ export function SessionManager({
   const cardVariant = view === "grid" ? "grid" : "list";
 
   function renderScope(id: Scope, label: string, icon: IconName, count: number) {
-    if (count === 0) return null;
+    if (count === 0 && id !== "all") return null;
     return <button key={id} type="button" className={`session-manager__nav-item${activeScope === id ? " is-active" : ""}`}
       aria-haspopup={id.startsWith("tag:") ? "menu" : undefined}
       onContextMenu={(event) => {
@@ -322,8 +324,8 @@ export function SessionManager({
           </Button>
         </div>
       </header>
-      <div className="session-manager__body">
-        {profiles.length > 0 ? <nav className="session-manager__nav" aria-label="连接分类" ref={navRef}>
+      <div className="session-manager__body sidebar-motion" data-sidebar-visible={sidebarVisible}>
+        <nav inert={!sidebarVisible} aria-hidden={!sidebarVisible} className="session-manager__nav sidebar-motion-content" aria-label="连接分类" ref={navRef}>
           <div className="session-manager__nav-title">连接库</div>
           {renderScope("all", "全部连接", "connections", profiles.length)}
           {renderScope("recent", "最近使用", "clock", recentSet.size)}
@@ -343,7 +345,7 @@ export function SessionManager({
           <div className="session-manager__nav-title" title="按连接标签自动分组；一个连接可以属于多个分组">标签分组</div>
           {tags.map((tag) => renderScope(`tag:${tag}`, tag, "tag", profiles.filter((profile) => profile.tags.includes(tag)).length))}
           {renderScope("untagged", "未分组", "tag", untaggedCount)}
-        </nav> : null}
+        </nav>
         <div className="session-manager__main">
           <div className="session-manager__toolbar">
             <div className="session-manager__search">

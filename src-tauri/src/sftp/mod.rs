@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+pub mod editor;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use russh::ChannelMsg;
 use russh_sftp::{
@@ -1138,6 +1140,8 @@ impl SftpManager {
         remote_path: &str,
         operation_id: &str,
     ) -> AppResult<SftpDeleteResult> {
+        // Reset before the first remote await, so cancellation during plan collection survives.
+        self.cancelled_operations.lock().await.remove(operation_id);
         let conn = self.connection(profile).await?;
         let target = self.safe_recursive_target(&conn, remote_path).await?;
         let plan = collect_delete_plan(&conn.sftp, &target).await?;
@@ -1146,7 +1150,6 @@ impl SftpManager {
             operation_id,
             profile_id: &profile.id,
         };
-        self.cancelled_operations.lock().await.remove(operation_id);
         emit_progress(
             app,
             &transfer,
@@ -1201,6 +1204,10 @@ impl SftpManager {
             .lock()
             .await
             .insert(operation_id.to_string());
+    }
+
+    pub(crate) async fn clear_operation_cancellation(&self, operation_id: &str) {
+        self.cancelled_operations.lock().await.remove(operation_id);
     }
 
     async fn operation_cancelled(&self, operation_id: &str) -> bool {
@@ -1616,7 +1623,7 @@ fn sftp_text_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("sftp_text_error", error.to_string())
 }
 
-fn is_known_binary_path(path: &str) -> bool {
+pub(crate) fn is_known_binary_path(path: &str) -> bool {
     matches!(
         path.rsplit_once('.')
             .map(|(_, extension)| extension.to_ascii_lowercase())
@@ -1659,7 +1666,7 @@ fn is_known_binary_path(path: &str) -> bool {
     )
 }
 
-fn has_binary_signature(data: &[u8]) -> bool {
+pub(crate) fn has_binary_signature(data: &[u8]) -> bool {
     const SIGNATURES: &[&[u8]] = &[
         b"\x1f\x8b",   // gzip / tgz
         b"PK\x03\x04", // zip, office documents and jar

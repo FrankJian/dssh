@@ -5,6 +5,7 @@ import { IconButton } from "./IconButton";
 
 interface DialogProps {
   title: string;
+  className?: string;
   onClose: () => void;
   busy?: boolean;
   initialFocusSelector?: string;
@@ -13,7 +14,7 @@ interface DialogProps {
 }
 
 /** Native modal isolation also works while every action is temporarily disabled. */
-export function Dialog({ title, onClose, busy = false, initialFocusSelector, children, footer }: DialogProps) {
+export function Dialog({ title, className = "", onClose, busy = false, initialFocusSelector, children, footer }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const previousFocus = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -29,7 +30,7 @@ export function Dialog({ title, onClose, busy = false, initialFocusSelector, chi
     };
   }, []);
   return createPortal(
-    <dialog ref={ref} className="profile-editor app-dialog is-glass-overlay" role="dialog" aria-modal="true" aria-labelledby={titleId}
+    <dialog ref={ref} className={`profile-editor app-dialog is-glass-overlay ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
       onKeyDown={(event) => {
         if (event.key === "Escape") event.stopPropagation();

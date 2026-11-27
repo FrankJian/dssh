@@ -61,6 +61,30 @@ jobs:
       - name: Type-check frontend
         run: pnpm exec tsc --noEmit
 
+      - name: Test editor logic
+        run: pnpm test:editor
+
+      - name: Test editor shortcuts and file navigation
+        run: |
+          pnpm test:shortcuts
+          pnpm test:sftp
+
+      - name: Install editor browser test runtime
+        run: pnpm exec playwright install chromium
+
+      - name: Test editor workbench
+        timeout-minutes: 10
+        run: pnpm test:editor-browser
+
+      - name: Upload editor failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: editor-failure-${{ matrix.os }}
+          path: test-results/editor/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Test connection library
         run: pnpm test:connection-library
 

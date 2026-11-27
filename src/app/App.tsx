@@ -1,8 +1,23 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { reuseEmptyEditorWorkspace } from "../editor/reuseEmptyWorkspace";
+import { useSidebarDetails } from "./useSidebarDetails";
+import { editorWorkspaceLabels } from "../editor/workspaceLabels";
+import { initialEditorFile, editorRestoreRequest, readEditorWorkspaceReferences, readEditorFolderLayout, storeEditorFolderLayout, EDITOR_WORKSPACES_KEY, type EditorLayoutReference, type EditorWorkspaceReference } from "../editor/layoutReferences";
+import { editorBaseName, canReuseEditorWorkspace } from "../editor/editorPaths";
+import { useApplicationExit } from "../editor/useApplicationExit";
+import { prepareEditorWindowClose, coordinateEditorWindowClose } from "../editor/closeWorkspace";
+import { isEditorImage } from "../editor/fileTypes";
+import { transferEditorWorkspace } from "../editor/transferWorkspace";
+import { EditorWorkbench, type EditorWorkbenchHandle } from "../editor/EditorWorkbench";
+import { openEditorWorkspace, closeEditorWorkspace, detachEditorWorkspace, editorHandoffReady, waitEditorHandoff, finishEditorHandoff } from "../services/editorService";
+import type { FileSource } from "../models/editor";
+import { chooseLocalEditorPath } from "../editor/localEntry";
 import { exportCommandOutputs, importCommandOutputs } from "../terminal/commandOutputStore";
 import { takeTerminalCommandOutputs } from "../services/workspaceService";
 import { TOOL_CATALOG, type ToolId } from "../tools/catalog";
 import { ToolsWorkspace } from "../tools/ToolsWorkspace";
-import { DEFAULT_NAVIGATION_ICONS, isActivityId, parseNavigationIcons } from "./navigationPreferences";
+import { navigationActivityFallback } from "./navigationPreferences";
+import { useNavigationIcons } from "./useNavigationIcons";
 import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
 import { ArtifactoryWorkspace } from "../artifactory/ArtifactoryWorkspace";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
@@ -103,7 +118,6 @@ import { isMacOS } from "../platform";
 import {
   ActivityBar,
   type ActivityId,
-  type NavigationIconId,
   type RightPanelId,
 } from "./ActivityBar";
 import { AppLayout } from "./AppLayout";
@@ -155,9 +169,7 @@ interface ForwardTarget {
   profile: SshProfile;
 }
 
-const SIDEBAR_COLLAPSED_KEY = "dssh.sidebar.collapsed";
 const RIGHT_PANEL_KEY = "dssh.rightPanel";
-const NAVIGATION_ICONS_KEY = "dssh.navigation.icons.v3";
 const RIGHT_PANEL_WIDTH_KEY = "dssh.hosttools.panelWidth";
 const SESSIONS_PANEL_WIDTH_KEY = "dssh.ssh.panelWidth";
 const S3_PANEL_WIDTH_KEY = "dssh.s3.panelWidth";
@@ -199,17 +211,6 @@ function loadRightPanel(): RightPanelId | null {
   return raw === "assistant" || raw === "hosttools" ? raw : null;
 }
 
-function loadNavigationIcons(): NavigationIconId[] {
-  try {
-    const saved = localStorage.getItem(NAVIGATION_ICONS_KEY);
-    if (saved !== null) return parseNavigationIcons(saved);
-    const legacy = localStorage.getItem("dssh.navigation.icons.v2") ?? localStorage.getItem("dssh.navigation.icons");
-    return parseNavigationIcons(legacy, true);
-  } catch {
-    return DEFAULT_NAVIGATION_ICONS;
-  }
-}
-
 // Show process-wide SSH prompts in one workbench, even while the app is in the background.
 async function isPromptWindow() {
   const windows = (await getAllWindows()).filter((window) => window.label === "main" || window.label.startsWith("detached-"));
@@ -237,11 +238,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   const [activeActivity, setActiveActivity] = useState<ActivityId>("sessions");
   const [toolId, setToolId] = useState<ToolId>("json-format");
   const [toolsVisited, setToolsVisited] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
-    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
-  );
   const [rightPanel, setRightPanel] = useState<RightPanelId | null>(() => loadRightPanel());
-  const [navigationIcons, setNavigationIcons] = useState<NavigationIconId[]>(() => loadNavigationIcons());
+  const [navigationIcons, setNavigationIcons] = useNavigationIcons();
   const connectionGroupSequence = useRef(0);
   const [connectionGroupRequest, setConnectionGroupRequest] = useState<ConnectionGroupRequest | null>(null);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
@@ -340,9 +338,6 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     localStorage.setItem(S3_PANEL_WIDTH_KEY, String(s3PanelWidth));
   }, [s3PanelWidth]);
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
-  useEffect(() => {
     if (rightPanel) {
       localStorage.setItem(RIGHT_PANEL_KEY, rightPanel);
     } else {
@@ -350,15 +345,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }, [rightPanel]);
   useEffect(() => {
-    localStorage.setItem(NAVIGATION_ICONS_KEY, JSON.stringify(navigationIcons));
-  }, [navigationIcons]);
-  useEffect(() => {
-    if (activeActivity !== "tools" && !navigationIcons.includes(activeActivity)) {
-      const fallback = navigationIcons.find((item) => isActivityId(item) && item !== "tools");
-      if (fallback) {
-        setActiveActivity(fallback);
-        setSidebarCollapsed(false);
-      }
+    const fallback = navigationActivityFallback(activeActivity, navigationIcons);
+    if (fallback) {
+      setActiveActivity(fallback);
     }
   }, [activeActivity, navigationIcons]);
 
@@ -463,10 +452,11 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     subscribeOutput,
     writeToSession,
   } = useTerminalSessions(initialWorkspace ? initialState.sessionIds : undefined, handleCommandCompleted, initialState.runningSessionIds);
-  const { confirmClose, closeDialog } = useTerminalCloseGuard(commandActivity);
+  const { confirmClose, closeDialog, cancelClose: cancelTerminalClose } = useTerminalCloseGuard(commandActivity);
   const bulkClosingRef = useRef(false);
   const windowCloseRef = useRef<() => Promise<boolean>>(async () => false);
   const {
+    editorTabs, getEditorTabs, replaceEditorTab, activeEditorId, focusEditorTab, openEditorEntry, addEditorTab, closeEditorTab, renameEditorTab,
     sftpTabs,
     activeBrowserId,
     focusBrowserTab,
@@ -482,6 +472,121 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     tabOrder,
     reorderTab,
   } = useWorkspace(initialState.sftpTabs, initialState.tabOrder);
+  const editorHandles = useRef(new Map<string, EditorWorkbenchHandle>());
+  const editorLocked = useRef(true); editorLocked.current = appLock.status?.locked !== false;
+  const isEditorActive = activeEditorId !== null;
+  const [editorTitlebarHost, setEditorTitlebarHost] = useState<HTMLDivElement | null>(null);
+  const editorRestoreSeed = useRef(initialState.editorWorkspaces ?? (windowLabel === "main" ? readEditorWorkspaceReferences(localStorage) : []));
+  const editorRestored = useRef(false);
+  const [editorHandoffPending, setEditorHandoffPending] = useState(Boolean(initialState.editorHandoffId));
+  const handoffAcknowledged = useRef(false);
+  const detachingEditors = useRef(new Set<string>());
+  async function acknowledgeEditorHandoff(id: string | undefined, ready: boolean) {
+    const handoffId = initialState.editorHandoffId;
+    if (!handoffId || handoffAcknowledged.current) return;
+    handoffAcknowledged.current = true;
+    let released = false;
+    try { await editorHandoffReady(handoffId, ready); released = await waitEditorHandoff(handoffId, true); }
+    catch { /* The source may have closed or cancelled while this window loaded. */ }
+    if (!released || !ready) {
+      const tab = id ? editorTabsRef.current.find((item) => item.id === id) : undefined;
+      if (tab) { await closeEditorWorkspace(tab.workspace.id).catch(() => undefined); editorReferences.current.delete(tab.id); persistEditorReferences(); closeEditorTab(tab.id); }
+      toast("移窗未完成，源工作区已保留。", "info");
+    }
+    setEditorHandoffPending(false);
+  }
+  const editorTabsRef = useRef(editorTabs); editorTabsRef.current = editorTabs;
+  const [editorReferenceRevision, setEditorReferenceRevision] = useState(0);
+  const editorStorageWarning = useRef(false);
+  function reportEditorStorageFailure() { if (!editorStorageWarning.current) { editorStorageWarning.current = true; toast("编辑布局未能保存到本机，请检查存储空间。文件正文保存不受影响。", "info"); } }
+  const editorReferences = useRef(new Map<string, EditorWorkspaceReference>());
+  const pendingEditorReferences = useRef(new Set(editorRestoreSeed.current));
+  function persistEditorReferences() {
+    if (windowLabel !== "main") return;
+    try { localStorage.setItem(EDITOR_WORKSPACES_KEY, JSON.stringify([...pendingEditorReferences.current, ...editorReferences.current.values()].slice(0, 16))); }
+    catch { reportEditorStorageFailure(); }
+  }
+  function rememberEditorState(id: string, workspaceId: string, state: EditorLayoutReference) {
+    const tab = getEditorTabs().find((item) => item.id === id && item.workspace.id === workspaceId); if (!tab) return;
+    const reference = { source: tab.workspace.source, rootPath: tab.workspace.rootPath, initialFile: tab.workspace.rootPath ? null : initialEditorFile(state), title: tab.title, state };
+    if (JSON.stringify(editorReferences.current.get(id)) === JSON.stringify(reference)) return;
+    editorReferences.current.set(id, reference);
+    try { storeEditorFolderLayout(localStorage, reference); } catch { reportEditorStorageFailure(); }
+    setEditorReferenceRevision((n) => n + 1);
+    persistEditorReferences();
+  }
+  async function openTextEditor(source: FileSource = { kind: "local" }, path?: string, directory?: boolean, reference?: EditorWorkspaceReference, forceNew = false, contextRoot?: string, preferredEmptyId?: string) {
+    if (appLock.status?.locked !== false || closingWindowRef.current) return;
+    let unadoptedWorkspaceId: string | null = null;
+    try {
+      if (path && !directory && !forceNew && !reference) {
+        const existing = getEditorTabs().find((tab) => canReuseEditorWorkspace(tab.workspace, source, path, contextRoot));
+        if (existing) { const handle = editorHandles.current.get(existing.id); if (handle) await handle.open(path); focusEditorTab(existing.id); setActiveActivity("sessions"); setFileTreeSessionId(null); return existing.id; }
+      }
+      const workspace = await openEditorWorkspace({ source, path, directory, rootPath: directory ? undefined : contextRoot });
+      unadoptedWorkspaceId = workspace.id;
+      if (editorLocked.current || closingWindowRef.current) { await closeEditorWorkspace(workspace.id); unadoptedWorkspaceId = null; return; }
+      if (directory && workspace.rootPath && !reference && !forceNew) {
+        const existing = getEditorTabs().find((tab) => tab.workspace.rootPath === workspace.rootPath && tab.workspace.source.kind === source.kind && (source.kind === "local" || (tab.workspace.source.kind === "sftp" && tab.workspace.source.profileId === source.profileId)));
+        if (existing) { await closeEditorWorkspace(workspace.id); unadoptedWorkspaceId = null; focusEditorTab(existing.id); setActiveActivity("sessions"); setFileTreeSessionId(null); return existing.id; }
+      }
+      const folderRestore = !reference && !forceNew && workspace.rootPath ? readEditorFolderLayout(localStorage, source, workspace.rootPath) : null;
+      if (directory && !reference && !forceNew && !editorHandoffPending) {
+        const reused = reuseEmptyEditorWorkspace({ tabs: getEditorTabs().filter((tab) => !detachingEditors.current.has(tab.id)), preferredId: preferredEmptyId ?? activeEditorId,
+          handles: editorHandles.current, workspace, restore: folderRestore?.state, replace: replaceEditorTab,
+          titleFor: (tab) => {
+            const defaultTitle = tab.workspace.source.kind === "local" ? "文本编辑器" : profiles.find((profile) => tab.workspace.source.kind === "sftp" && profile.id === tab.workspace.source.profileId)?.name ?? "远程编辑器";
+            return tab.title === defaultTitle ? editorBaseName(source, workspace.rootPath!) : tab.title;
+          },
+        });
+        if (reused) {
+          unadoptedWorkspaceId = null;
+          editorReferences.current.delete(reused.id); setEditorReferenceRevision((n) => n + 1); persistEditorReferences();
+          focusEditorTab(reused.id); setActiveActivity("sessions"); setFileTreeSessionId(null);
+          await closeEditorWorkspace(reused.previousWorkspaceId).catch(() => toast("目录已打开，但旧空工作区释放失败。", "info"));
+          return reused.id;
+        }
+      }
+      const id = addEditorTab(workspace, reference?.title ?? (path ? editorBaseName(source, path) : null) ?? (source.kind === "local" ? "文本编辑器" : profiles.find((p) => p.id === source.profileId)?.name ?? "远程编辑器"), reference?.state ?? folderRestore?.state);
+      unadoptedWorkspaceId = null; setActiveActivity("sessions"); setFileTreeSessionId(null); return id;
+    } catch (error) {
+      if (unadoptedWorkspaceId) await closeEditorWorkspace(unadoptedWorkspaceId).catch(() => toast("临时编辑工作区清理失败，请关闭窗口后重试。", "info"));
+      toast(error instanceof Error ? error.message : "打开编辑器失败。", "error");
+    }
+  }
+  useEffect(() => {
+    if (editorRestored.current || appLock.status?.locked !== false) return;
+    editorRestored.current = true;
+    void (async () => {
+      for (const reference of editorRestoreSeed.current) {
+        const request = editorRestoreRequest(reference);
+        const id = await openTextEditor(request.source, request.path, request.directory, reference);
+        if (id) pendingEditorReferences.current.delete(reference);
+        else if (initialState.editorHandoffId) void acknowledgeEditorHandoff(undefined, false);
+      }
+    })();
+  }, [appLock.status?.locked]);
+  async function chooseTextEditor(directory: boolean, preferredEmptyId?: string) {
+    try { await chooseLocalEditorPath(directory, (path, directory) => openTextEditor({ kind: "local" }, path, directory, undefined, false, undefined, preferredEmptyId)); }
+    catch (error) { toast(error instanceof Error ? error.message : "无法选择文件。", "error"); }
+  }
+  async function handleOpenEditorEntry() {
+    if (editorLocked.current || closingWindowRef.current || editorHandoffPending) return;
+    const id = await openEditorEntry(() => openTextEditor());
+    if (id && !editorLocked.current && !closingWindowRef.current) {
+      setActiveActivity("sessions"); setFileTreeSessionId(null);
+    }
+  }
+  async function closeTextEditor(id: string) {
+    const tab = editorTabs.find((item) => item.id === id); if (!tab) return;
+    const handle = editorHandles.current.get(id);
+    // A loading editor cannot contain edits; mounted editors must agree before release.
+    const plan = handle ? await handle.prepareClose() : null;
+    if (handle && (!plan || !handle.validClose(plan))) return;
+    handle?.freeze();
+    try { await closeEditorWorkspace(tab.workspace.id); editorReferences.current.delete(id); persistEditorReferences(); closeEditorTab(id); }
+    catch (error) { handle?.thaw(); toast(error instanceof Error ? error.message : "关闭编辑器失败。", "error"); }
+  }
   const browserTabs = useBrowserTabs((id) => {
     focusBrowserTab(id);
     setFileTreeSessionId(null);
@@ -525,6 +630,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   // A compact remote tree can be docked alongside one SSH terminal. It is a
   // workspace presentation state, not a separate tab or an additional shell.
   const [fileTreeSessionId, setFileTreeSessionId] = useState<string | null>(null);
+  const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed, toggle: toggleSidebar, context: sidebarContext } =
+    useSidebarDetails(activeActivity, isEditorActive, isBrowserActive, Boolean(fileTreeSessionId && fileTreeSessionId === activeSessionId));
   const pendingSftpTerminalStarts = useRef(new Set<string>());
   const [openRemoteFilePaths, setOpenRemoteFilePaths] = useState<string[]>([]);
   const [activeRemoteFilePath, setActiveRemoteFilePath] = useState<string | null>(null);
@@ -556,11 +663,12 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     sessionIds: sessions.map((session) => session.id),
     runningSessionIds: sessions.filter((session) => commandActivity.has(session.id)).map((session) => session.id),
     layouts: panes.layouts.filter((layout) => paneSessionIds(layout).some((id) => sessions.some((session) => session.id === id))),
-    terminalNames, paneNames, terminalSnapshots: {}, sftpTabs, tabOrder, s3ProfileIds: s3TabProfileIds,
+    terminalNames, paneNames, terminalSnapshots: {}, sftpTabs, tabOrder, editorWorkspaces: [...editorReferences.current.values()].slice(0, 16), s3ProfileIds: s3TabProfileIds,
   };
   const workbenchRef = useRef(workbench);
   workbenchRef.current = workbench;
   const workbenchKey = JSON.stringify(workbench);
+  void editorReferenceRevision;
   useEffect(() => {
     if (!initialWorkspace || !isSessionsLoaded || closingWindowRef.current) return;
     void updateDetachedWorkbench(JSON.parse(workbenchKey) as DetachedWorkbench).catch((error: Error) => toast(error.message, "error"));
@@ -718,6 +826,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
             initialLocalPath={tab.localPath}
             initialRemotePath={tab.remotePath}
             onTabPathsChange={updateSftpTabPaths}
+            onOpenEditor={(source, path, directory, rootPath) => { if (source === "local") void openTextEditor({ kind: "local" }, path, directory, undefined, false, rootPath); else if (sftpProfileId) void openTextEditor({ kind: "sftp", profileId: sftpProfileId }, path, directory, undefined, false, rootPath); }}
             onOpenSshTerminal={!tab.asset && profile && !openSshProfileIds.has(tab.profileId)
               ? () => void handleOpenSftpTerminal(profile)
               : undefined}
@@ -772,8 +881,9 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
       switch (event.action) {
         case "show_sessions":
+          focusTerminal();
           setActiveActivity("sessions");
-          setSidebarCollapsed(false);
+
           complete("已打开活动会话。");
           return;
         case "show_connections":
@@ -782,7 +892,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           return;
         case "show_s3":
           setActiveActivity("s3");
-          setSidebarCollapsed(false);
+
           complete("已打开 S3 对象浏览器。");
           return;
         case "show_terminal":
@@ -820,10 +930,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         case "open_file_explorer": {
           const target = requireActiveSsh();
           if (!target) return;
-          setFileTreeSessionId(target.session.id);
-          setActiveRemoteFilePath(null);
-          showTerminalSurface();
-          complete(`已打开 ${target.profile.name} 的文件列表。`);
+          void openTextEditor({ kind: "sftp", profileId: target.profile.id }, undefined, true).then((id) => complete(id ? `已在编辑工作台打开 ${target.profile.name} 的文件列表。` : "文件列表未能打开。", !id));
           return;
         }
         case "open_port_forward": {
@@ -863,7 +970,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           return;
         case "new_s3_profile":
           setActiveActivity("s3");
-          setSidebarCollapsed(false);
+
           setS3EditorState({ mode: "create", profile: null });
           complete("已打开新建 S3 配置页面。");
           return;
@@ -1039,6 +1146,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   async function confirmDeleteSshProfile(profileId: string) {
     try {
       if (sftpTabs.some(tab => tab.profileId === profileId)) throw new Error("请先关闭该连接的 SFTP 标签，再删除配置，避免中断文件操作。");
+      if (editorTabs.some((tab) => tab.workspace.source.kind === "sftp" && (tab.workspace.source.profileId === profileId || tab.workspace.source.profileId.startsWith(`koko-sftp:${profileId}:`)))) throw new Error("请先关闭该连接的编辑器工作台，再删除配置，避免丢失未保存内容。");
       await deleteProfile(profileId);
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : "删除 SSH 配置失败。");
@@ -1296,19 +1404,15 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     if (node.kind === "ssh" && !node.profile) {
       return;
     }
-    // Prefer the terminal already focused for this host; otherwise use its
-    // first terminal. The file tree is intentionally paired with one shell.
-    const session =
-      node.sessions.find((item) => item.id === activeSessionId) ?? node.sessions[0];
-    if (!session) {
-      return;
-    }
-    setActiveSessionId(session.id);
-    setFileTreeSessionId(session.id);
-    showTerminalSurface();
+    void openTextEditor(node.kind === "local" ? { kind: "local" } : { kind: "sftp", profileId: node.profile!.id }, undefined, true);
   }
 
-  function handleOpenRemoteFile(path: string) {
+  function handleOpenRemoteFile(path: string, rootPath?: string) {
+    if (!isEditorImage(path)) {
+      if (isLocalFileTree) void openTextEditor({ kind: "local" }, path, false, undefined, false, rootPath);
+      else if (fileTreeProfile) void openTextEditor({ kind: "sftp", profileId: fileTreeProfile.id }, path, false, undefined, false, rootPath);
+      return;
+    }
     setOpenRemoteFilePaths((current) => (current.includes(path) ? current : [...current, path]));
     setActiveRemoteFilePath(path);
   }
@@ -1364,26 +1468,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   function handleSelectActivity(next: ActivityId) {
-    if (next === activeActivity) {
-      if (next === "connections" || next === "tools") {
-        setActiveActivity("sessions");
-        setSidebarCollapsed(true);
-        return;
-      }
-      setSidebarCollapsed((collapsed) => !collapsed);
-      return;
-    }
+    if (next === "sessions" || next === "sftp") focusTerminal();
     if (next === "tools") {
       openTools();
       return;
     }
     setActiveActivity(next);
-    setSidebarCollapsed(false);
   }
-
-  const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((collapsed) => !collapsed);
-  }, []);
 
   const toggleRightPanel = useCallback((panel: RightPanelId) => {
     setRightPanel((current) => (current === panel ? null : panel));
@@ -1485,6 +1576,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   // Every pane tree has one terminal-window tab. Child panes never appear as
   // independent tabs, even while another terminal window is active.
+  const editorTabLabelMap = new Map(editorWorkspaceLabels(editorTabs).map((item) => [item.id, item]));
   const workspaceTabs: WorkspaceTabItem[] = [
     ...sessions
       .filter((session) => !detachedTerminalSessionIds.has(session.id))
@@ -1500,12 +1592,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
           : ("terminalTool" as const),
         title: terminalTabTitle(session),
         renameValue: terminalName(session),
-        active: !isBrowserActive && !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
+        active: !isEditorActive && !isBrowserActive && !isSftpActive && (session.id === activeSessionId || session.id === paneTabBySession.get(activeSessionId ?? "")),
         running: (panes.findLayout(session.id)
           ? paneSessionIds(panes.findLayout(session.id))
           : [session.id]
         ).some((paneId) => commandActivity.has(paneId)),
       })),
+    ...editorTabs.map((tab) => { const label = editorTabLabelMap.get(tab.id)!; return { id: tab.id, kind: "editor" as const, icon: "editor" as const, title: label.title, sourceLabel: label.source, description: label.description, renameValue: tab.title, active: tab.id === activeEditorId }; }),
     ...browserTabs.map((tab) => ({
       id: tab.id, kind: "browser" as const, icon: "globe" as const,
       title: tab.title || "浏览器", renameValue: tab.title || "浏览器",
@@ -1533,7 +1626,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   const tabFocusHistory = useRef<string[]>([]);
-  const selectedTabId = activeBrowserId ?? activeSftpId ?? workspaceTabs.find((tab) => tab.active)?.id ?? null;
+  const selectedTabId = activeEditorId ?? activeBrowserId ?? activeSftpId ?? workspaceTabs.find((tab) => tab.active)?.id ?? null;
   useLayoutEffect(() => {
     const next = reconcileWorkspaceTabFocus(tabFocusHistory.current, selectedTabId, workspaceTabs.map((tab) => tab.id));
     tabFocusHistory.current = next.history;
@@ -1544,6 +1637,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   });
 
   function handleSelectTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "editor") { setActiveActivity("sessions"); setFileTreeSessionId(null); focusEditorTab(tab.id); return; }
     if (tab.kind === "browser") {
       setFileTreeSessionId(null); setActiveActivity("sessions"); focusBrowserTab(tab.id); return;
     }
@@ -1602,6 +1696,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   async function handleDuplicateTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "editor") { const source = editorTabs.find((item) => item.id === tab.id); if (source) await openTextEditor(source.workspace.source, source.workspace.rootPath ?? source.workspace.initialFile ?? undefined, Boolean(source.workspace.rootPath), undefined, true); return; }
     if (tab.kind === "browser") {
       const source = browserTabs.find((item) => item.id === tab.id);
       void openBrowser(source?.url || undefined).catch((error: Error) => toast(error.message, "error")); return;
@@ -1635,6 +1730,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   function handleRenameTab(tab: WorkspaceTabItem, name: string) {
+    if (tab.kind === "editor") { renameEditorTab(tab.id, name); return; }
     if (tab.kind === "browser") {
       void renameBrowserTab(tab.id, name).catch((error: Error) => toast(error.message, "error"));
     } else if (tab.kind === "sftp") {
@@ -1645,6 +1741,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   async function handleCloseTab(tab: WorkspaceTabItem) {
+    if (tab.kind === "editor") { await closeTextEditor(tab.id); return; }
     if (tab.kind === "browser") {
       try { await closeBrowserTab(tab.id); }
       catch (error) { toast(error instanceof Error ? error.message : "关闭浏览器失败。", "error"); }
@@ -1667,7 +1764,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     }
   }
 
-  const terminalShortcutsAvailable = Boolean(activeSession && !isConnections && !isS3 && !isArtifactory && !isTools && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
+  const terminalShortcutsAvailable = Boolean(!isEditorActive && activeSession && !isConnections && !isS3 && !isArtifactory && !isTools && !isSftpActive && !isBrowserActive && !activeRemoteFilePath);
   const currentWorkspaceTab = workspaceTabs.find((tab) => tab.active);
   function switchWorkspaceTab(step: number) {
     const id = cycleItem(workspaceTabs.map((tab) => tab.id), currentWorkspaceTab?.id ?? null, step);
@@ -1704,18 +1801,60 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     closePane: terminalShortcutsAvailable && activeSession ? () => handleClosePane(activeSession.id) : undefined,
     nextTab: !isTools && workspaceTabs.length > 1 ? () => switchWorkspaceTab(1) : undefined,
     previousTab: !isTools && workspaceTabs.length > 1 ? () => switchWorkspaceTab(-1) : undefined,
-    closeTab: !isConnections && !isS3 && !isArtifactory && !isTools && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
+    closeTab: !isEditorActive && !isConnections && !isS3 && !isArtifactory && !isTools && !activeRemoteFilePath && currentWorkspaceTab ? () => handleCloseTab(currentWorkspaceTab) : undefined,
   }, appLock.status?.locked);
 
+  function closeHandles() {
+    return editorTabs.flatMap((tab) => {
+      const handle = editorHandles.current.get(tab.id);
+      return handle ? [{ ...handle, prepareClose: () => { focusEditorTab(tab.id); setActiveActivity("sessions"); return handle.prepareClose(); } }] : [];
+    });
+  }
+  const exitSessionIds = useRef<string[]>([]); exitSessionIds.current = visibleSessions.map((session) => session.id);
+  const prepareApplicationExit = async () => {
+    if (!isSessionsLoaded || closingWindowRef.current) return null;
+    closingWindowRef.current = true;
+    const tabIds = editorTabs.map((tab) => tab.id).join("\n");
+    const sessionIds = visibleSessions.map((session) => session.id);
+    try {
+      const prepared = await prepareEditorWindowClose({
+        editors: closeHandles(),
+        allowed: () => !editorLocked.current && editorTabsRef.current.map((tab) => tab.id).join("\n") === tabIds && exitSessionIds.current.join("\n") === sessionIds.join("\n"),
+        confirmTerminals: () => confirmClose(sessionIds, "退出应用"),
+        commit: async () => {
+          await Promise.all(sessionIds.map((id) => closeSession(id)));
+          for (const tab of editorTabs) await closeEditorWorkspace(tab.workspace.id);
+          for (const tab of browserTabs) await closeBrowserTab(tab.id);
+          await aiChat.flush();
+          if (initialWorkspace) await discardDetachedWorkspace();
+        },
+      });
+      if (!prepared) { closingWindowRef.current = false; return null; }
+      return { ...prepared, cancel: () => { prepared.cancel(); closingWindowRef.current = false; } };
+    } catch (error) { closingWindowRef.current = false; throw error; }
+  };
+  const applicationExitPending = useApplicationExit(prepareApplicationExit, () => {
+    for (const handle of editorHandles.current.values()) handle.cancelClose();
+    cancelTerminalClose();
+  }, appLock.status?.locked !== false);
   windowCloseRef.current = async () => {
+    if (applicationExitPending.current) return false;
     if (!isSessionsLoaded) { toast("工作区正在加载，请稍后关闭。", "info"); return false; }
     closingWindowRef.current = true;
     try {
-      if (!await closeTerminalSessions(visibleSessions.map((session) => session.id), "应用窗口")) return false;
-      for (const tab of browserTabs) await closeBrowserTab(tab.id);
-      await aiChat.flush();
-      if (initialWorkspace) await discardDetachedWorkspace();
-      return true;
+      const sessionIds = visibleSessions.map((session) => session.id);
+      return await coordinateEditorWindowClose({
+        editors: closeHandles(),
+        allowed: () => !editorLocked.current,
+        confirmTerminals: () => confirmClose(sessionIds, "应用窗口"),
+        commit: async () => {
+          await Promise.all(sessionIds.map((id) => closeSession(id)));
+          for (const tab of editorTabs) await closeEditorWorkspace(tab.workspace.id);
+          for (const tab of browserTabs) await closeBrowserTab(tab.id);
+          await aiChat.flush();
+          if (initialWorkspace) await discardDetachedWorkspace();
+        },
+      });
     } finally { closingWindowRef.current = false; }
   };
   useEffect(() => {
@@ -1740,6 +1879,21 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
 
   async function handleDetachTab(tab: WorkspaceTabItem) {
     try {
+      if (tab.kind === "editor") {
+        if (detachingEditors.current.has(tab.id) || editorHandoffPending || editorLocked.current) return;
+        const source = editorTabs.find((item) => item.id === tab.id); const handle = editorHandles.current.get(tab.id);
+        if (!source || !handle) return;
+        detachingEditors.current.add(tab.id);
+        try {
+          const committed = await transferEditorWorkspace(source, handle, {
+            allowed: () => !editorLocked.current && !closingWindowRef.current,
+            start: detachEditorWorkspace, opened: addWorkspace,
+            wait: (id) => waitEditorHandoff(id, false), finish: finishEditorHandoff,
+          });
+          if (committed) { editorReferences.current.delete(tab.id); persistEditorReferences(); closeEditorTab(tab.id); }
+        } finally { detachingEditors.current.delete(tab.id); }
+        return;
+      }
       if (tab.kind === "browser") { await detachBrowserTab(tab.id); return; }
       const parentLabel = "main";
       if (tab.kind === "sftp") {
@@ -1801,7 +1955,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     .slice(0, recentConnectionsLimit);
 
   const sidebarContent =
-    sidebarCollapsed || isConnections || isArtifactory || isTools ? null : activeActivity === "sftp" ? (
+    !["sessions", "sftp", "s3"].includes(sidebarContext ?? "") ? null : sidebarContext === "sftp" ? (
         <SftpConnectionSidebar profiles={profiles} selectedId={activeSftpTab?.profileId} loading={isLoading} error={errorMessage}
           openSshProfileIds={openSshProfileIds}
           onOpen={handleOpenSftpFromTerminal} onOpenTerminal={profile => void handleOpenSftpTerminal(profile)}
@@ -1922,7 +2076,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     mainSurface = null;
   } else if (isConnections) {
     mainSurface = jumpServerOpen ? (
-      <JumpServerWorkspace profile={jumpservers.profiles.find((p) => p.id === jumpServerOpen) ?? null}
+      <JumpServerWorkspace sidebarVisible={!sidebarCollapsed} profile={jumpservers.profiles.find((p) => p.id === jumpServerOpen) ?? null}
         loading={jumpservers.loading} error={jumpservers.error}
         onBack={() => setJumpServerOpen(null)} onCreate={() => setJumpServerEditor({ profile: null })}
         onEdit={() => { const profile = jumpservers.profiles.find((p) => p.id === jumpServerOpen); if (profile) setJumpServerEditor({ profile }); }}
@@ -1933,6 +2087,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       }} />
     ) : (
       <SessionManager
+        sidebarVisible={!sidebarCollapsed}
         onCreateJumpServer={(initialFolder) => setJumpServerEditor({ profile: null, initialFolder })}
         groupRequest={connectionGroupRequest}
         onGroupRequestHandled={(requestId) => setConnectionGroupRequest((current) => current?.requestId === requestId ? null : current)}
@@ -1962,7 +2117,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       />
     );
   } else if (isArtifactory) {
-    mainSurface = <ArtifactoryWorkspace />;
+    mainSurface = <ArtifactoryWorkspace sidebarVisible={!sidebarCollapsed} />;
   } else if (isS3) {
     mainSurface = (
       <S3Workspace
@@ -1978,6 +2133,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         uploadConcurrency={s3UploadConcurrency}
       />
     );
+  } else if (isEditorActive) {
+    mainSurface = null;
   } else if (isBrowserActive) {
     mainSurface = null;
   } else if (isSftpActive && activeSftpTab) {
@@ -1985,23 +2142,25 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   } else if (!terminalFullscreenPaneId && (fileTreeProfile || isLocalFileTree)) {
     mainSurface = (
       <TerminalFileLayout
+        sidebarVisible={!sidebarCollapsed}
+        onSidebarVisibleChange={(visible) => setSidebarCollapsed(!visible)}
         fileTree={
           fileTreeProfile ? (
             <RemoteFileTree
               activeFilePath={activeRemoteFilePath}
-              onClose={() => setFileTreeSessionId(null)}
+              onClose={() => setSidebarCollapsed(true)}
               onFileRemoved={handleCloseRemoteFile}
               onFileRenamed={handleRenameRemoteFile}
-              onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
+              onOpenFile={(entry, rootPath) => handleOpenRemoteFile(entry.path, rootPath)}
               profileId={fileTreeProfile.id}
             />
           ) : (
             <LocalFileTree
               activeFilePath={activeRemoteFilePath}
-              onClose={() => setFileTreeSessionId(null)}
+              onClose={() => setSidebarCollapsed(true)}
               onFileRemoved={handleCloseRemoteFile}
               onFileRenamed={handleRenameRemoteFile}
-              onOpenFile={(entry) => handleOpenRemoteFile(entry.path)}
+              onOpenFile={(entry, rootPath) => handleOpenRemoteFile(entry.path, rootPath)}
             />
           )
         }
@@ -2014,7 +2173,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
               fileSystem={isLocalFileTree ? "local" : "remote"}
               key={`${isLocalFileTree ? "local" : "remote"}:${fileTreeSessionId ?? ""}`}
               onCloseFile={handleCloseRemoteFile}
-              onSelectFile={setActiveRemoteFilePath}
+              onSelectFile={handleOpenRemoteFile}
               onShowTerminal={() => setActiveRemoteFilePath(null)}
               profileId={fileTreeProfile?.id ?? "local"}
             />
@@ -2068,7 +2227,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
   }
 
   function buildPaletteItems(): PaletteItem[] {
+    const editor = activeEditorId ? editorHandles.current.get(activeEditorId) : undefined;
+    const editorItems: PaletteItem[] = editor ? editor.commands().filter((item) => !item.disabled).map((item) => ({ id: `editor-command:${item.id}`, label: item.label, hint: item.hint ?? "编辑器", icon: "fileCode", keywords: `editor 编辑器 ${item.id}`, run: () => editor.execute(item.id) })) : [];
     const items: PaletteItem[] = [
+      ...editorItems,
+      { id: "editor:new", label: "新建文本编辑器", hint: "编辑器", icon: "editor", keywords: "editor monaco text 文本", run: () => void openTextEditor() },
+      { id: "editor:file", label: "打开本地文件", hint: "编辑器", icon: "fileInput", keywords: "editor file 文件", run: () => void chooseTextEditor(false) },
+      { id: "editor:folder", label: "打开本地文件夹", hint: "编辑器", icon: "folderOpen", keywords: "editor folder 文件夹", run: () => void chooseTextEditor(true) },
       { id: "act:new-rdp", label: "新建 RDP 远程桌面", hint: "连接", icon: "monitor", keywords: "windows remote desktop 远程桌面", run: () => setRdpEditor({ profile: null }) },
       ...(supportsSmb ? [{ id: "act:new-smb", label: "新建网络共享", hint: "连接", icon: "folder" as const,
         keywords: "smb unc network drive 共享盘 映射盘符", run: () => setSmbEditor({ profile: null }) }] : []),
@@ -2078,10 +2243,10 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       { id: "act:new-ssh", label: "新建 SSH 连接", hint: "连接", icon: "ssh", keywords: "profile server", run: openCreateProfile },
       { id: "act:jumpserver", label: "新建 JumpServer 连接", hint: "连接", icon: "stackedHexagon", keywords: "jumpserver 堡垒机 资产", run: () => setJumpServerEditor({ profile: null }) },
       { id: "act:connections", label: "打开连接管理", hint: "导航", icon: "connections", keywords: "connections profiles", run: () => setActiveActivity("connections") },
-      { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => { setActiveActivity("sessions"); setSidebarCollapsed(false); } },
-      { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); } },
-      { id: "act:sftp-library", label: "打开 SFTP 连接库", hint: "导航", icon: "folder", keywords: "sftp files 文件 连接库", run: () => { setActiveActivity("sftp"); setSidebarCollapsed(false); } },
-      { id: "act:new-s3", label: "新建 S3 配置", hint: "对象存储", icon: "bucket", keywords: "object storage profile", run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); setS3EditorState({ mode: "create", profile: null }); } },
+      { id: "act:sessions", label: "打开活动会话", hint: "导航", icon: "sessions", keywords: "sessions terminal", run: () => handleSelectActivity("sessions") },
+      { id: "act:s3", label: "打开 S3 对象浏览器", hint: "导航", icon: "bucket", keywords: "object storage", run: () => { setActiveActivity("s3"); } },
+      { id: "act:sftp-library", label: "打开 SFTP 连接库", hint: "导航", icon: "folder", keywords: "sftp files 文件 连接库", run: () => handleSelectActivity("sftp") },
+      { id: "act:new-s3", label: "新建 S3 配置", hint: "对象存储", icon: "bucket", keywords: "object storage profile", run: () => { setActiveActivity("s3"); setS3EditorState({ mode: "create", profile: null }); } },
       { id: "act:terminal-surface", label: "显示终端", hint: "导航", icon: "terminalTool", keywords: "terminal shell", run: () => { setActiveRemoteFilePath(null); showTerminalSurface(); } },
       { id: "act:assistant", label: rightPanel === "assistant" ? "关闭 AI 助手" : "打开 AI 助手", hint: "面板", icon: "bot", keywords: "ai assistant", run: () => toggleRightPanel("assistant") },
       ...(["left", "right", "bottom"] as const).map((position) => ({
@@ -2090,7 +2255,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         run: () => { assistantDock.setPosition(position); setRightPanel("assistant"); },
       })),
       { id: "act:ai-config", label: "配置 AI 助手", hint: "设置", icon: "bot", keywords: "ai api model", run: () => setIsAiConfigOpen(true) },
-      { id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏" : "折叠侧栏", hint: "布局", icon: "panelLeft", keywords: "sidebar", run: toggleSidebar },
+      ...(sidebarContext === null ? [] : [{ id: "act:sidebar", label: sidebarCollapsed ? "展开侧栏详情" : "收起侧栏详情", hint: "布局", icon: "panelLeft" as const, keywords: "sidebar", run: toggleSidebar }]),
       { id: "act:zen", label: zenMode ? "退出禅模式" : "进入禅模式", hint: "保留分屏", icon: "panelLeft", keywords: "zen focus 隐藏界面", run: () => setZenMode((value) => !value) },
       { id: "act:theme-dark", label: "主题：深色", hint: "外观", icon: "moon", keywords: "theme dark", run: () => setThemeMode("dark") },
       { id: "act:theme-light", label: "主题：浅色", hint: "外观", icon: "sun", keywords: "theme light", run: () => setThemeMode("light") },
@@ -2201,18 +2366,13 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       });
       if (!isJumpServerSource(activeSession.profileId)) items.push({
         id: "act:file-list-current",
-        label: fileTreeSessionId === activeSession.id ? "关闭当前文件列表" : "打开当前文件列表",
+        label: "打开当前文件列表",
         hint: "文件",
         icon: "tree",
         keywords: "explorer files local remote",
         run: () => {
-          if (fileTreeSessionId === activeSession.id) {
-            setFileTreeSessionId(null);
-            setActiveRemoteFilePath(null);
-          } else {
-            setFileTreeSessionId(activeSession.id);
-            showTerminalSurface();
-          }
+          if (activeSession.kind === "local") void openTextEditor({ kind: "local" }, undefined, true);
+          else if (activeSessionProfile) void openTextEditor({ kind: "sftp", profileId: activeSessionProfile.id }, undefined, true);
         },
       });
       if (activeSessionProfile) {
@@ -2314,6 +2474,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
       });
     }
     for (const profile of profiles) {
+      items.push({ id: `editor:remote:${profile.id}`, label: `打开远程编辑器：${profile.name}`, hint: "SSH/SFTP", icon: "fileCode", keywords: `${connectionSearchKeywords(profile)} editor remote 文本`, run: () => void openTextEditor({ kind: "sftp", profileId: profile.id }, undefined, true) });
       items.push({
         id: `conn:sftp:${profile.id}`,
         label: `打开 SFTP：${profile.name}`,
@@ -2338,7 +2499,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         hint: `${profile.host}:${profile.port}`,
         icon: "bucket",
         keywords: `${connectionSearchKeywords(profile)} object storage`,
-        run: () => { setActiveActivity("s3"); setSidebarCollapsed(false); openS3Profile(profile); },
+        run: () => { setActiveActivity("s3"); openS3Profile(profile); },
       });
       items.push({
         id: `s3:edit:${profile.id}`,
@@ -2378,6 +2539,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
     >
       {closeDialog}
       <AppLayout
+        sidebarVisible={!sidebarCollapsed}
         sidebar={zenMode || terminalFullscreenPaneId ? null : sidebarContent}
         sidebarWidth={sidebarWidth}
         onSidebarWidthChange={setSidebarWidth}
@@ -2388,7 +2550,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
         panelHeight={assistantDock.height}
         onPanelHeightChange={assistantDock.setHeight}
         titleBar={zenMode || terminalFullscreenPaneId ? null : (
-          <div className={`titlebar is-glass-chrome${isMacOS ? " titlebar--mac" : " titlebar--sidebar-aligned"}`}>
+          <div className={`titlebar is-glass-chrome${isTauri() && isEditorActive && activeActivity === "sessions" ? " titlebar--editor" : ""}${isMacOS ? " titlebar--mac" : " titlebar--sidebar-aligned"}`}>
             {isMacOS ? null : (
               <div className="titlebar__leading" data-tauri-drag-region>
                 <img alt="" className="titlebar__app-icon" data-tauri-drag-region src="/icon.png" />
@@ -2414,6 +2576,7 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                 />
               </div>
             )}
+            {isTauri() && isEditorActive && activeActivity === "sessions" ? <div className="titlebar__editor-center" ref={setEditorTitlebarHost} /> : null}
             <div className="titlebar__drag" data-tauri-drag-region />
             {!isS3 && !isConnections && !isArtifactory && !isTools ? (
               <>
@@ -2426,7 +2589,8 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
                 >
                   <Icon name="plus" height="16" width="16" />
                 </button>
-                {activeSession && !isBrowserActive ? (
+                <button className="tab-action titlebar__new-editor" title="新建文本编辑器" aria-label="新建文本编辑器" type="button" onClick={() => void openTextEditor()}><Icon name="editor" height="16" width="16" /></button>
+                {activeSession && !isBrowserActive && !isEditorActive ? (
                   <div className="tab-actions">
                     <TerminalSessionMenu
                       session={activeSession}
@@ -2491,17 +2655,28 @@ function MainApp({ initialWorkspace }: { initialWorkspace?: DetachedWorkspace })
               visibleNavigationIcons={navigationIcons}
               onSelectActivity={handleSelectActivity}
               sidebarCollapsed={sidebarCollapsed}
+              onToggleSidebar={toggleSidebar}
+              sidebarContext={sidebarContext}
+              activeNavigation={sidebarContext === "editor" ? "editor" : sidebarContext === null ? "browser" : activeActivity}
               rightPanel={rightPanel}
               onToggleRightPanel={toggleRightPanel}
               onNewLocalTerminal={handleStartLocalSession}
               onOpenBrowser={handleOpenBrowser}
+              onOpenEditor={() => { void handleOpenEditorEntry(); }}
               onOpenSettings={() => openSettings("appearance")}
             />
           )
         }
         main={<>{mainSurface}{toolsVisited ? (
-          <ToolsWorkspace active={isTools && !appLock.status?.locked} selected={toolId} onSelect={setToolId} />
-        ) : null}{sftpTabSurfaces}{browserTabs.map((tab) => {
+          <ToolsWorkspace sidebarVisible={!sidebarCollapsed} active={isTools && !appLock.status?.locked} selected={toolId} onSelect={setToolId} />
+        ) : null}{editorTabs.map((tab) => {
+          const visible = tab.id === activeEditorId && !isConnections && !isS3 && !isArtifactory && !isTools && !appLock.status?.locked;
+          return <div className="editor-workspace-tab" key={tab.id} hidden={!visible}>
+            <EditorWorkbench nativeChrome={isTauri()} titlebarContainer={editorTitlebarHost} sidebarVisible={!sidebarCollapsed} onSidebarVisibleChange={(shown) => setSidebarCollapsed(!shown)} key={tab.workspace.id} onDetach={() => { const item = workspaceTabs.find((item) => item.id === tab.id); if (item) void handleDetachTab(item); }} handoffPending={editorHandoffPending && !!tab.restore} onReady={(ready) => { if (initialState.editorHandoffId) void acknowledgeEditorHandoff(tab.id, ready); }} restore={tab.restore} onStateChange={(state) => rememberEditorState(tab.id, tab.workspace.id, state)} onPreferencesChange={(patch) => { if (patch.tabSize !== undefined) editorSettings.setTabSize(patch.tabSize); if (patch.wordWrap !== undefined) editorSettings.setWordWrap(patch.wordWrap === "on"); if (patch.renderWhitespace !== undefined) editorSettings.setRenderWhitespace(patch.renderWhitespace); }} onCommandPalette={() => setIsPaletteOpen(true)} workspace={tab.workspace} title={tab.title} options={editorSettings.options} locked={appLock.status?.locked ?? true} active={visible}
+              ref={(handle) => { if (handle) editorHandles.current.set(tab.id, handle); else editorHandles.current.delete(tab.id); }}
+              onOpenFolder={(path) => { if (tab.workspace.source.kind === "local") void chooseTextEditor(true, tab.id); else void openTextEditor(tab.workspace.source, path, true, undefined, false, undefined, tab.id); }} />
+          </div>;
+        })}{sftpTabSurfaces}{browserTabs.map((tab) => {
           const visible = isBrowserActive && tab.id === activeBrowserId && !isConnections && !isS3 && !isArtifactory && !isTools && !appLock.status?.locked;
           return <div className="browser-tab" hidden={!visible} key={tab.id}><BrowserWorkspace tab={tab} visible={visible} /></div>;
         })}</>}

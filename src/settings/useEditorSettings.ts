@@ -21,6 +21,8 @@ import {
   parseBoolean,
   type EditorOptions,
   type EditorRenderWhitespace,
+  terminalFontFamilyKey,
+  terminalFontSizeKey,
 } from "./settings";
 
 function getStoredFontSize(): number {
@@ -58,6 +60,8 @@ export interface EditorSettings {
 /** Persists editor-only preferences. Font settings may inherit the terminal's
  * equivalent values, while Monaco-specific behavior stays independent. */
 export function useEditorSettings(terminalFontFamily: string, terminalFontSize: number): EditorSettings {
+  const [inheritedFont, setInheritedFont] = useState({ family: terminalFontFamily, size: terminalFontSize });
+  useEffect(() => { setInheritedFont({ family: terminalFontFamily, size: terminalFontSize }); }, [terminalFontFamily, terminalFontSize]);
   const [inheritTerminal, setInheritTerminalState] = useState(() =>
     parseBoolean(localStorage.getItem(editorInheritTerminalKey), EDITOR_INHERIT_TERMINAL_DEFAULT),
   );
@@ -78,6 +82,24 @@ export function useEditorSettings(terminalFontFamily: string, terminalFontSize: 
   const [renderWhitespace, setRenderWhitespaceState] = useState<EditorRenderWhitespace>(() =>
     normalizeEditorRenderWhitespace(localStorage.getItem(editorRenderWhitespaceKey)),
   );
+  useEffect(() => {
+    const keys = new Set([editorInheritTerminalKey, editorFontFamilyKey, editorFontSizeKey, editorWordWrapKey, editorMinimapKey, editorLineNumbersKey, editorTabSizeKey, editorRenderWhitespaceKey]);
+    const sync = (event: StorageEvent) => {
+      if (event.key === null || keys.has(event.key)) {
+        setInheritTerminalState(parseBoolean(localStorage.getItem(editorInheritTerminalKey), EDITOR_INHERIT_TERMINAL_DEFAULT));
+        setStoredFontFamily(normalizeFontFamily(localStorage.getItem(editorFontFamilyKey))); setStoredFontSize(getStoredFontSize());
+        setWordWrapState(parseBoolean(localStorage.getItem(editorWordWrapKey), EDITOR_WORD_WRAP_DEFAULT));
+        setMinimapState(parseBoolean(localStorage.getItem(editorMinimapKey), EDITOR_MINIMAP_DEFAULT));
+        setLineNumbersState(parseBoolean(localStorage.getItem(editorLineNumbersKey), EDITOR_LINE_NUMBERS_DEFAULT));
+        setTabSizeState(getStoredTabSize()); setRenderWhitespaceState(normalizeEditorRenderWhitespace(localStorage.getItem(editorRenderWhitespaceKey)));
+      }
+      if (event.key === null || event.key === terminalFontFamilyKey || event.key === terminalFontSizeKey) {
+        const size = Number.parseInt(localStorage.getItem(terminalFontSizeKey) ?? "", 10);
+        setInheritedFont({ family: normalizeFontFamily(localStorage.getItem(terminalFontFamilyKey)), size: Number.isFinite(size) ? clampFontSize(size) : FONT_SIZE_DEFAULT });
+      }
+    };
+    window.addEventListener("storage", sync); return () => window.removeEventListener("storage", sync);
+  }, []);
 
   useEffect(() => { localStorage.setItem(editorInheritTerminalKey, String(inheritTerminal)); }, [inheritTerminal]);
   useEffect(() => { localStorage.setItem(editorFontFamilyKey, storedFontFamily); }, [storedFontFamily]);
@@ -90,11 +112,11 @@ export function useEditorSettings(terminalFontFamily: string, terminalFontSize: 
 
   const setInheritTerminal = useCallback((value: boolean) => {
     if (!value) {
-      setStoredFontFamily(terminalFontFamily);
-      setStoredFontSize(terminalFontSize);
+      setStoredFontFamily(inheritedFont.family);
+      setStoredFontSize(inheritedFont.size);
     }
     setInheritTerminalState(value);
-  }, [terminalFontFamily, terminalFontSize]);
+  }, [inheritedFont]);
   const setFontFamily = useCallback((value: string) => setStoredFontFamily(normalizeFontFamily(value)), []);
   const setFontSize = useCallback((value: number) => setStoredFontSize(clampFontSize(value)), []);
   const setWordWrap = useCallback((value: boolean) => setWordWrapState(value), []);
@@ -103,8 +125,8 @@ export function useEditorSettings(terminalFontFamily: string, terminalFontSize: 
   const setTabSize = useCallback((value: number) => setTabSizeState(clampEditorTabSize(value)), []);
   const setRenderWhitespace = useCallback((value: EditorRenderWhitespace) => setRenderWhitespaceState(value), []);
 
-  const fontFamily = inheritTerminal ? terminalFontFamily : storedFontFamily;
-  const fontSize = inheritTerminal ? terminalFontSize : storedFontSize;
+  const fontFamily = inheritTerminal ? inheritedFont.family : storedFontFamily;
+  const fontSize = inheritTerminal ? inheritedFont.size : storedFontSize;
   const options = useMemo<EditorOptions>(() => ({
     fontFamily,
     fontSize,

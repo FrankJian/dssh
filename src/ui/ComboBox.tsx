@@ -10,13 +10,17 @@ export interface ComboBoxOption {
 interface ComboBoxProps {
   value: string;
   onChange: (value: string) => void;
+  onSelect?: (value: string) => void;
+  disabled?: boolean;
+  singleLabel?: boolean;
+  emptyMessage?: string;
   options: ComboBoxOption[];
   placeholder?: string;
   ariaLabel?: string;
   id?: string;
 }
 
-export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id }: ComboBoxProps) {
+export function ComboBox({ value, onChange, onSelect, disabled = false, singleLabel = false, emptyMessage = "未找到匹配项，可直接输入模型 ID。", options, placeholder, ariaLabel, id }: ComboBoxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -27,6 +31,7 @@ export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id 
   const generatedId = useId();
   const listId = `${id ?? generatedId}-list`;
   const hasOptions = options.length > 0;
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   const filteredOptions = useMemo(() => {
     const search = query.trim().toLocaleLowerCase();
     return search ? options.filter((option) =>
@@ -77,7 +82,9 @@ export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id 
   }, [activeIndex, open]);
 
   function selectOption(option: ComboBoxOption) {
+    if (disabled) return;
     onChange(option.value);
+    onSelect?.(option.value);
     setOpen(false);
     setQuery("");
     setActiveIndex(-1);
@@ -114,6 +121,7 @@ export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id 
           aria-expanded={open}
           aria-label={ariaLabel}
           autoComplete="off"
+          disabled={disabled}
           className="combobox__input"
           id={id}
           role="combobox"
@@ -144,6 +152,7 @@ export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id 
             }}
             tabIndex={-1}
             type="button"
+            disabled={disabled}
           >
             <Icon name="chevron-right" height="16" width="16" />
           </button>
@@ -167,12 +176,12 @@ export function ComboBox({ value, onChange, options, placeholder, ariaLabel, id 
                 onMouseEnter={() => setActiveIndex(index)}
                 type="button"
               >
-                <span className="combobox__option-value" title={option.value}>{option.value}</span>
-                {option.label ? <span className="combobox__option-label">{option.label}</span> : null}
+                <span className="combobox__option-value" title={option.value}>{singleLabel ? option.value || option.label : option.value}</span>
+                {!singleLabel && option.label ? <span className="combobox__option-label">{option.label}</span> : null}
               </button>
             </li>
           ))}
-          {!filteredOptions.length ? <li className="combobox__empty" role="presentation">未找到匹配项，可直接输入模型 ID。</li> : null}
+          {!filteredOptions.length ? <li className="combobox__empty" role="presentation">{emptyMessage}</li> : null}
         </ul>, document.body,
       ) : null}
     </div>

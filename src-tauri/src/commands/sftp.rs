@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-fn require_profile(state: &AppState, profile_id: &str) -> AppResult<SshProfile> {
+pub(super) fn require_profile(state: &AppState, profile_id: &str) -> AppResult<SshProfile> {
     let target = profile_id.strip_prefix("koko-sftp:");
     let saved_id = target
         .and_then(|target| target.split_once(':'))
@@ -82,7 +82,7 @@ fn local_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("local_file_error", error.to_string())
 }
 
-fn local_home_path() -> AppResult<PathBuf> {
+pub(super) fn local_home_path() -> AppResult<PathBuf> {
     #[cfg(windows)]
     let value = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
     #[cfg(not(windows))]
@@ -189,7 +189,7 @@ fn local_image_mime(path: &std::path::Path) -> AppResult<&'static str> {
     }
 }
 
-fn local_child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
+pub(super) fn local_child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
     let trimmed_name = name.trim();
     if trimmed_name.is_empty()
         || trimmed_name == "."
@@ -382,7 +382,27 @@ pub async fn sftp_local_read_image(path: String) -> AppResult<SftpImageFile> {
             "图片超过 10 MiB，无法在内置预览中打开。",
         ));
     }
-    let data = tokio::fs::read(&canonical).await.map_err(local_error)?;
+    use tokio::io::AsyncReadExt;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            "local_image_type",
+            "所选项目不是普通图片文件。",
+        ));
+    }
+    let file = tokio::fs::File::open(&canonical)
+        .await
+        .map_err(local_error)?;
+    let mut data = Vec::new();
+    file.take(LOCAL_MAX_PREVIEW_IMAGE_BYTES + 1)
+        .read_to_end(&mut data)
+        .await
+        .map_err(local_error)?;
+    if data.len() as u64 > LOCAL_MAX_PREVIEW_IMAGE_BYTES {
+        return Err(AppError::new(
+            "local_image_too_large",
+            "图片超过 10 MiB，无法在内置预览中打开。",
+        ));
+    }
     Ok(SftpImageFile {
         data_url: format!("data:{mime};base64,{}", BASE64.encode(data)),
     })

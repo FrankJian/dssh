@@ -64,5 +64,5 @@ export function useTerminalCloseGuard(running: ReadonlySet<string>) {
       </section>
     </div>, document.body,
   );
-  return { confirmClose, closeDialog };
+  return { confirmClose, closeDialog, cancelClose: () => { if (decision.current) decide(false); } };
 }

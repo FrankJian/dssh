@@ -27,7 +27,7 @@ function nameOf(child: ArtifactoryChild) {
   try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
-export function ArtifactoryWorkspace() {
+export function ArtifactoryWorkspace({ sidebarVisible = true }: { sidebarVisible?: boolean }) {
   const { requestConfirmation, confirmationDialog } = useConfirmation();
   const [profiles, setProfiles] = useState<ArtifactoryProfile[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -208,8 +208,8 @@ export function ArtifactoryWorkspace() {
     toast("属性已移除。", "success");
   }
 
-  return <div className="artifactory-surface"><section className="artifactory-workspace" aria-label="Artifactory 工作台">
-    <aside className="artifactory-sidebar">
+  return <div className="artifactory-surface"><section data-sidebar-visible={sidebarVisible} className="artifactory-workspace sidebar-motion" aria-label="Artifactory 工作台">
+    <aside inert={!sidebarVisible} aria-hidden={!sidebarVisible} className="artifactory-sidebar sidebar-motion-content" aria-label="Artifactory 连接与仓库">
       <div className="artifactory-sidebar__head"><span><Icon name="database" />Artifactory</span><button aria-label="添加 Artifactory 连接" onClick={() => edit("new")} title="添加连接" type="button"><Icon name="plus" /></button></div>
       <div className="artifactory-sidebar__section">连接</div>
       {profiles.map((profile) => <div className={`artifactory-profile${active === profile.id ? " is-active" : ""}`} key={profile.id}>

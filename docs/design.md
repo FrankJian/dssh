@@ -15,7 +15,7 @@
 ## Use the existing system
 - Reuse shared UI components from `src/ui/`, layout primitives, and tokens/classes in `src/theme/global.css`.
 - Use semantic CSS variables for color, spacing, radius, and material. Do not introduce literal colors in components. Keep the custom app palette separate from the light/dark appearance axis and from terminal color schemes.
-- Use the existing `Icon` component with outlined, single-color 16px or 18px icons; do not add filled or decorative iconography.
+- Use the existing `Icon` component with outlined, single-color 16px or 18px icons for actions and folders. File-type identities use the bundled Seti symbols through `FileEntryIcon`, as requested for the editor; keep those symbols consistent across file trees, file tabs, breadcrumbs and file lists. Do not introduce other filled or decorative iconography.
 
 ## Layout and hierarchy
 - Prefer the desktop structure: title bar, compact toolbar, activity/sidebar navigation, main content, and status feedback.

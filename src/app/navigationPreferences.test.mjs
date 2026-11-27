@@ -1,13 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_NAVIGATION_ICONS, parseNavigationIcons } from './navigationPreferences.ts';
+import { DEFAULT_NAVIGATION_ICONS, parseNavigationIcons, navigationActivityFallback } from './navigationPreferences.ts';
 
 test('SFTP stays hidden by default and is not inserted into saved preferences', () => {
-  assert.deepEqual(DEFAULT_NAVIGATION_ICONS, ['sessions', 'connections', 'tools', 'assistant']);
+  assert.deepEqual(DEFAULT_NAVIGATION_ICONS, ['sessions', 'connections', 'tools', 'editor', 'assistant']);
   for (const raw of [null, 'broken', '[]', '["unknown"]']) {
     assert.deepEqual(parseNavigationIcons(raw), DEFAULT_NAVIGATION_ICONS);
   }
   assert.deepEqual(parseNavigationIcons('["sessions","connections","browser"]'), ['sessions', 'connections', 'browser']);
+});
+
+test('editor visibility defaults on for new profiles and preserves existing explicit choices', () => {
+  assert.ok(DEFAULT_NAVIGATION_ICONS.includes('editor'));
+  assert.deepEqual(parseNavigationIcons('["sessions","editor","editor","assistant"]'), ['sessions', 'editor', 'assistant']);
+  assert.deepEqual(parseNavigationIcons('["sessions","connections"]'), ['sessions', 'connections']);
+  assert.deepEqual(parseNavigationIcons(JSON.stringify(parseNavigationIcons('["sessions","editor"]'))), ['sessions', 'editor']);
+});
+
+test('opening editor workspace content does not require the sessions rail icon', () => {
+  assert.equal(navigationActivityFallback('sessions', ['connections', 'editor']), null);
+  assert.equal(navigationActivityFallback('tools', ['connections', 'editor']), null);
+  assert.equal(navigationActivityFallback('connections', ['sftp', 'editor']), 'sftp');
+  assert.equal(navigationActivityFallback('sftp', ['connections', 'sftp', 'editor']), null);
 });
 
 test('an explicit SFTP visibility choice is preserved alongside other icons', () => {

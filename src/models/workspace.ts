@@ -45,6 +45,8 @@ export interface OpenDetachedSftpRequest extends DetachedSftpWorkspace {
 }
 
 export interface DetachedWorkbench {
+  editorHandoffId?: string;
+  editorWorkspaces?: import("../editor/layoutReferences").EditorWorkspaceReference[];
   sessionIds: string[];
   runningSessionIds?: string[];
   layouts: PaneLayout[];

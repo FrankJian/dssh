@@ -24,6 +24,8 @@
 
 [返回文档导航](../README.md)
 
+- [工具箱模块加载恢复](tool-module-loading.md)
+- [统一侧栏详情](sidebar-details.md)
 - [AI 助手停靠布局](assistant-docking.md)
 - [AI 助手的 JumpServer 交互](assistant-jumpserver.md)
 - [智能助手模型配置](assistant-model-config.md)
@@ -35,6 +37,7 @@
 - [RDP 双向剪贴板调研与实施方案](rdp-clipboard.md)
 - [RDP 首版实施说明](rdp.md)
 - [Monaco 远程代码编辑器规格](remote-editor.md)
+- [文本编辑器验证记录](editor-workspace.md)
 - [远程 Explorer 增强规格](remote-explorer.md)
 - [SFTP 连接库方案](sftp-connections.md)
 - [SFTP 双栏工作台](sftp.md)

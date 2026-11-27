@@ -95,6 +95,15 @@ pub fn update_detached_workbench(
     workbench: DetachedWorkbench,
 ) -> AppResult<()> {
     crate::browser::trusted(&webview)?;
+    if workbench.editor_workspaces.len() > 16 {
+        return Err(crate::error::AppError::new(
+            "editor_reference",
+            "编辑器工作区过多。",
+        ));
+    }
+    for reference in &workbench.editor_workspaces {
+        reference.validate()?;
+    }
     state
         .detached_workspaces
         .update_workbench(&app, webview.label(), workbench)

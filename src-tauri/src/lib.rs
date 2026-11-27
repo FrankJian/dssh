@@ -1,14 +1,20 @@
 pub mod ai;
 pub mod app;
+mod application_exit;
 pub mod browser;
 pub mod commands;
 pub mod config;
 pub mod crypto;
+pub mod editor;
 pub mod error;
 pub mod forwarding;
 pub mod hosttools;
 pub mod jumpserver;
 pub mod models;
+#[cfg(target_os = "macos")]
+mod native_application_exit;
+mod native_editor_menu;
+pub mod network_scan;
 pub mod rdp;
 pub mod s3;
 pub mod sftp;
@@ -43,12 +49,46 @@ pub fn run() {
             })?;
             app.manage(state.detached_workspaces.clone());
             app.manage(state);
+            app.manage(network_scan::ScanManager::default());
+            app.manage(application_exit::ApplicationExit::default());
+            #[cfg(target_os = "macos")]
+            native_application_exit::install(app.handle())?;
             app.manage(browser::BrowserManager::default());
+            app.manage(native_editor_menu::NativeEditorMenus::new(app.handle())?);
             Ok(())
         })
+        .on_menu_event(|app, event| {
+            app.state::<native_editor_menu::NativeEditorMenus>()
+                .dispatch(app, event.id().as_ref());
+        })
         .invoke_handler(browser::guard(tauri::generate_handler![
+            native_editor_menu::editor_set_native_context,
+            application_exit::application_exit_reply,
+            commands::editor_files::editor_begin_file_operation,
+            commands::editor_files::editor_cancel_file_operation,
+            commands::editor_files::editor_mutate_files,
+            commands::editor_files::editor_delete_preview,
+            commands::editor::editor_open_workspace,
+            commands::editor::editor_detach_workspace,
+            commands::editor::editor_handoff_ready,
+            commands::editor::editor_wait_handoff,
+            commands::editor::editor_finish_handoff,
+            commands::editor::editor_close_workspace,
+            commands::editor::editor_list,
+            commands::editor::editor_read_text,
+            commands::editor::editor_read_image,
+            commands::editor::editor_inspect_file,
+            commands::editor::editor_watch_files,
+            commands::editor::editor_start_scan,
+            commands::editor::editor_filter_open_paths,
+            commands::editor::editor_next_scan,
+            commands::editor::editor_cancel_scan,
+            commands::editor::editor_save_text,
             commands::tools::save_tool_png,
             commands::tools::hash_tool_text,
+            commands::network_scan::list_scan_interfaces,
+            commands::network_scan::start_lan_ip_scan,
+            commands::network_scan::cancel_lan_ip_scan,
             commands::artifactory::list_artifactory_profiles,
             commands::artifactory::save_artifactory_profile,
             commands::artifactory::delete_artifactory_profile,
@@ -234,16 +274,36 @@ pub fn run() {
         .build(application_context())
         .expect("error while building tauri application")
         .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. }
+                if code != Some(tauri::RESTART_EXIT_CODE)
+                    && !app.state::<application_exit::ApplicationExit>().allowed() =>
+            {
+                api.prevent_exit();
+                application_exit::ApplicationExit::request(app, code.unwrap_or(0));
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(true),
+                ..
+            } => {
+                let _ = app
+                    .state::<native_editor_menu::NativeEditorMenus>()
+                    .focus(app, &label);
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app.state::<network_scan::ScanManager>().close_owner(&label);
+                app.state::<native_editor_menu::NativeEditorMenus>()
+                    .remove(&label);
                 app.state::<app::AppState>()
                     .sessions
                     .remove_output_window(&label);
                 app.state::<app::AppState>().rdp.close_owner(Some(&label));
                 app.state::<app::AppState>().jumpserver.cancel_owner(&label);
+                let _ = app.state::<app::AppState>().editor.close_owner(&label);
                 let state = app.state::<app::AppState>().inner().clone();
                 state.ai.cancel_owner(&label);
                 tauri::async_runtime::spawn(async move {

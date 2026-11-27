@@ -23,9 +23,15 @@ export type IconName =
   | "copy"
   | "database"
   | "edit"
+  | "editor"
+  | "saveAll"
+  | "saveAs"
+  | "compare"
+  | "selection"
   | "ellipsis"
   | "eye"
   | "externalWindow"
+  | "undock"
   | "arrowIntoWindow"
   | "file"
   | "fileArchive"
@@ -45,6 +51,11 @@ export type IconName =
   | "folderPlus"
   | "filePlus"
   | "fileInput"
+  | "fileAdd"
+  | "folderAdd"
+  | "locate"
+  | "refreshCw"
+  | "eyeOff"
   | "house"
   | "forward"
   | "gauge"
@@ -55,6 +66,8 @@ export type IconName =
   | "monitor"
   | "moon"
   | "panelLeft"
+  | "panelLeftOpen"
+  | "panelLeftClose"
   | "panelRight"
   | "panelTop"
   | "panelBottom"
@@ -135,6 +148,17 @@ export function Icon({ name, ...props }: IconProps) {
       width="18"
       {...props}
     >
+      {name === "undock" ? <><path d="M6 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v2M3 7h15" /><rect x="8" y="10" width="13" height="10" rx="1.2" /><path d="M8 13h13" /></> : null}
+      {name === "fileAdd" ? <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7M13 3v6h6l-6-6ZM19 13v8m-4-4h8" /></> : null}
+      {name === "folderAdd" ? <><path d="M13 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v3M18 14v8m-4-4h8" /></> : null}
+      {name === "locate" ? <><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="1.5" /><path d="M12 2v4m0 12v4M2 12h4m12 0h4" /></> : null}
+      {name === "refreshCw" ? <><path d="M20 7a8 8 0 0 0-13.7-1L3 9m0-5v5h5M4 17a8 8 0 0 0 13.7 1L21 15m0 5v-5h-5" /></> : null}
+      {name === "eyeOff" ? <><path d="m3 3 18 18M10.6 6.1 12 6c5.9 0 9.2 6 9.2 6a18 18 0 0 1-2.5 3.2M6.3 6.4A20 20 0 0 0 2.8 12s3.3 6 9.2 6a12 12 0 0 0 5-1.1M10.1 10.1a2.7 2.7 0 0 0 3.8 3.8" /></> : null}
+      {name === "editor" ? <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M7 13h4m-4 3h2m5.5-1.5 3-3 2 2-3 3-3 1z" /></> : null}
+      {name === "saveAll" ? <><path d="M6 3h12l3 3v12H6zM9 3v6h8V3M10 18v-6h7v6M3 7v14h14" /></> : null}
+      {name === "saveAs" ? <><path d="M13 21H4V3h13l3 3v5M7 3v6h9V3M8 20v-7h4m2 5 5-5 2 2-5 5-3 1z" /></> : null}
+      {name === "compare" ? <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16M6 9h3m-3 4h3m6-3h3m-3 4h3" /></> : null}
+      {name === "selection" ? <><path d="M8 3H4v4m12-4h4v4M4 16v5h4m12-5v5h-4M4 11v1m7-9h2m-2 18h2m7-10v1M9 8v8m6-8v8M7 8h4m2 8h4" /></> : null}
       {name === "windowGlobe" ? (
         <>
           <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -494,10 +518,12 @@ export function Icon({ name, ...props }: IconProps) {
           <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
         </>
       ) : null}
-      {name === "panelLeft" ? (
+      {name === "panelLeft" || name === "panelLeftOpen" || name === "panelLeftClose" ? (
         <>
           <rect height="18" rx="2" width="18" x="3" y="3" />
           <path d="M9 3v18" />
+          {name === "panelLeftOpen" ? <path d="m14 9 3 3-3 3" /> : null}
+          {name === "panelLeftClose" ? <path d="m17 9-3 3 3 3" /> : null}
         </>
       ) : null}
       {name === "panelRight" ? (

@@ -94,7 +94,7 @@ function ShortcutRecorder({
 
 const categoryColumns = [
   ["全局", "工作区"],
-  ["分屏", "终端"],
+  ["分屏", "终端", "编辑器"],
 ] as const;
 
 export function ShortcutSettingsSection({ disabled = false }: { disabled?: boolean }) {

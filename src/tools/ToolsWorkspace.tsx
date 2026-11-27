@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ToolAction } from "./ToolControls";
 import { IconButton } from "../ui/IconButton";
 import { Icon, type IconName } from "../ui/Icon";
@@ -56,7 +56,8 @@ function loadCollapsedCategories(): Set<ToolCategory> {
   }
 }
 
-export function ToolsWorkspace({ active, selected, onSelect }: {
+export function ToolsWorkspace({ active, selected, onSelect, sidebarVisible = true }: {
+  sidebarVisible?: boolean;
   active: boolean;
   selected: ToolId;
   onSelect: (id: ToolId) => void;
@@ -153,9 +154,9 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
   }
 
   return (
-    <section className="tools-workspace" aria-label="工具箱" hidden={!active}>
+    <section className="tools-workspace sidebar-motion" aria-label="工具箱" hidden={!active} data-sidebar-visible={sidebarVisible}>
       <div className="tools-workspace__layout">
-        <nav className="tools-workspace__catalog" aria-label="工具目录">
+        <nav inert={!sidebarVisible} aria-hidden={!sidebarVisible} className="tools-workspace__catalog sidebar-motion-content" aria-label="工具目录">
           <div className="tools-workspace__catalog-head">
             <div className="tools-workspace__catalog-top" data-search-expanded={searchExpanded}>
               <h1>工具箱</h1>
@@ -229,9 +230,7 @@ export function ToolsWorkspace({ active, selected, onSelect }: {
           <div ref={contentRef} className="tools-workspace__body">
             {TOOL_CATALOG.filter((tool) => visited.includes(tool.id)).map(({ id, component: ToolPage }) => (
               <div className="tools-workspace__page" key={id} hidden={id !== selected}>
-                <Suspense fallback={<p role="status">正在加载工具…</p>}>
-                  <ToolPage />
-                </Suspense>
+                <ToolPage />
               </div>
             ))}
           </div>

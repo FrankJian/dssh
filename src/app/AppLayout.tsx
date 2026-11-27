@@ -8,6 +8,7 @@ interface AppLayoutProps {
   titleBar: ReactNode;
   activityBar: ReactNode | null;
   sidebar: ReactNode | null;
+  sidebarVisible?: boolean;
   main: ReactNode;
   /** Shared auxiliary dock: AI can move; host tools stay on the right. */
   rightPanel?: ReactNode | null;
@@ -20,7 +21,7 @@ interface AppLayoutProps {
   onPanelHeightChange?: (height: number) => void;
 }
 
-export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
+export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel, sidebarVisible = true,
   panelPosition = "right", sidebarWidth, onSidebarWidthChange, rightPanelWidth,
   onRightPanelWidthChange, panelHeight = 320, onPanelHeightChange,
 }: AppLayoutProps) {
@@ -46,7 +47,7 @@ export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
   useEffect(() => () => { cleanupDrag.current?.(); }, [panelPosition, panelOpen]);
 
   const fitted = fitWorkspaceDocks({ width: size.width, height: size.height, railWidth: activityBar ? size.rail : 0,
-    sidebarWidth, panelWidth: rightPanelWidth, panelHeight, sidebar: Boolean(sidebar), panel: panelOpen, position: panelPosition });
+    sidebarWidth, panelWidth: rightPanelWidth, panelHeight, sidebar: Boolean(sidebar) && sidebarVisible, panel: panelOpen, position: panelPosition });
   const sidebarOpen = fitted.showSidebar;
   const lastOpenSidebarWidth = useRef(fitted.sidebarWidth);
   useLayoutEffect(() => {
@@ -125,7 +126,7 @@ export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
     },
   });
 
-  const grid = workspaceDockGrid({ rail: Boolean(activityBar), sidebar: Boolean(sidebar), panel: panelOpen,
+  const grid = workspaceDockGrid({ rail: Boolean(activityBar), sidebar: Boolean(sidebar) && sidebarVisible, panel: panelOpen,
     position: panelTrack.position, sizes: fitted, animateSidebar: hasActivityBar, animatePanel: hasActivityBar });
   const panelMin = bottom ? Math.min(220, fitted.panelHeightMax) : Math.min(280, fitted.panelMax);
   const panelMax = bottom ? fitted.panelHeightMax : fitted.panelMax;
@@ -145,7 +146,7 @@ export function AppLayout({ titleBar, activityBar, sidebar, main, rightPanel,
     }}>
       {activityBar ? <div className="activity-rail" ref={railRef} style={{ gridArea: "rail" }}>{activityBar}</div> : null}
       {activityBar || sidebarOpen ? (
-        <aside className="side-dock" inert={!sidebarOpen} style={{ gridArea: "sidebar" }}>
+        <aside className="side-dock" data-sidebar-visible={sidebarOpen} aria-hidden={!sidebarOpen} inert={!sidebarOpen} style={{ gridArea: "sidebar" }}>
           {sidebar ? <div className="side-dock__content">{sidebar}</div> : null}
         </aside>
       ) : null}

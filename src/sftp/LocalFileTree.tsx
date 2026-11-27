@@ -25,7 +25,7 @@ interface LocalFileTreeProps {
   onClose: () => void;
   onFileRemoved?: (path: string) => void;
   onFileRenamed?: (oldPath: string, newPath: string) => void;
-  onOpenFile: (entry: LocalFileEntry) => void;
+  onOpenFile: (entry: LocalFileEntry, rootPath: string) => void;
 }
 
 interface DirectoryState {
@@ -298,7 +298,7 @@ export function LocalFileTree({
               }
             }}
             onDragStart={(event) => beginDrag(event, entry.path)}
-            onClick={() => (entry.isDir ? void toggleDirectory(entry.path) : onOpenFile(entry))}
+            onClick={() => (entry.isDir ? void toggleDirectory(entry.path) : onOpenFile(entry, rootPath))}
             onContextMenu={(event) => {
               event.preventDefault();
               menuTriggerRef.current = event.currentTarget;

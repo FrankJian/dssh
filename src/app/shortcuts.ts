@@ -13,6 +13,8 @@ export const ACTION_SHORTCUT_IDS = [
   "nextTab", "previousTab", "closeTab",
 ] as const;
 export type ActionShortcutId = typeof ACTION_SHORTCUT_IDS[number];
+export const EDITOR_SHORTCUT_IDS = ["editorNewFile", "editorSave", "editorSaveAll", "editorSaveAs", "editorCloseFile", "editorQuickOpen", "editorCommands", "editorFind", "editorReplace", "editorSearch", "editorSplitHorizontal", "editorSplitVertical", "editorGoToLine"] as const;
+export type EditorShortcutId = typeof EDITOR_SHORTCUT_IDS[number];
 
 export function cycleItem(ids: readonly string[], current: string | null, step: number): string | null {
   if (!ids.length) return null;
@@ -21,7 +23,7 @@ export function cycleItem(ids: readonly string[], current: string | null, step: 
   return ids[((index + step) % ids.length + ids.length) % ids.length];
 }
 
-export type ShortcutId = ActionShortcutId
+export type ShortcutId = ActionShortcutId | EditorShortcutId
   | "commandPalette"
   | "lockApp"
   | "toggleTerminalFullscreen"
@@ -33,7 +35,7 @@ export type ShortcutId = ActionShortcutId
   | "pasteTerminalClipboard"
   | "adjustTerminalFontWheel";
 
-export type ShortcutCategory = "全局" | "工作区" | "分屏" | "终端";
+export type ShortcutCategory = "全局" | "工作区" | "分屏" | "终端" | "编辑器";
 export type ShortcutInput = "key" | "wheel";
 
 export interface ShortcutBinding {
@@ -158,6 +160,21 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     id, category, label, description, input: "key",
     defaultBinding: { primary: true, key, shift, alt },
   })),
+  ...([
+    ["editorNewFile", "新建文本文件", "n", false, false],
+    ["editorSave", "保存当前文件", "s", false, false],
+    ["editorSaveAll", "保存全部文件", "s", false, true],
+    ["editorSaveAs", "文件另存为", "s", true, false],
+    ["editorCloseFile", "关闭当前文件", "w", false, false],
+    ["editorQuickOpen", "快捷打开文件", "p", false, false],
+    ["editorCommands", "编辑器命令面板", "p", true, false],
+    ["editorFind", "查找当前文档", "f", false, false],
+    ["editorReplace", "替换当前文档", isMacOS ? "f" : "h", false, isMacOS],
+    ["editorSearch", "目录内容搜索", "f", true, false],
+    ["editorSplitHorizontal", "左右拆分编辑器", "\\", false, false],
+    ["editorSplitVertical", "上下拆分编辑器", "\\", false, true],
+    ["editorGoToLine", "转到行/列", "g", false, false],
+  ] as const).map(([id, label, key, shift, alt]): ShortcutDefinition => ({ id, label, category: "编辑器", description: "仅在当前文本编辑工作台中生效。", input: "key", defaultBinding: { primary: true, key, shift, alt } })),
 ];
 
 const definitionById = new Map(SHORTCUT_DEFINITIONS.map((definition) => [definition.id, definition]));
@@ -200,6 +217,19 @@ function readOverrides(): Partial<Record<ShortcutId, ShortcutBinding>> {
 
 function writeOverrides(overrides: Partial<Record<ShortcutId, ShortcutBinding>>) {
   localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(overrides));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("dssh:shortcut-bindings-changed"));
+}
+
+export function shortcutBindingsSnapshot(): string {
+  try { return localStorage.getItem(SHORTCUT_STORAGE_KEY) ?? ""; } catch { return ""; }
+}
+
+export function subscribeShortcutBindings(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const stored = (event: StorageEvent) => { if (event.key === SHORTCUT_STORAGE_KEY || event.key === null) listener(); };
+  window.addEventListener("storage", stored);
+  window.addEventListener("dssh:shortcut-bindings-changed", listener);
+  return () => { window.removeEventListener("storage", stored); window.removeEventListener("dssh:shortcut-bindings-changed", listener); };
 }
 
 export function getShortcutDefinitions(): readonly ShortcutDefinition[] {
@@ -236,6 +266,7 @@ export function resetShortcutBinding(id: ShortcutId) {
 
 export function resetAllShortcutBindings() {
   localStorage.removeItem(SHORTCUT_STORAGE_KEY);
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("dssh:shortcut-bindings-changed"));
 }
 
 export function findShortcutConflict(
@@ -285,6 +316,17 @@ export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
       matchesModifiers(event, custom) && normalizeKey(event.key) === custom.key;
   });
   return !customOwner || customOwner.id === id;
+}
+
+export function matchesDefaultShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
+  const binding = definitionById.get(id)?.defaultBinding;
+  return !!binding && !event.isComposing && matchesModifiers(event, binding) && normalizeKey(event.key) === binding.key;
+}
+
+export function resolveEditorShortcut(event: KeyboardEvent, available: readonly EditorShortcutId[], context: { blocked?: boolean; editing?: boolean } = {}): EditorShortcutId | null {
+  if (context.blocked || event.defaultPrevented || event.isComposing || event.repeat) return null;
+  return EDITOR_SHORTCUT_IDS.find((id) => available.includes(id) && matchesShortcut(event, id) &&
+    (!context.editing || ((event.ctrlKey || event.metaKey) && ["editorQuickOpen", "editorCommands", "editorSearch"].includes(id)))) ?? null;
 }
 
 export function matchesWheelShortcut(event: WheelEvent, id: ShortcutId): boolean {

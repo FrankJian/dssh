@@ -82,6 +82,7 @@ export interface FilePaneProps {
   onSelection: (paths: Set<string>) => void;
   onEnter: (entry: BrowserEntry) => void;
   onOpenFileList?: (path: string) => void;
+  onOpenEditor?: () => void;
   onCreate: (file: boolean) => void;
   onRename: () => void;
   onDelete: () => void;
@@ -334,6 +335,7 @@ export function FilePane(p: FilePaneProps) {
         </span>
       }>
           {p.sourceAction}
+          {p.onOpenEditor ? <IconButton disabled={locked} label="在文本编辑器中打开" onClick={p.onOpenEditor}><Icon name="fileCode" /></IconButton> : null}
           <IconButton disabled={locked} label={p.scopedRemoteRoot ? "返回授权目录" : "返回主目录"} onClick={p.onHome}>
             <Icon name="house" />
           </IconButton>
