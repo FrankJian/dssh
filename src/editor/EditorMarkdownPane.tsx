@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { FileEntryIcon } from "../sftp/FileEntryIcon";
 import { Icon } from "../ui/Icon";
+import { EditorFileTabs } from "./EditorFileTabs";
 import { EditorMarkdownPreview } from "./EditorPreview";
 import { editorBaseName } from "./editorPaths";
 import type { MarkdownPreviews } from "./useMarkdownPreviews";
@@ -54,7 +55,7 @@ export function EditorMarkdownPane({ previews, children, disabled, enabled, onFo
           if (next !== null) { event.preventDefault(); event.stopPropagation(); commit(next); }
         }} />
       <section className="editor-markdown-pane" ref={pane} style={{ flex: 1 - ratio }} aria-label="Markdown 预览分组" onFocusCapture={onFocus}>
-        <div className="editor-group__tabs"><div className="editor-file-tabs" role="tablist" aria-label="Markdown 预览标签">
+        <div className="editor-group__tabs"><EditorFileTabs activeId={selected.id} itemsKey={JSON.stringify(previews.tabs.map(tab => tab.id))} label="Markdown 预览标签">
           {previews.tabs.map((tab) => {
             const name = editorBaseName(tab.identity.source, tab.identity.path);
             const duplicate = previews.tabs.some((other) => other.id !== tab.id && editorBaseName(other.identity.source, other.identity.path) === name);
@@ -69,7 +70,7 @@ export function EditorMarkdownPane({ previews, children, disabled, enabled, onFo
               <button type="button" aria-label={`关闭预览 ${duplicate ? tab.identity.path : name}`} disabled={disabled} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><Icon name="close" width="14" height="14" /></button>
             </div>;
           })}
-        </div></div>
+        </EditorFileTabs></div>
         <div className="editor-preview-path" title={selected.identity.path}><Icon name="eye" width="14" height="14" /><span>{selected.identity.path}</span></div>
         <div className="editor-markdown-content" key={selected.id} role="tabpanel" id={`${paneId}-${selected.id}-panel`} aria-labelledby={`${paneId}-${selected.id}`} aria-label={`预览 ${editorBaseName(selected.identity.source, selected.identity.path)}`} tabIndex={0}>
           {selected.content === null ? <p role="status">Markdown 超过 1 MiB，预览已暂停。</p> : <EditorMarkdownPreview content={selected.content} enabled={enabled} />}

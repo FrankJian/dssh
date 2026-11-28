@@ -9,6 +9,7 @@ import { EDITOR_LANGUAGE_OPTIONS, languageForPath } from "../sftp/MonacoRemoteEd
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import { IconButton } from "../ui/IconButton";
+import { EditorFileTabs } from "./EditorFileTabs";
 import { EditorWelcome } from "./EditorWelcome";
 import { SelectMenu } from "../ui/SelectMenu";
 import { DocumentRegistry, fileIdentityKey, isDocumentDirty } from "./documentRegistry";
@@ -659,7 +660,7 @@ function WorkbenchBody({ workspace, title, options: baseOptions, locked, active,
         const raw = event.dataTransfer.getData("application/x-duo-editor-tab"); if (!raw) return;
         event.preventDefault(); try { const drag = JSON.parse(raw); if (drag.workspace !== workspace.id) return; setLayout((current) => moveGroupDocument(current, drag.id, drag.group, node.id, event.altKey)); setFocused(node.id); } catch { /* Ignore foreign or malformed drag data. */ }
       }}>
-      <div className="editor-group__tabs"><div className="editor-file-tabs" role="tablist" aria-label="文件标签">
+      <div className="editor-group__tabs"><EditorFileTabs activeId={node.active} itemsKey={JSON.stringify(node.documents)}>
         {node.documents.map((id) => { const d = registry.get(id); if (!d) return null; const basename = d.identity ? editorBaseName(workspace.source, d.identity.path) : `未命名 ${id}`; const duplicate = node.documents.some((other) => other !== id && (registry.get(other)?.identity ? editorBaseName(workspace.source, registry.get(other)!.identity!.path) : null) === basename); const name = duplicate ? `${basename} · ${d.identity ? editorParentPath(workspace.source, d.identity.path) : ""}` : basename;
           return <div key={id} role="tab" tabIndex={node.active === id ? 0 : -1} aria-selected={node.active === id} draggable
             className={`editor-file-tab${node.active === id ? " is-active" : ""}${node.preview === id ? " is-preview" : ""}`} title={d.identity?.path ?? name}
@@ -683,7 +684,7 @@ function WorkbenchBody({ workspace, title, options: baseOptions, locked, active,
             <button aria-label={`关闭 ${name}`} disabled={closingFiles || mutationBusy || locked || frozen || handoffPending} type="button" onClick={(event) => { event.stopPropagation(); run(closeFiles(node, [id])); }}><Icon name="close" width="14" height="14" /></button>
           </div>;
         })}
-      </div><div className="editor-group__actions" role="toolbar" aria-label="文件快捷操作">
+      </EditorFileTabs><div className="editor-group__actions" role="toolbar" aria-label="文件快捷操作">
         {file && /\.(md|markdown|mdown)$/i.test(file.identity?.path ?? "") ? <MarkdownModeSwitch mode={richDisabled ? "source" : markdownMode} disabled={locked || frozen || !!handoffPending} richDisabled={richDisabled} onChange={mode => changeMarkdownMode(node.id, file.id, mode)} /> : null}
         <IconButton label="保存当前文件" disabled={!file || file.saving || file.readOnly || locked || frozen || handoffPending} onClick={() => file && run(actions.save(file.id))}><Icon name="save" /></IconButton>
         {file && /\.(md|markdown|mdown)$/i.test(file.identity?.path ?? "") ? <IconButton label="Markdown 预览" active={markdownPreviews.has(file.id)} aria-pressed={markdownPreviews.has(file.id)} disabled={file.largeFile || locked || frozen || handoffPending}

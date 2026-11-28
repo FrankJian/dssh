@@ -218,7 +218,7 @@
 @container editor-workbench (max-width: 460px) { .editor-toolbar__source { display: none; } .editor-toolbar__windows { margin-left: auto; } }
 .editor-group__tabs { align-items: stretch; height: 32px; min-height: 32px; flex-shrink: 0; gap: var(--space-1); padding: 0 var(--space-2) 0 0; }
 .editor-file-tabs { gap: var(--space-1); background: transparent; padding: 0; }
-.editor-file-tab { border: 1px solid transparent; border-bottom: 0; gap: var(--space-2); padding-inline: var(--space-3); }
+.editor-file-tab { border: 2px solid transparent; border-bottom: 0; gap: var(--space-2); padding-inline: calc(var(--space-3) - 1px); }
 .editor-file-tab:hover:not(.is-active) { background: var(--bg-hover); color: var(--text-base); }
 .editor-file-tab.is-active { border-color: var(--border-subtle); box-shadow: none; }
 .editor-group.is-focused .editor-file-tab.is-active { box-shadow: none; }
@@ -417,3 +417,11 @@
 .editor-fence-completion .context-menu__item { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 32px; padding: 6px var(--space-2); font-size: 13px; }
 .editor-fence-completion .context-menu__item.is-active { background: var(--bg-selected); }
 .editor-fence-completion svg { flex: none; color: var(--text-muted); }
+
+.editor-file-tabs-container { display: flex; flex: 1; min-width: 0; align-items: stretch; overflow: hidden; }
+.editor-file-tabs-container > .editor-file-tabs { flex: 1; min-width: 0; min-height: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border-bottom: 0; overscroll-behavior-x: contain; }
+.editor-file-tabs-container > .editor-file-tabs::-webkit-scrollbar { display: none; }
+.editor-file-tabs .editor-file-tab { flex: 0 0 auto; width: max-content; min-width: min(110px, 100%); max-width: min(240px, 100%); }
+.editor-file-tab > button { flex-shrink: 0; }
+.editor-file-tabs-container > .editor-file-tabs__scroll { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 20px; width: 20px; min-height: 0; padding: 2px; border-radius: var(--radius-xs); }
+.editor-file-tabs__scroll:disabled { opacity: .35; }

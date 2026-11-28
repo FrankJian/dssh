@@ -27,7 +27,7 @@ test("classified menus replace duplicate icons and stay reachable in compact win
       const box = await trigger.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
       await trigger.focus(); await page.keyboard.press("ArrowDown");
       const menu = page.getByRole("menu", { name, exact: true }); await expect(menu).toBeVisible();
-      await expect(menu.getByRole("menuitem").filter({ hasText: name === "文件" ? "全部保存" : name === "编辑" ? "全选" : name === "视图" ? "快捷打开" : "格式化文档" })).toHaveCount(1);
+      await expect(menu.getByRole("menuitem", { name: name === "文件" ? "打开文件" : name === "编辑" ? "查找" : name === "视图" ? "快捷打开" : "命令面板", exact: true })).toHaveCount(1);
       const popup = await menu.boundingBox(); expect(popup.x).toBeGreaterThanOrEqual(0); expect(popup.x + popup.width).toBeLessThanOrEqual(width);
       if (width === 620 && ["文件", "工具"].includes(name)) await page.screenshot({ path: editorArtifact(`dssh-editor-menu-${name === "文件" ? "file" : "tools"}.png`), animations: "disabled" });
       await page.keyboard.press("End"); expect(await menu.evaluate(el => el.contains(document.activeElement))).toBe(true);
@@ -45,9 +45,9 @@ test("classified menus replace duplicate icons and stay reachable in compact win
   await toolbar.getByRole("button", { name: "文件", exact: true }).click();
   await page.evaluate(() => window.workbenchFixture.lock(true));
   await expect(page.getByRole("menu", { name: "文件", exact: true })).toHaveCount(0);
-  for (const name of ["文件", "编辑", "视图", "工具"]) await expect(toolbar.getByRole("button", { name, exact: true })).toBeDisabled();
+  for (const name of ["文件", "编辑", "视图", "工具"]) await expect(toolbar.getByRole("button", { name, exact: true })).toBeHidden();
   await page.evaluate(() => { window.workbenchFixture.lock(false); window.workbenchFixture.handoff(true); });
-  await expect(page.getByRole("button", { name: "在独立窗口打开编辑器" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "在独立窗口打开编辑器" })).toBeHidden();
 });
 
 test("file menu saves the focused document once and keeps project commands available", async ({ page }) => {
@@ -151,14 +151,13 @@ async function settledChrome(page) {
 }
 
 
-test("an all-disabled file menu closes with Escape and keyboard navigation reaches the sidebar sash", async ({ page }) => {
+test("an all-disabled file menu is hidden and keyboard navigation still reaches the sidebar sash", async ({ page }) => {
   await page.goto("/tests/editor/workbench.html"); await expect(file(page)).toBeVisible();
-  const trigger = page.getByRole("button", { name: "文件标签操作", exact: true });
-  await trigger.click(); const menu = page.getByRole("menu", { name: "文件标签操作", exact: true });
-  await expect(menu).toBeFocused();
-  await page.keyboard.press("Escape"); await expect(menu).not.toBeVisible(); await expect(trigger).toBeFocused();
-  await page.keyboard.press("Shift+Tab"); const sash = page.getByRole("separator", { name: "调整文件树宽度" });
-  await expect(sash).toBeFocused(); await page.keyboard.press("ArrowRight"); await expect(sash).toHaveAttribute("aria-valuenow", "250");
+  await expect(page.getByRole("button", { name: "文件标签操作", exact: true })).toHaveCount(0);
+  const sash = page.getByRole("separator", { name: "调整文件树宽度" });
+  await sash.focus(); await expect(sash).toBeFocused();
+  const previous = Number(await sash.getAttribute("aria-valuenow"));
+  await page.keyboard.press("ArrowRight"); await expect(sash).toHaveAttribute("aria-valuenow", String(previous + 10));
 });
 
 test("file header exposes contextual Markdown preview and keeps actions visible in narrow palettes", async ({ page }) => {
@@ -188,9 +187,9 @@ test("file header exposes contextual Markdown preview and keeps actions visible 
   await page.getByRole("button", { name: "关闭预览 readme.md", exact: true }).click();
   await expect(preview).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("article", { name: "Markdown 预览" })).toHaveCount(0);
-  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(preview).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(preview).toBeHidden();
   await page.evaluate(() => window.workbenchFixture.handoff(false)); await page.evaluate(() => window.workbenchFixture.lock(true));
-  await expect(preview).toBeDisabled();
+  await expect(preview).toBeHidden();
 });
 
 test("file header save and split target their own group rather than the previously focused group", async ({ page }) => {

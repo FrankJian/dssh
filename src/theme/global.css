@@ -12257,3 +12257,16 @@ button.ai-settings__provider:disabled { opacity: 0.65; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .button, .icon-button { transition: none; }
 }
+
+/* Keep Monaco's measured find/replace layout; only normalize its surfaces. */
+.monaco-editor .editor-widget.find-widget { border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); box-shadow: 0 4px 18px color-mix(in srgb, var(--text-strong) 12%, transparent); color: var(--text-base); }
+.monaco-editor .find-widget .monaco-inputbox { border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); overflow: hidden; }
+.monaco-editor .find-widget .monaco-inputbox.synthetic-focus { outline: 1px solid var(--accent-border); outline-offset: -1px; }
+.monaco-editor .find-widget textarea.input { border: 0; border-radius: 0; box-shadow: none; outline: none; min-height: 0; color: inherit; }
+.monaco-editor .find-widget .button { min-height: 0; border: 0; box-shadow: none; background: transparent; padding: 3px; border-radius: var(--radius-xs); color: var(--text-muted); }
+.monaco-editor .find-widget .button:hover:not(.disabled) { background: var(--bg-hover); color: var(--text-strong); }
+.monaco-editor .find-widget .button:focus-visible { outline: 1px solid var(--accent-border); outline-offset: -1px; }
+.monaco-editor .find-widget .monaco-custom-toggle { border-radius: var(--radius-xs); }
+.monaco-editor .find-widget .matchesCount { color: var(--text-muted); font-size: 12px; }
+
+.monaco-editor .editor-widget.find-widget.no-results .matchesCount { color: var(--text-muted); }

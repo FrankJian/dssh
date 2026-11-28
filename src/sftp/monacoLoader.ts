@@ -10,8 +10,15 @@ type MonacoWorker = new () => Worker;
 
 let loader: Promise<MonacoApi> | null = null;
 
+let colorContext: CanvasRenderingContext2D | null = null;
 function cssColor(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  // Monaco parses theme colors as hex, while app palettes also use rgb()/color-mix().
+  const value = name.startsWith("--") ? getComputedStyle(document.documentElement).getPropertyValue(name).trim() : name;
+  if (!colorContext) { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1; colorContext = canvas.getContext("2d", { willReadFrequently: true }); }
+  if (!colorContext) throw new Error("无法初始化编辑器主题颜色。");
+  colorContext.clearRect(0, 0, 1, 1); colorContext.fillStyle = "#000000"; colorContext.fillStyle = value;
+  colorContext.fillRect(0, 0, 1, 1);
+  return "#" + Array.from(colorContext.getImageData(0, 0, 1, 1).data, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function applyTheme(monaco: MonacoApi) {
@@ -41,6 +48,22 @@ function applyTheme(monaco: MonacoApi) {
       "editorIndentGuide.activeBackground1": cssColor("--border-strong"),
       "editorWidget.background": cssColor("--bg-elevated"),
       "editorWidget.border": cssColor("--border-subtle"),
+      "editorWidget.foreground": cssColor("--text-base"),
+      "widget.border": cssColor("--border-subtle"),
+      "focusBorder": cssColor("--accent-border"),
+      "disabledForeground": cssColor("--text-faint"),
+      "input.background": cssColor("--bg-app"),
+      "input.foreground": cssColor("--text-base"),
+      "input.border": cssColor("--border-subtle"),
+      "input.placeholderForeground": cssColor("--text-faint"),
+      "inputOption.activeBackground": cssColor("--bg-selected"),
+      "inputOption.activeForeground": cssColor("--accent-strong"),
+      "inputOption.activeBorder": cssColor("--border-subtle"),
+      "inputOption.hoverBackground": cssColor("--bg-hover"),
+      "toolbar.hoverBackground": cssColor("--bg-hover"),
+      "inputValidation.errorBackground": cssColor("--bg-app"),
+      "inputValidation.errorForeground": cssColor("--text-base"),
+      "inputValidation.errorBorder": cssColor("--danger"),
       "editorSuggestWidget.background": cssColor("--bg-elevated"),
       "editorSuggestWidget.selectedBackground": cssColor("--bg-selected"),
       "editor.findMatchBackground": cssColor("--code-find-match"),
@@ -56,7 +79,9 @@ function applyTheme(monaco: MonacoApi) {
  * language service. */
 export function loadMonaco(): Promise<MonacoApi> {
   if (!loader) {
-    loader = import("monaco-editor").then((monaco) => {
+    loader = import("monaco-editor").then(async (monaco) => {
+      const { installMonacoFindHoverLayer } = await import("./monacoFindHover");
+      await installMonacoFindHoverLayer();
       const workerByLabel: Record<string, MonacoWorker> = {
         css: CssWorker,
         html: HtmlWorker,

@@ -76,6 +76,7 @@ test("multiple preview tabs survive source group removal and support keyboard se
 test("preview width supports drag/keyboard/reset/cancel, lock protection and narrow themed layouts", async ({ page }) => {
   await ready(page); await open(page); await page.getByRole("toolbar", { name: "编辑器工具栏" }).getByRole("button", { name: "视图", exact: true }).click(); await page.getByRole("menuitem", { name: "隐藏文件树", exact: true }).click();
   await expect(sash(page)).toHaveAttribute("aria-valuenow", "45");
+  await expect.poll(() => page.locator(".editor-sidebar-dock").evaluate(el => el.getBoundingClientRect().width)).toBe(0);
   const initialWidth = (await page.locator(".editor-markdown-pane").boundingBox()).width;
   const box = await sash(page).boundingBox();
   await page.mouse.move(box.x + 2, box.y + 100); await page.mouse.down(); await page.mouse.move(box.x - 150, box.y + 100); await page.mouse.up();
