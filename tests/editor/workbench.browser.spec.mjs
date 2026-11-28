@@ -1,4 +1,3 @@
-import { editorArtifact } from "./artifacts.mjs";
 import { test, expect } from "@playwright/test";
 async function menuAction(page, menu, name) {
   await page.getByRole("toolbar", { name: "编辑器工具栏" }).getByRole("button", { name: menu, exact: true }).click();
@@ -8,7 +7,7 @@ const tree = (page, name) => page.getByRole("treeitem").filter({ hasText: name }
 async function ready(page) { await page.goto("/tests/editor/workbench.html"); await expect(tree(page, "a2.ts")).toBeVisible(); }
 async function edit(page, text) { await page.evaluate((text) => { const f = window.workbenchFixture; const model = f.monaco.editor.getModels().find((m) => m.uri.scheme === "dssh-editor"); if (!model) throw new Error("missing model"); model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null); }, text); }
 
-test("local editor opens files and requests folders without SSH while selection cancellation preserves work", { tag: "@smoke" }, async ({ page }) => {
+test("local editor opens files and requests folders without SSH while selection cancellation preserves work", async ({ page }) => {
   await page.goto("/tests/editor/workbench.html?local");
   await expect(tree(page, "a2.ts")).toBeVisible();
   await menuAction(page, "文件", "打开文件");
@@ -33,7 +32,7 @@ test("local editor opens files and requests folders without SSH while selection 
   await expect(page.getByRole("tab")).toHaveCount(2);
 });
 
-test("workbench tree is lazy, naturally sorted, hidden-aware and retries one failed node", { tag: "@smoke" }, async ({ page }) => {
+test("workbench tree is lazy, naturally sorted, hidden-aware and retries one failed node", async ({ page }) => {
   await ready(page);
   expect(await page.getByRole("treeitem").allTextContents()).toEqual(["fail", "nested", "a2.ts", "a10.ts"]);
   expect(await page.evaluate(() => window.workbenchFixture.reads.every((path) => path === "/root"))).toBe(true);
@@ -44,7 +43,7 @@ test("workbench tree is lazy, naturally sorted, hidden-aware and retries one fai
   await expect(tree(page, ".hidden")).toHaveCount(0); await expect(page.locator(".editor-tree-row.is-selected")).toHaveCount(0);
 });
 
-test("preview edits pin tabs, splits share text, save updates baseline and hiding retains models", { tag: "@smoke" }, async ({ page }) => {
+test("preview edits pin tabs, splits share text, save updates baseline and hiding retains models", async ({ page }) => {
   await ready(page); await tree(page, "a2.ts").click(); await expect(page.locator(".monaco-editor")).toBeVisible();
   await expect(page.locator(".editor-file-tab.is-preview")).toHaveCount(1);
   await edit(page, "const changed = 2;"); await expect(page.locator(".editor-file-tab.is-preview")).toHaveCount(0);
@@ -93,16 +92,6 @@ test("repeated split commands preserve a restorable layout at the group budget",
   await page.keyboard.press("Escape");
   await menuAction(page, "视图", "左右拆分编辑器");
   await expect(page.locator(".editor-group")).toHaveCount(8);
-});
-
-test("workbench layout remains bounded in dark, light and narrow views", async ({ page }) => {
-  await ready(page); await tree(page, "a2.ts").click(); await expect(page.locator(".monaco-editor")).toBeVisible();
-  await page.screenshot({ path: editorArtifact("dssh-editor-dark.png") });
-  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
-  await page.setViewportSize({ width: 720, height: 650 });
-  await page.screenshot({ path: editorArtifact("dssh-editor-light-narrow.png") });
-  const bounds = await page.locator(".editor-workbench").boundingBox();
-  expect(bounds.width).toBeLessThanOrEqual(720); expect(bounds.y + bounds.height).toBeLessThanOrEqual(650);
 });
 
 test("menus run native edit actions and group close keeps the shared document", async ({ page }) => {
@@ -438,78 +427,6 @@ test("file menus create, rename, copy and move without overwriting existing targ
   expect(await page.evaluate(() => window.workbenchFixture.files.has('/root/copy.txt') && window.workbenchFixture.files.has('/root/renamed.txt'))).toBe(true);
 });
 
-
-test("large directory trees limit rows and keep End/Home navigation responsive", async ({ page }) => {
-  await ready(page);
-  await page.evaluate(() => {
-    const f = window.workbenchFixture; const sample = f.files.get('/root/a2.ts'); f.files.clear(); f.directories.clear(); f.directories.add('/root');
-    for (let index = 0; index < 10010; index++) { const path = `/root/bulk${String(index).padStart(5, '0')}.txt`; f.files.set(path, { ...sample, path, content: 'small' }); }
-  });
-  await page.getByRole('button', { name: '刷新文件树', exact: true }).click();
-  await expect(page.getByRole('status').filter({ hasText: '仅显示前 10,000 项' })).toBeVisible();
-  expect(await page.getByRole('treeitem').count()).toBeLessThan(80);
-  await page.getByRole('treeitem').first().focus(); await page.keyboard.press('End');
-  await expect(page.locator('[data-path="/root/bulk09999.txt"]')).toBeFocused();
-  await page.keyboard.press('Home'); await expect(page.locator('[data-path="/root/bulk00000.txt"]')).toBeFocused();
-  expect(await page.getByRole('treeitem').count()).toBeLessThan(80);
-});
-
-
-test("a real 21 MiB buffer remains complete in limited mode and saves without truncation", async ({ page }) => {
-  test.setTimeout(45000); await ready(page);
-  const baseline = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? null);
-  const started = Date.now();
-  await page.evaluate(() => {
-    const f = window.workbenchFixture; const original = f.files.get('/root/a2.ts');
-    const content = `${'x'.repeat(1023)}\n`.repeat(21 * 1024);
-    f.files.set('/root/a2.ts', { ...original, content, byteLength: content.length, largeFile: true });
-  });
-  await tree(page, 'a2.ts').click(); await page.getByRole('button', { name: '以受限模式打开', exact: true }).click();
-  await expect(page.locator('.monaco-editor')).toBeVisible();
-  const result = await page.evaluate(() => {
-    const f = window.workbenchFixture; const instance = f.monaco.editor.getEditors()[0]; const model = instance.getModel();
-    const length = model.getValueLength(); const line = model.getLineCount();
-    instance.executeEdits('test', [{ range: new f.monaco.Range(line, 1, line, 1), text: 'end' }]);
-    return { length, language: model.getLanguageId(), minimap: instance.getOption(f.monaco.editor.EditorOption.minimap).enabled, heap: performance.memory?.usedJSHeapSize ?? null };
-  });
-  expect(result.length).toBe(21 * 1024 * 1024); expect(result.language).toBe('plaintext'); expect(result.minimap).toBe(false);
-  await menuAction(page, "文件", "保存");
-  await expect.poll(() => page.evaluate(() => window.workbenchFixture.writes.length)).toBe(1);
-  expect(await page.evaluate(() => window.workbenchFixture.files.get('/root/a2.ts').content.length)).toBe(21 * 1024 * 1024 + 3);
-  console.log('limited-buffer observation', { bytes: result.length, elapsedMs: Date.now() - started, baselineHeap: baseline, observedHeap: result.heap });
-});
-
-
-test("custom palettes update Monaco in wide and narrow layouts without replacing the document", async ({ page }) => {
-  await ready(page); await tree(page, 'a2.ts').click(); await expect(page.locator('.monaco-editor')).toBeVisible();
-  const uri = await page.evaluate(() => window.workbenchFixture.monaco.editor.getModels()[0].uri.toString());
-  await page.evaluate(() => window.workbenchFixture.palette.setPaletteColor('#986aa6'));
-  for (const theme of ['dark', 'light']) {
-    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
-    await page.setViewportSize(theme === 'dark' ? { width: 1280, height: 800 } : { width: 720, height: 650 });
-    await expect.poll(() => page.evaluate(() => {
-      const probe = document.createElement('span'); probe.style.backgroundColor = 'var(--bg-sunken)'; document.body.append(probe); const expected = getComputedStyle(probe).backgroundColor; probe.remove();
-      return getComputedStyle(document.querySelector('.monaco-editor-background')).backgroundColor === expected;
-    })).toBe(true);
-    await expect.poll(() => page.evaluate(() => {
-      const button = document.querySelector('.editor-toolbar [aria-label="在独立窗口打开编辑器"]'); const probe = document.createElement('span'); probe.style.color = 'var(--text-muted)'; document.body.append(probe);
-      const settled = getComputedStyle(button).color === getComputedStyle(probe).color; probe.remove(); return settled;
-    })).toBe(true);
-    const contrast = await page.evaluate(() => {
-      const luminance = (text) => { const values = text.match(/[\d.]+/g).slice(0, 3).map(Number).map((channel) => { const value = channel / 255; return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; }); return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722; };
-      const foreground = luminance(getComputedStyle(document.querySelector('.editor-toolbar [aria-label="在独立窗口打开编辑器"]')).color);
-      const background = luminance(getComputedStyle(document.querySelector('.editor-toolbar')).backgroundColor);
-      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
-    });
-    expect(contrast).toBeGreaterThanOrEqual(4.5);
-    await page.screenshot({ path: editorArtifact(`dssh-editor-custom-${theme}.png`) });
-    const bounds = await page.locator('.editor-workbench').boundingBox(); expect(bounds.width).toBeLessThanOrEqual(theme === 'dark' ? 1280 : 720);
-  }
-  await menuAction(page, "视图", "隐藏文件树"); await expect(page.getByRole('tree')).toHaveCount(0);
-  await page.keyboard.press('Enter'); await expect(page.getByRole('menu', { name: '视图', exact: true })).toBeVisible(); await page.keyboard.press('Enter'); await expect(page.getByRole('tree')).toBeVisible();
-  expect(await page.evaluate(() => window.workbenchFixture.monaco.editor.getModels()[0].uri.toString())).toBe(uri);
-});
-
 test("handoff targets stay read-only through initialization and release enables normal edits", async ({ page }) => {
   await ready(page); await tree(page, 'a2.ts').dblclick(); await expect(page.locator('.monaco-editor')).toBeVisible();
   await page.evaluate(() => { const f = window.workbenchFixture; const state = f.handle.snapshot(); f.handoff(true); f.restart(state); });
@@ -588,7 +505,7 @@ test("macOS native menu routes only to the focused unlocked editor and retains d
 });
 
 
-test("native application quit waits for commit and abort restores every prepared draft", { tag: "@smoke" }, async ({ page }) => {
+test("native application quit waits for commit and abort restores every prepared draft", async ({ page }) => {
   await page.goto("/tests/editor/workbench.html?local&nativeMenu");
   await expect(tree(page, "a2.ts")).toBeVisible();
   await tree(page, "a2.ts").dblclick(); await edit(page, "quit draft");

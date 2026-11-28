@@ -1,6 +1,6 @@
-name: Editor full regression
+name: Editor UI regression
 
-# Resource limits, large files and the full layout/palette matrix run on demand.
+# Optional retained UI functionality checks; routine CI never starts a browser.
 on:
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   editor:
-    name: Editor full regression (${{ matrix.os }})
+    name: Editor UI regression (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -31,7 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install editor browser test runtime
         uses: ./.github/actions/editor-browser-runtime
-      - name: Test full editor workbench
+      - name: Test retained editor UI scenarios
         timeout-minutes: 16
         run: pnpm test:editor-browser
       - name: Upload editor results and failure evidence

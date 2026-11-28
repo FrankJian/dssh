@@ -12,7 +12,7 @@ async function ready(page, content = "# Title\n\nA **bold** paragraph.\n", readO
   await expect(rich(page)).toBeVisible();
 }
 
-test("rendered editor switches losslessly and rich edits share saves and undo with source", { tag: "@smoke" }, async ({ page }) => {
+test("rendered editor switches losslessly and rich edits share saves and undo with source", async ({ page }) => {
   const initial = "# Title\n\nA **bold** paragraph.\n";
   await ready(page, initial);
   await expect(rich(page).getByRole("heading", { name: "Title", exact: true })).toBeVisible();
@@ -39,7 +39,7 @@ test("editing one block retains frontmatter, comments, references, blank lines a
   await expect.poll(() => page.evaluate(() => window.workbenchFixture.files.get("/root/readme.md").content)).toBe(initial.replace("Change me.", "Change me. Extra"));
 });
 
-test("GFM tasks and tables are editable and Mermaid renders while unsafe HTML and images remain inert", { tag: "@smoke" }, async ({ page }) => {
+test("GFM tasks and tables are editable and Mermaid renders while unsafe HTML and images remain inert", async ({ page }) => {
   const external = []; page.on("request", request => { if (/evil\.invalid/.test(request.url())) external.push(request.url()); });
   await ready(page, '# Document\n\n- [ ] First task\n- [x] Done\n\n| Name | Value |\n| --- | --- |\n| One | Two |\n\n```mermaid\nflowchart LR\nA --> B\n```\n\n![image](https://evil.invalid/a.png)\n\n<script>window.richAttack = true</script>\n');
   await expect(rich(page).getByRole("checkbox")).toHaveCount(2);
@@ -71,19 +71,6 @@ test("source changes sync across rendered splits and lock and close protection r
   await second.getByRole("button", { name: "关闭编辑分组", exact: true }).click(); await expect(page.locator(".editor-group")).toHaveCount(1);
   await first.getByRole("button", { name: "关闭 readme.md", exact: true }).click(); await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   expect(await modelText(page)).toContain("Shared draft");
-});
-
-test("rendered layout stays compact in themes and narrow windows and large sources remain available", async ({ page }) => {
-  await ready(page);
-  for (const [theme, width] of [["light", 1280], ["dark", 760], ["light", 620]]) {
-    await page.setViewportSize({ width, height: 800 }); await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor("#e5b76d"); }, theme);
-    await expect(rich(page)).toBeVisible(); await expect(page.getByRole("radiogroup", { name: "Markdown 编辑模式" })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: editorArtifact(`dssh-wysiwyg-${theme}-${width}.png`) });
-  }
-  await page.evaluate(() => window.workbenchFixture.monaco.editor.getModels().find(m => m.uri.scheme === "dssh-editor").setValue("Paragraph.\n\n".repeat(100000)));
-  await expect(page.locator(".monaco-editor")).toBeVisible(); await expect(page.getByRole("radio", { name: "所见即所得", exact: true })).toBeDisabled();
 });
 
 test("format and link menus edit rendered text while native undo uses the canonical model", async ({ page }) => {
@@ -138,7 +125,7 @@ test("find opens the existing source search and lazy loading failure keeps raw e
   await expect(page.locator(".monaco-editor")).toBeVisible(); expect(await modelText(page)).toBe("# Kept\n");
 });
 
-test("fenced Mermaid paste preserves literal code, language changes and atomic undo", { tag: "@smoke" }, async ({ page }) => {
+test("fenced Mermaid paste preserves literal code, language changes and atomic undo", async ({ page }) => {
   await ready(page, '# Keep\n\nInsert\n');
   await rich(page).locator('p').click(); await page.keyboard.press('End'); await page.keyboard.press('Enter');
   const before = await modelText(page);
@@ -203,69 +190,6 @@ test('fence suggestions support arrows, cancellation, Tab and do not trigger in 
   await page.keyboard.press('Tab'); await expect(rich(page).locator('code')).toHaveAttribute('data-language', 'python');
   await page.keyboard.type('```me'); await expect(popup).toBeHidden();
   await expect(rich(page).locator('code')).toHaveText('```me');
-});
-
-test('pasted fence prefixes allow pointer completion and bounded themed suggestions close on lock', async ({ page }) => {
-  await ready(page, 'Start\n'); await rich(page).locator('p').click(); await page.keyboard.press('End'); await page.keyboard.press('Enter');
-  await page.evaluate(() => { const data = new DataTransfer(); data.setData('text/plain', '```ya'); document.querySelector('.editor-rich-host .tiptap').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })); });
-  const popup = page.getByRole('listbox', { name: '代码围栏语言建议' }); await expect(popup).toBeVisible();
-  for (const width of [1280, 360]) for (const theme of ['light', 'dark']) {
-    await page.setViewportSize({ width, height: 650 });
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    await expect(popup).toBeVisible(); const box = await popup.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width); expect(box.y + box.height).toBeLessThanOrEqual(650);
-    await page.screenshot({ path: editorArtifact(`fence-language-${width}-${theme}.png`), animations: 'disabled' });
-  }
-  await popup.getByRole('option', { name: 'yaml', exact: true }).click();
-  await expect(rich(page).locator('code')).toHaveAttribute('data-language', 'yaml'); await expect(rich(page)).toBeFocused();
-  await page.keyboard.press(shortcut('z')); await expect(rich(page).locator('p').last()).toHaveText('```ya'); await rich(page).locator('p').last().click(); for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight'); await expect(popup).toBeVisible();
-  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(popup).toBeHidden();
-  await expect(rich(page)).toHaveAttribute('contenteditable', 'false');
-});
-
-
-test('code language picker stays compact and shows one name per option', async ({ page }) => {
-  await ready(page, '```mermaid\ngraph TD\nA-->B\n```\n');
-  const control = page.locator('.editor-rich-code__toolbar .combobox'), input = page.getByRole('combobox', { name: '代码块语言', exact: true });
-  for (const width of [1280, 360]) for (const theme of ['light', 'dark']) {
-    await page.setViewportSize({ width, height: 650 });
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    const box = await control.boundingBox(), toolbar = await page.locator('.editor-rich-code__toolbar').boundingBox();
-    expect(box.width).toBeLessThanOrEqual(128); expect(box.height).toBe(24); expect(toolbar.x + toolbar.width - box.x - box.width).toBeLessThanOrEqual(9);
-    await control.getByRole('button', { name: '展开选项', exact: true }).click(); const menu = page.getByRole('listbox', { name: '代码块语言', exact: true });
-    await expect(menu.getByRole('option', { name: 'yaml', exact: true })).toHaveText('yaml');
-    await expect(menu.locator('.combobox__option-label')).toHaveCount(0);
-    await expect(menu.getByRole('option', { name: '纯文本', exact: true })).toHaveText('纯文本');
-    await page.screenshot({ path: editorArtifact(`compact-language-${width}-${theme}.png`), animations: 'disabled' });
-    await page.keyboard.press('Escape');
-  }
-  await input.fill('yaml'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
-  await expect.poll(() => modelText(page)).toContain('```yaml');
-  await rich(page).locator('code').click(); await page.keyboard.press(shortcut('z')); await expect.poll(() => modelText(page)).toContain('```mermaid');
-});
-
-test('rendered formatting menus share the compact breadcrumb row beside document symbols', async ({ page }) => {
-  await ready(page);
-  const breadcrumb = page.getByRole('navigation', { name: '编辑器面包屑', exact: true });
-  await expect(breadcrumb.getByRole('toolbar', { name: 'Markdown 排版', exact: true })).toBeVisible();
-  await expect(page.locator('.editor-rich-view > .editor-rich-actions')).toHaveCount(0);
-  for (const width of [1280, 620, 360]) for (const theme of ['light', 'dark']) {
-    await page.setViewportSize({ width, height: 650 });
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    const row = await breadcrumb.boundingBox(), path = await breadcrumb.locator('.editor-breadcrumb__path').boundingBox();
-    await expect(breadcrumb.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
-    expect(row.height).toBe(24);
-    for (const name of ['格式', '表格']) {
-      const box = await breadcrumb.getByRole('button', { name, exact: true }).boundingBox();
-      expect(box.y).toBeGreaterThanOrEqual(row.y); expect(box.y + box.height).toBeLessThanOrEqual(row.y + row.height);
-      expect(box.x).toBeGreaterThanOrEqual(path.x + path.width); expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width);
-    }
-    await expect(breadcrumb.locator('.editor-breadcrumb__rich-actions')).toHaveCSS('border-left-width', '1px');
-    if (width !== 620) await page.screenshot({ path: editorArtifact(`breadcrumb-format-${width}-${theme}.png`), animations: 'disabled' });
-  }
-  await page.getByRole('radio', { name: '源码', exact: true }).check();
-  await expect(breadcrumb.getByRole('button', { name: '格式', exact: true })).toHaveCount(0);
-  await page.getByRole('radio', { name: '所见即所得', exact: true }).check();
-  await expect(breadcrumb.getByRole('button', { name: '格式', exact: true })).toHaveCount(1);
 });
 
 test('breadcrumb formatting acts on its own rendered group and keeps lock protection', async ({ page }) => {

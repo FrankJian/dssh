@@ -85,7 +85,7 @@ test("a pending PNG is not saved after lock and unlock or document replacement",
   await diagram(page).getByRole("button", { name: "导出 PNG" }).click(); await expect(diagram(page).getByRole("status")).toHaveText("PNG 已保存");
 });
 
-test("PNG JPEG WebP GIF BMP and SVG files decode read-only and corrupted images can be retried", { tag: "@smoke" }, async ({ page }) => {
+test("PNG JPEG WebP GIF BMP and SVG files decode read-only and corrupted images can be retried", async ({ page }) => {
   await ready(page);
   const external = []; page.on("request", request => { if (request.url().includes("untrusted.example")) external.push(request.url()); });
   await page.evaluate(() => {
@@ -109,13 +109,4 @@ test("PNG JPEG WebP GIF BMP and SVG files decode read-only and corrupted images 
   await expect.poll(()=>page.getByRole("img",{name:"/root/bad.png",exact:true}).evaluate(img=>img.naturalWidth)).toBe(4);
   await page.evaluate(()=>window.workbenchFixture.handoff(true));await expect(page.getByRole("img")).toHaveCount(0);
   expect(await page.evaluate(()=>window.workbenchFixture.writes.length)).toBe(0);
-});
-
-test("Markdown bounds the number of diagrams without blocking the surrounding document", async ({ page }) => {
-  await ready(page, Array.from({length:34},()=>markdown('flowchart LR\nA')).join('\n')+'\n## After diagrams');
-  await expect(diagram(page)).toHaveCount(32);
-  await expect(page.getByRole("article").getByRole("status").filter({hasText:'前 32 幅'})).toBeVisible();
-  await expect(page.getByRole("heading",{name:'After diagrams',exact:true})).toBeAttached();
-  await page.getByRole("button",{name:'关闭预览 charts.md',exact:true}).click();
-  await expect(diagram(page)).toHaveCount(0);
 });

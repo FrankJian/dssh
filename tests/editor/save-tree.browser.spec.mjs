@@ -33,7 +33,7 @@ for (const local of [false, true]) test(`${local ? 'local' : 'SFTP'} first save 
   expect(await page.evaluate(() => window.workbenchFixture.files.get('/root/first-save.txt').content)).toBe('synthetic new file\n');
 });
 
-test('save as refreshes and expands the destination while preserving the old file and root', { tag: "@smoke" }, async ({ page }) => {
+test('save as refreshes and expands the destination while preserving the old file and root', async ({ page }) => {
   await ready(page);
   await page.locator('[data-path="/root/a2.ts"]').dblclick(); await expect(page.locator('.monaco-editor')).toBeVisible();
   await page.evaluate(() => window.workbenchFixture.handle.execute('editorSaveAs'));

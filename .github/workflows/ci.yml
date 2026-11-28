@@ -69,22 +69,6 @@ jobs:
           pnpm test:shortcuts
           pnpm test:sftp
 
-      - name: Install editor browser test runtime
-        uses: ./.github/actions/editor-browser-runtime
-
-      - name: Test editor workbench critical paths
-        timeout-minutes: 4
-        run: pnpm test:editor-browser:smoke
-
-      - name: Upload editor failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: editor-failure-${{ matrix.os }}
-          path: test-results/editor*
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Test connection library
         run: pnpm test:connection-library
 

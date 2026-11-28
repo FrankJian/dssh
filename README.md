@@ -157,11 +157,11 @@ pnpm tauri build
 
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`
 - `pnpm exec tsc --noEmit`、`pnpm build`
-- 编辑器、快捷键、SFTP 等模块逻辑回归，以及 `pnpm test:editor-browser:smoke` 的 21 项关键浏览器流程。浏览器测试使用 2 个 worker、3 分钟全局预算，累计 3 项失败即提前结束并返回失败；Actions 步骤上限为 4 分钟，留出结果和 trace 写入时间。
+- 编辑器、快捷键、SFTP、连接库、工具和 RDP 等模块逻辑回归。
 
-耗时较长的大文件、万级目录、多尺寸/配色矩阵及冷启动故障注入保留在 `pnpm test:editor-browser` 全量入口，日常 CI 不执行这些矩阵。需要完整回归时，在 Actions 的 **Editor full regression → Run workflow** 选择分支，运行 macOS/Windows 全量浏览器测试。两套测试共用已有用例；`@smoke` 标记关键流程，不复制用例，也不跳过全量失败项。
+日常 Actions 不安装浏览器、不启动编辑器测试宿主，也不执行模拟点击。已删除 49 项浏览器压力、慢加载/慢 CPU 故障注入和重复布局/配色/截图测试。保留的 109 项功能界面测试仅供按需运行：本地执行 `pnpm test:editor-browser`，或在 Actions 的 **Editor UI regression → Run workflow** 选择分支手动运行 macOS/Windows 回归。
 
-首次本地运行前执行 `pnpm exec playwright install chromium --only-shell`。CI 按操作系统、架构和 Playwright 精确版本缓存无头浏览器，逐项打印结果并生成 `test-results/editor*-results.json`；失败时上传截图与 trace，手动全量运行无论成功失败均上传结果，保留 7 天。CI 的 Chromium 隔离宿主测试不能代替 Tauri/WebView2 或真实 SSH 验收。
+首次本地运行前执行 `pnpm exec playwright install chromium --only-shell`。可选界面工作流按操作系统、架构和 Playwright 精确版本缓存无头浏览器，逐项打印结果并生成 `test-results/editor-results.json`，归档可用的结果及失败截图/trace，保留 7 天。剩余界面回归不覆盖已删除的性能与视觉矩阵，布局/配色/性能需按需人工验收；Chromium 隔离宿主测试也不能替代 Tauri/WebView2 或真实 SSH 验收。
 
 提交前建议本地跑一遍相同命令（见上方「常用命令」），避免 CI 红灯。
 

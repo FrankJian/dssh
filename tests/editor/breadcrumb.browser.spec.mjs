@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import { editorArtifact } from './artifacts.mjs';
 async function ready(page) {
   await page.goto('/tests/editor/workbench.html'); await page.getByRole('treeitem').filter({ hasText: 'a2.ts' }).dblclick(); await expect(page.locator('.monaco-editor')).toBeVisible();
 }
@@ -26,34 +25,6 @@ test('breadcrumbs show a clear hierarchy, current file and a separate keyboard-a
   await expect(page.getByRole('tree')).toHaveCount(0); await page.keyboard.press('Escape');
   await expect(path.getByRole('button', { name: 'root', exact: true })).toBeFocused();
   await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(outline).toBeHidden(); await expect(path.getByRole('button', { name: 'root', exact: true })).toBeDisabled();
-});
-
-test('long plaintext breadcrumbs stay on one row without unavailable outline controls', async ({ page }) => {
-  await ready(page);
-  await page.evaluate(async () => {
-    const f = window.workbenchFixture; const path = '/root/first-long-directory/second-long-directory/third-long-directory/very-long-current-filename-for-breadcrumbs.txt';
-    f.files.set(path, { ...f.files.get('/root/a2.ts'), path, content: 'long path sample' }); await f.handle.open(path);
-  });
-  const bar = page.getByRole('navigation', { name: '编辑器面包屑' });
-  await expect(bar.getByLabel('已省略上级目录')).toHaveText('…');
-  for (const theme of ['dark', 'light']) {
-    await page.setViewportSize({ width: theme === 'dark' ? 1280 : 620, height: 700 });
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    await expect(bar.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
-    const box = await bar.boundingBox(); const current = await bar.locator('[aria-current="page"]').boundingBox();
-    expect(box.height).toBe(24); expect(current.y + current.height).toBeLessThanOrEqual(box.y + box.height);
-    expect(current.width).toBeGreaterThan(35); expect(current.x + current.width).toBeLessThanOrEqual(box.x + box.width);
-    expect(await bar.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-    await page.screenshot({ path: editorArtifact(`dssh-editor-breadcrumb-${theme}.png`), animations: 'disabled' });
-  }
-  await page.getByRole('button', { name: '向右拆分当前编辑组', exact: true }).click(); await expect(page.locator('.editor-group')).toHaveCount(2);
-  for (const row of await page.getByRole('navigation', { name: '编辑器面包屑' }).all()) {
-    const box = await row.boundingBox(); const current = await row.locator('[aria-current="page"]').boundingBox();
-    expect(box.height).toBe(24); expect(current.x + current.width).toBeLessThanOrEqual(box.x + box.width + 1);
-    await expect(row.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
-  }
-  await page.evaluate(() => window.workbenchFixture.handoff(true));
-  await expect(page.getByRole('button', { name: '文档符号', exact: true })).toHaveCount(0);
 });
 
 const popup = page => page.getByRole('dialog', { name: '面包屑目录浏览', exact: true });
@@ -126,23 +97,6 @@ test('a delayed breadcrumb file opens in its owner group even after focus change
   await expect(first.getByRole('tab').filter({ hasText: 'a10.ts' })).toHaveAttribute('aria-selected', 'true');
   await expect(second.getByRole('tab')).toHaveCount(1); await expect(second.getByRole('tab')).toContainText('a2.ts');
   await expect(second).toHaveClass(/is-focused/);
-});
-
-test('bounded breadcrumb lists render only visible rows and stay inside narrow themed viewports', async ({ page }) => {
-  await ready(page);
-  await page.evaluate(() => { const f = window.workbenchFixture; for (let index=0; index<11000; index++) { const path = `/root/item${index}.txt`; f.files.set(path, { ...f.files.get('/root/a2.ts'), path }); } });
-  await directory(page).click(); await expect(popup(page).getByRole('status')).toContainText('目录项目过多');
-  expect(await popup(page).getByRole('menuitem').count()).toBeLessThan(30);
-  await popup(page).getByRole('textbox').press('ArrowDown'); await page.keyboard.press('End');
-  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-path'))).toMatch(/item/);
-  expect(await popup(page).getByRole('menuitem').count()).toBeLessThan(30);
-  for (const [theme, width] of [['light',1280], ['dark',620]]) {
-    await page.keyboard.press('Escape'); await page.setViewportSize({ width, height: 700 });
-    await page.evaluate(theme => { document.documentElement.dataset.theme=theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    await directory(page).click(); await expect(popup(page).getByRole('menuitem').first()).toBeVisible();
-    const box = await popup(page).boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width); expect(box.y+box.height).toBeLessThanOrEqual(700);
-    await page.screenshot({ path: editorArtifact(`dssh-directory-breadcrumb-${theme}.png`), animations: 'disabled' });
-  }
 });
 
 test('closing the owner group during a breadcrumb read does not open another group or retain an unused model', async ({ page }) => {

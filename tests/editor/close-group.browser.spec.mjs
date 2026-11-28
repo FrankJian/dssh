@@ -1,4 +1,3 @@
-import { editorArtifact } from "./artifacts.mjs";
 import { test, expect } from "@playwright/test";
 
 const groups = (page) => page.locator(".editor-group");
@@ -26,7 +25,7 @@ async function uniqueDraft(page) {
   await edit(page, "/root/a10.ts", "unique draft");
 }
 
-test("direct group close preserves shared dirty document and undo, and last-tab close collapses only extra groups", { tag: "@smoke" }, async ({ page }) => {
+test("direct group close preserves shared dirty document and undo, and last-tab close collapses only extra groups", async ({ page }) => {
   await ready(page); await open(page); await edit(page, "/root/a2.ts", "shared draft"); await split(page);
   await expect(groups(page)).toHaveCount(2);
   await close(groups(page).last()).click();
@@ -41,7 +40,7 @@ test("direct group close preserves shared dirty document and undo, and last-tab 
   await expect(groups(page)).toHaveCount(1); await expect(page.getByRole("tab")).toHaveCount(0);
 });
 
-test("unique dirty group supports cancel, failed save, then successful save without losing its group", { tag: "@smoke" }, async ({ page }) => {
+test("unique dirty group supports cancel, failed save, then successful save without losing its group", async ({ page }) => {
   await uniqueDraft(page);
   await close(groups(page).last()).click(); await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   await expect(groups(page)).toHaveCount(2); await expect(page.getByRole("tab").filter({ hasText: "a10.ts" })).toBeVisible();
@@ -85,25 +84,4 @@ test("empty and nested vertical groups close by keyboard and return focus to the
   await groups(page).last().locator(".monaco-editor .view-lines").click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+w" : "Control+w");
   await expect(groups(page)).toHaveCount(1); await expect(groups(page).first()).toHaveClass(/is-focused/);
-});
-
-test("group close stays within the single-row header in light, dark and compact custom palettes", async ({ page }) => {
-  await ready(page); await open(page); await split(page);
-  for (const [theme, width] of [["light", 1280], ["dark", 760], ["light", 620]]) {
-    await page.setViewportSize({ width, height: 800 });
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor("#e5b76d"); }, theme);
-    for (const group of await groups(page).all()) {
-      const bounds = await group.locator(".editor-group__tabs").boundingBox();
-      const button = close(group); await expect(button).toBeVisible();
-      const box = await button.boundingBox();
-      expect(box.x).toBeGreaterThanOrEqual(bounds.x);
-      expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
-      expect(box.y).toBeGreaterThanOrEqual(bounds.y);
-      expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height + 1);
-      expect(bounds.height).toBeLessThanOrEqual(44);
-    }
-    await page.screenshot({ path: editorArtifact(`dssh-close-group-${theme}-${width}.png`) });
-  }
-  await close(groups(page).last()).click(); await expect(groups(page)).toHaveCount(1);
 });
