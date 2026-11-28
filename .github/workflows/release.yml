@@ -78,7 +78,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@1.100.1
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
 

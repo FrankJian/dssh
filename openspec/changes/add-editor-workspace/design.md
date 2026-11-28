@@ -284,3 +284,7 @@ Monaco 0.56 的独立版 HoverService 默认选择活动编辑器作为容器，
 ### Windows 本地保存提交的句柄生命周期
 
 Windows CI 已进入 Rust 测试，普通覆盖保存与跨窗口串行保存均失败。ReplaceFileW 文档要求替换文件以不共享方式打开，原提交实现仍持有 NamedTempFile 的文件句柄，造成 API 打开冲突。提交前转换为 TempPath 关闭句柄，保留 RAII 清理；将自建临时文件属性归一为 NORMAL 后再调用 ReplaceFileW，继续保留目标 ACL 等元数据，不回退为先删原文件再写。失败沿用清理/残留路径报告，成功后禁用旧临时路径清理，避免误删随后复用旧路径的新文件；版本、授权和互斥锁检查不变。Windows 专用回归通过拒绝删除共享的目标句柄验证失败保护和释放后重试，不启动界面或进行性能测试。
+
+### Rust 工具链 Action 引用
+
+质量、测试打包和正式发布统一使用 dtolnay/rust-toolchain@stable，遵循项目稳定工具链约定。1.100.1 并非该 Action 仓库可解析的引用，会在安装步骤执行前导致作业失败；不将其移到 toolchain 参数继续请求未确认的工具链版本。已有 rustfmt/clippy 组件及 macOS/Windows 目标配置保持，验证引用有效性与 YAML，不以配置校验代替实际 CI 编译。

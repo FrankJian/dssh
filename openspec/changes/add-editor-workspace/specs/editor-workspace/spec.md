@@ -499,3 +499,7 @@ Monaco 主题 SHALL 将应用语义 CSS 颜色转换为有效十六进制值并�
 #### Scenario: Windows Rust 测试宿主可加载
 - **WHEN** Windows/MSVC 构建应用和 Rust 库测试程序
 - **THEN** 两者均包含相同的 Common Controls v6 应用清单，测试程序可进入测试入口；主程序继续保留图标和版本资源，不因测试宿主修复跳过任何 Rust 检查。
+
+#### Scenario: 工具链安装引用可解析
+- **WHEN** 质量检查、测试打包或正式发布安装 Rust 工具链
+- **THEN** 使用可公开解析的 stable Action 引用，并保留原有组件及目标平台配置，不因不存在的版本引用在执行测试前中止。

@@ -665,3 +665,9 @@ Windows 提交分支现先用 into_temp_path 关闭文件句柄并保留 TempPat
 新增 Windows 专用纯文件系统回归：Unicode/emoji 文件名、外部句柄拒绝删除共享时保存失败且原文不变/无暂存残留，关闭外部句柄后使用原版本重试成功、无暂存属性，旧版本再次保存被拒绝。该用例无需 UI 或性能压力。通用 cleanup_error 也改为先关闭句柄再委托 TempPath 清理，已有部分写入/授权撤销/外部修改/清理失败保护继续验证。
 
 本机 macOS 上格式检查、严格 Clippy 通过；完整 Rust 回归 302 通过、0 失败、6 项原有忽略（约 10.8 秒），main/doc-tests 通过。OpenSpec 严格校验 27/27 通过，git diff --check 无误。未修改测试跳过条件、Actions 步骤或依赖，未提交/推送或重新触发远程 CI。本机没有 Windows 环境，新增 Windows 专用用例及真实 ReplaceFileW 结果仍需下一次 Windows quality 验证，不把 macOS 回归当作 Windows 已通过。
+
+### Rust Action 引用解析失败修复（2026-11-28）
+
+用户截图显示准备 Actions 阶段无法解析 dtolnay/rust-toolchain@1.100.1，尚未进入编译或测试。扫描仓库确认 ci.yml 的质量/测试打包和 release.yml 的正式发布共三处使用此引用。通过 GitHub API 查询 1.100.1 返回 HTTP 422 / No commit found；stable 则成功解析。按 [Action 官方用法](https://github.com/dtolnay/rust-toolchain#example-workflow)，三处统一改为 @stable，遵循项目稳定工具链约定，原 rustfmt/clippy 组件和目标平台设置保持。
+
+工作流 YAML 及三处 Action 配置、质量门、发布触发器/平台矩阵已校验，仓库工作流中不再存在该无效版本引用；OpenSpec 严格校验与 git diff --check 通过。本轮仅修改工作流和说明，未改 Rust/前端代码或依赖锁文件，未重复运行完整编译测试，未提交/推送或触发远程 CI，不声称后续编译/测试已通过。
