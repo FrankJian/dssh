@@ -40,14 +40,16 @@ test('command center opens fuzzy files, supports keyboard cancellation and prese
   await query.fill('nch'); await expect(page.getByRole('option', { name: 'nested/child.txt', exact: true })).toBeVisible();
   await query.press('Enter'); await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('tab').filter({ hasText: 'child.txt' })).toBeVisible();
-  await center(page).click(); await page.keyboard.press('Escape');
+  // The tab appears before Monaco finishes mounting and restoring editor focus.
+  await expect.poll(() => page.evaluate(() => window.workbenchFixture.monaco.editor.getEditors().some(editor => editor.hasTextFocus()))).toBe(true);
+  await center(page).click(); await expect(query).toBeFocused(); await page.keyboard.press('Escape');
   await expect(center(page)).toBeFocused(); await expect(center(page)).toHaveAttribute('aria-expanded', 'false');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+p' : 'Control+p');
   await expect(query).toBeVisible(); await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 620, height: 720 });
   await center(page).click(); await expect(query).toBeVisible(); await page.keyboard.press('Escape');
   await expect(center(page)).toBeFocused();
-  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(center(page)).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(center(page)).toBeHidden();
   await page.evaluate(() => window.workbenchFixture.lock(false)); await expect(center(page)).toBeEnabled();
-  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(center(page)).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(center(page)).toBeHidden();
 });

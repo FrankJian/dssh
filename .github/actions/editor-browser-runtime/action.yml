@@ -1,0 +1,20 @@
+name: Editor browser runtime
+description: Cache the exact Playwright Chromium headless runtime
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      run: |
+        node --input-type=commonjs <<'NODE'
+        const fs = require('node:fs');
+        const path = require('node:path');
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + require('@playwright/test/package.json').version + '\n');
+        fs.appendFileSync(process.env.GITHUB_ENV, 'PLAYWRIGHT_BROWSERS_PATH=' + path.join(process.env.RUNNER_TEMP, 'playwright-browsers') + '\n');
+        NODE
+    - uses: actions/cache@v4
+      with:
+        path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+        key: ${{ runner.os }}-${{ runner.arch }}-playwright-headless-${{ steps.version.outputs.version }}
+    - shell: bash
+      run: pnpm exec playwright install chromium --only-shell

@@ -10,7 +10,10 @@ export default defineConfig({
   testMatch: "*.browser.spec.mjs",
   outputDir: ci ? "test-results/editor" : join(process.platform === "win32" ? tmpdir() : "/tmp", "dssh-editor-playwright"),
   fullyParallel: false,
-  workers: 1,
+  workers: ci ? 2 : 1,
+  forbidOnly: ci,
+  globalTimeout: 15 * 60_000,
+  reporter: ci ? [["line"], ["json", { outputFile: "test-results/editor-results.json" }]] : "list",
   timeout: 30_000,
   use: {
     baseURL: "http://127.0.0.1:1435",

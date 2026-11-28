@@ -14,6 +14,10 @@ test('breadcrumbs show a clear hierarchy, current file and a separate keyboard-a
   await expect(path.getByRole('button', { name: 'a2.ts', exact: true })).toHaveAttribute('title', '/root/a2.ts');
   await expect(path.getByLabel('已省略上级目录')).toHaveCount(0);
   const outline = bar.getByRole('button', { name: '文档符号', exact: true });
+  // Providers attach asynchronously; wait for the real TypeScript capability.
+  await expect.poll(() => page.evaluate(() => window.workbenchFixture.monaco.editor.getEditors()[0].getAction('editor.action.quickOutline')?.isSupported())).toBe(true);
+  // A real edit refreshes the capability-dependent controls.
+  await page.evaluate(() => { const model = window.workbenchFixture.monaco.editor.getEditors()[0].getModel(); model.pushEditOperations([], [{ range: model.getFullModelRange(), text: 'function breadcrumbExample() { return 1; }\n' }], () => null); });
   await expect(outline).toHaveAttribute('title', '文档符号'); await expect(outline).toHaveText('');
   await outline.focus(); await page.keyboard.press('Enter'); await expect(page.getByRole('menu', { name: '文档符号' })).toBeVisible();
   await page.keyboard.press('Escape'); await expect(outline).toBeFocused();
@@ -21,10 +25,10 @@ test('breadcrumbs show a clear hierarchy, current file and a separate keyboard-a
   await path.getByRole('button', { name: 'root', exact: true }).click(); await expect(page.getByRole('dialog', { name: '面包屑目录浏览' })).toBeVisible();
   await expect(page.getByRole('tree')).toHaveCount(0); await page.keyboard.press('Escape');
   await expect(path.getByRole('button', { name: 'root', exact: true })).toBeFocused();
-  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(outline).toBeDisabled(); await expect(path.getByRole('button', { name: 'root', exact: true })).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(outline).toBeHidden(); await expect(path.getByRole('button', { name: 'root', exact: true })).toBeDisabled();
 });
 
-test('long breadcrumb names stay on one row and leave outline reachable in narrow palettes', async ({ page }) => {
+test('long plaintext breadcrumbs stay on one row without unavailable outline controls', async ({ page }) => {
   await ready(page);
   await page.evaluate(async () => {
     const f = window.workbenchFixture; const path = '/root/first-long-directory/second-long-directory/third-long-directory/very-long-current-filename-for-breadcrumbs.txt';
@@ -35,20 +39,21 @@ test('long breadcrumb names stay on one row and leave outline reachable in narro
   for (const theme of ['dark', 'light']) {
     await page.setViewportSize({ width: theme === 'dark' ? 1280 : 620, height: 700 });
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    const outline = bar.getByRole('button', { name: '文档符号', exact: true });
-    const box = await bar.boundingBox(); const button = await outline.boundingBox(); const current = await bar.locator('[aria-current="page"]').boundingBox();
-    expect(box.height).toBe(24); expect(button.x + button.width).toBeLessThanOrEqual(box.x + box.width); expect(button.y + button.height).toBeLessThanOrEqual(box.y + box.height);
-    expect(current.width).toBeGreaterThan(35); expect(current.x + current.width).toBeLessThanOrEqual(button.x);
+    await expect(bar.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
+    const box = await bar.boundingBox(); const current = await bar.locator('[aria-current="page"]').boundingBox();
+    expect(box.height).toBe(24); expect(current.y + current.height).toBeLessThanOrEqual(box.y + box.height);
+    expect(current.width).toBeGreaterThan(35); expect(current.x + current.width).toBeLessThanOrEqual(box.x + box.width);
     expect(await bar.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ path: editorArtifact(`dssh-editor-breadcrumb-${theme}.png`), animations: 'disabled' });
   }
   await page.getByRole('button', { name: '向右拆分当前编辑组', exact: true }).click(); await expect(page.locator('.editor-group')).toHaveCount(2);
   for (const row of await page.getByRole('navigation', { name: '编辑器面包屑' }).all()) {
-    const box = await row.boundingBox(); const button = await row.getByRole('button', { name: '文档符号' }).boundingBox();
-    expect(box.height).toBe(24); expect(button.x + button.width).toBeLessThanOrEqual(box.x + box.width + 1);
+    const box = await row.boundingBox(); const current = await row.locator('[aria-current="page"]').boundingBox();
+    expect(box.height).toBe(24); expect(current.x + current.width).toBeLessThanOrEqual(box.x + box.width + 1);
+    await expect(row.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
   }
   await page.evaluate(() => window.workbenchFixture.handoff(true));
-  for (const outline of await page.getByRole('button', { name: '文档符号', exact: true }).all()) await expect(outline).toBeDisabled();
+  await expect(page.getByRole('button', { name: '文档符号', exact: true })).toHaveCount(0);
 });
 
 const popup = page => page.getByRole('dialog', { name: '面包屑目录浏览', exact: true });

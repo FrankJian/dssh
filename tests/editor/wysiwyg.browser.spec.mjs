@@ -11,7 +11,7 @@ async function ready(page, content = "# Title\n\nA **bold** paragraph.\n", readO
   await expect(rich(page)).toBeVisible();
 }
 
-test("rendered editor switches losslessly and rich edits share saves and undo with source", async ({ page }) => {
+test("rendered editor switches losslessly and rich edits share saves and undo with source", { tag: "@smoke" }, async ({ page }) => {
   const initial = "# Title\n\nA **bold** paragraph.\n";
   await ready(page, initial);
   await expect(rich(page).getByRole("heading", { name: "Title", exact: true })).toBeVisible();
@@ -38,7 +38,7 @@ test("editing one block retains frontmatter, comments, references, blank lines a
   await expect.poll(() => page.evaluate(() => window.workbenchFixture.files.get("/root/readme.md").content)).toBe(initial.replace("Change me.", "Change me. Extra"));
 });
 
-test("GFM tasks and tables are editable and Mermaid renders while unsafe HTML and images remain inert", async ({ page }) => {
+test("GFM tasks and tables are editable and Mermaid renders while unsafe HTML and images remain inert", { tag: "@smoke" }, async ({ page }) => {
   const external = []; page.on("request", request => { if (/evil\.invalid/.test(request.url())) external.push(request.url()); });
   await ready(page, '# Document\n\n- [ ] First task\n- [x] Done\n\n| Name | Value |\n| --- | --- |\n| One | Two |\n\n```mermaid\nflowchart LR\nA --> B\n```\n\n![image](https://evil.invalid/a.png)\n\n<script>window.richAttack = true</script>\n');
   await expect(rich(page).getByRole("checkbox")).toHaveCount(2);
@@ -117,7 +117,7 @@ test("IME composition commits Chinese and a concurrent source update is never ov
 test("read-only Markdown permits switching display modes without allowing rendered edits", async ({ page }) => {
   await ready(page, "# Readonly\n", true);
   await expect(rich(page)).toHaveAttribute("contenteditable", "false");
-  await expect(page.getByRole("button", { name: "格式", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "格式", exact: true })).toBeHidden();
   await page.getByRole("radio", { name: "源码", exact: true }).check(); await expect(page.locator(".monaco-editor")).toBeVisible();
   await page.getByRole("radio", { name: "所见即所得", exact: true }).check(); await expect(rich(page)).toHaveAttribute("contenteditable", "false");
   expect(await modelText(page)).toBe("# Readonly\n"); expect(await page.evaluate(() => window.workbenchFixture.writes.length)).toBe(0);
@@ -137,7 +137,7 @@ test("find opens the existing source search and lazy loading failure keeps raw e
   await expect(page.locator(".monaco-editor")).toBeVisible(); expect(await modelText(page)).toBe("# Kept\n");
 });
 
-test("fenced Mermaid paste preserves literal code, language changes and atomic undo", async ({ page }) => {
+test("fenced Mermaid paste preserves literal code, language changes and atomic undo", { tag: "@smoke" }, async ({ page }) => {
   await ready(page, '# Keep\n\nInsert\n');
   await rich(page).locator('p').click(); await page.keyboard.press('End'); await page.keyboard.press('Enter');
   const before = await modelText(page);
@@ -250,12 +250,13 @@ test('rendered formatting menus share the compact breadcrumb row beside document
   for (const width of [1280, 620, 360]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 650 });
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; window.workbenchFixture.palette.setPaletteColor('#986aa6'); }, theme);
-    const row = await breadcrumb.boundingBox(), symbols = await breadcrumb.getByRole('button', { name: '文档符号', exact: true }).boundingBox();
+    const row = await breadcrumb.boundingBox(), path = await breadcrumb.locator('.editor-breadcrumb__path').boundingBox();
+    await expect(breadcrumb.getByRole('button', { name: '文档符号', exact: true })).toBeHidden();
     expect(row.height).toBe(24);
     for (const name of ['格式', '表格']) {
       const box = await breadcrumb.getByRole('button', { name, exact: true }).boundingBox();
       expect(box.y).toBeGreaterThanOrEqual(row.y); expect(box.y + box.height).toBeLessThanOrEqual(row.y + row.height);
-      expect(box.x).toBeGreaterThanOrEqual(symbols.x + symbols.width); expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width);
+      expect(box.x).toBeGreaterThanOrEqual(path.x + path.width); expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width);
     }
     await expect(breadcrumb.locator('.editor-breadcrumb__rich-actions')).toHaveCSS('border-left-width', '1px');
     if (width !== 620) await page.screenshot({ path: editorArtifact(`breadcrumb-format-${width}-${theme}.png`), animations: 'disabled' });
@@ -279,7 +280,7 @@ test('breadcrumb formatting acts on its own rendered group and keeps lock protec
   await expect(right.locator('.tiptap strong')).toHaveCount(0);
   await left.getByRole('button', { name: '表格', exact: true }).click(); await expect(page.getByRole('menu')).toBeVisible(); await page.keyboard.press('Escape');
   await page.evaluate(() => window.workbenchFixture.lock(true));
-  for (const group of [left, right]) { await expect(group.getByRole('button', { name: '格式', exact: true })).toBeDisabled(); await expect(group.getByRole('button', { name: '表格', exact: true })).toBeDisabled(); }
+  for (const group of [left, right]) { await expect(group.getByRole('button', { name: '格式', exact: true })).toBeHidden(); await expect(group.getByRole('button', { name: '表格', exact: true })).toBeHidden(); }
   await page.evaluate(() => window.workbenchFixture.lock(false));
   await right.getByRole('button', { name: '关闭编辑分组', exact: true }).click();
   await expect(page.getByRole('toolbar', { name: 'Markdown 排版', exact: true })).toHaveCount(1);

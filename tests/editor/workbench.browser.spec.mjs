@@ -8,7 +8,7 @@ const tree = (page, name) => page.getByRole("treeitem").filter({ hasText: name }
 async function ready(page) { await page.goto("/tests/editor/workbench.html"); await expect(tree(page, "a2.ts")).toBeVisible(); }
 async function edit(page, text) { await page.evaluate((text) => { const f = window.workbenchFixture; const model = f.monaco.editor.getModels().find((m) => m.uri.scheme === "dssh-editor"); if (!model) throw new Error("missing model"); model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null); }, text); }
 
-test("local editor opens files and requests folders without SSH while selection cancellation preserves work", async ({ page }) => {
+test("local editor opens files and requests folders without SSH while selection cancellation preserves work", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/tests/editor/workbench.html?local");
   await expect(tree(page, "a2.ts")).toBeVisible();
   await menuAction(page, "文件", "打开文件");
@@ -33,7 +33,7 @@ test("local editor opens files and requests folders without SSH while selection 
   await expect(page.getByRole("tab")).toHaveCount(2);
 });
 
-test("workbench tree is lazy, naturally sorted, hidden-aware and retries one failed node", async ({ page }) => {
+test("workbench tree is lazy, naturally sorted, hidden-aware and retries one failed node", { tag: "@smoke" }, async ({ page }) => {
   await ready(page);
   expect(await page.getByRole("treeitem").allTextContents()).toEqual(["fail", "nested", "a2.ts", "a10.ts"]);
   expect(await page.evaluate(() => window.workbenchFixture.reads.every((path) => path === "/root"))).toBe(true);
@@ -44,7 +44,7 @@ test("workbench tree is lazy, naturally sorted, hidden-aware and retries one fai
   await expect(tree(page, ".hidden")).toHaveCount(0); await expect(page.locator(".editor-tree-row.is-selected")).toHaveCount(0);
 });
 
-test("preview edits pin tabs, splits share text, save updates baseline and hiding retains models", async ({ page }) => {
+test("preview edits pin tabs, splits share text, save updates baseline and hiding retains models", { tag: "@smoke" }, async ({ page }) => {
   await ready(page); await tree(page, "a2.ts").click(); await expect(page.locator(".monaco-editor")).toBeVisible();
   await expect(page.locator(".editor-file-tab.is-preview")).toHaveCount(1);
   await edit(page, "const changed = 2;"); await expect(page.locator(".editor-file-tab.is-preview")).toHaveCount(0);
@@ -77,8 +77,8 @@ test("repeated split commands preserve a restorable layout at the group budget",
   await page.evaluate(() => { for (let i = 0; i < 12; i++) window.workbenchFixture.handle.execute(i % 2 ? "editorSplitHorizontal" : "editorSplitVertical"); });
   await expect(page.locator(".editor-group")).toHaveCount(8);
   await page.getByRole("button", { name: "视图", exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "左右拆分编辑器" })).toBeDisabled();
-  await expect(page.getByRole("menuitem", { name: "上下拆分编辑器" })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "左右拆分编辑器" })).toBeHidden();
+  await expect(page.getByRole("menuitem", { name: "上下拆分编辑器" })).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("alert")).toContainText("最多同时打开 8 个编辑分组");
   expect(await page.evaluate(() => {
@@ -199,7 +199,7 @@ test("large-file cancel creates no model and accepted limited mode disables lang
   await expect(page.locator(".monaco-editor")).toBeVisible();
   const mode = await page.evaluate(() => { const f = window.workbenchFixture; const editor = f.monaco.editor.getEditors()[0]; const options = f.monaco.editor.EditorOption; return { language: editor.getModel().getLanguageId(), minimap: editor.getOption(options.minimap).enabled, folding: editor.getOption(options.folding), codeLens: editor.getOption(options.codeLens), content: editor.getValue() }; });
   expect(mode).toEqual({ language: "plaintext", minimap: false, folding: false, codeLens: false, content: "// a2.ts\nconst value = 1;" });
-  await expect(page.getByRole("button", { name: "文本语言", exact: true })).toBeDisabled(); await page.getByRole("button", { name: "工具", exact: true }).click(); await expect(page.getByRole("menuitem", { name: "与已保存版本比较", exact: true })).toBeDisabled(); await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "文本语言", exact: true })).toBeDisabled(); await page.getByRole("button", { name: "工具", exact: true }).click(); await expect(page.getByRole("menuitem", { name: "与已保存版本比较", exact: true })).toBeHidden(); await page.keyboard.press("Escape");
 });
 
 test("native find/replace handles literal matches, invalid regex and undo without saving", async ({ page }) => {
@@ -348,7 +348,10 @@ test("TypeScript symbols and definition use the local provider and plaintext deg
   await page.getByRole("button", { name: "前进", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.workbenchFixture.monaco.editor.getEditors()[0].getPosition().lineNumber)).toBe(1);
   await page.getByRole("button", { name: "文本语言", exact: true }).click(); await page.getByRole("option", { name: "纯文本", exact: true }).click();
-  await page.getByRole("button", { name: "文档符号", exact: true }).click(); await expect(page.getByRole("menuitem", { name: "当前语言未提供文档符号", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "文档符号", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "当前语言未提供文档符号", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "文档符号", exact: true })).toBeHidden();
+  expect(await page.evaluate(() => window.workbenchFixture.monaco.editor.getEditors()[0].getModel().getLanguageId())).toBe("plaintext");
 });
 
 
@@ -585,7 +588,7 @@ test("macOS native menu routes only to the focused unlocked editor and retains d
 });
 
 
-test("native application quit waits for commit and abort restores every prepared draft", async ({ page }) => {
+test("native application quit waits for commit and abort restores every prepared draft", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/tests/editor/workbench.html?local&nativeMenu");
   await expect(tree(page, "a2.ts")).toBeVisible();
   await tree(page, "a2.ts").dblclick(); await edit(page, "quit draft");

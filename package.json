@@ -27,7 +27,8 @@
     "tauri": "tauri",
     "test:tools": "node --experimental-strip-types --test src/tools/*.test.mjs src/app/navigationPreferences.test.mjs",
     "test:editor": "node --experimental-strip-types --test src/editor/*.test.mjs",
-    "test:editor-browser": "playwright test --config playwright.editor.config.ts"
+    "test:editor-browser": "playwright test --config playwright.editor.config.ts",
+    "test:editor-browser:smoke": "playwright test --config playwright.editor.smoke.config.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "4.7.0",

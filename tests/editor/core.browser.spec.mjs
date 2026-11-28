@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }, info) => {
   await expect(page.getByTestId("right").locator(".monaco-editor")).toBeVisible();
 });
 
-test("real Monaco shares models, preserves undo and independent group positions", async ({ page }) => {
+test("real Monaco shares models, preserves undo and independent group positions", { tag: "@smoke" }, async ({ page }) => {
   const result = await page.evaluate(async () => {
     const f = window.editorFixture;
     const left = f.editors.left; const right = f.editors.right;
@@ -26,7 +26,7 @@ test("real Monaco shares models, preserves undo and independent group positions"
   await expect.poll(() => page.evaluate(() => window.editorFixture.editors.left.getPosition()?.lineNumber)).toBe(42);
 });
 
-test("closing a group retains the other buffer and remount recovers its view", async ({ page }) => {
+test("closing a group retains the other buffer and remount recovers its view", { tag: "@smoke" }, async ({ page }) => {
   await page.evaluate(() => { window.editorFixture.editors.right.setPosition({ lineNumber: 35, column: 2 }); });
   await page.getByRole("button", { name: "切换右组" }).click();
   expect(await page.evaluate(() => window.editorFixture.registry.get(window.editorFixture.a).model.isDisposed())).toBe(false);
@@ -34,7 +34,7 @@ test("closing a group retains the other buffer and remount recovers its view", a
   await expect.poll(() => page.evaluate(() => window.editorFixture.editors.right.getPosition()?.lineNumber)).toBe(35);
 });
 
-test("text commands, find, replacement and read-only diff use real editors", async ({ page }) => {
+test("text commands, find, replacement and read-only diff use real editors", { tag: "@smoke" }, async ({ page }) => {
   await page.evaluate(async () => {
     const instance = window.editorFixture.editors.left;
     await instance.getAction("actions.find").run();
@@ -50,7 +50,7 @@ test("text commands, find, replacement and read-only diff use real editors", asy
   await page.getByRole("button", { name: "比较", exact: true }).click();
 });
 
-test("local workers, theme switch and the existing loader run without external requests", async ({ page }) => {
+test("local workers, theme switch and the existing loader run without external requests", { tag: "@smoke" }, async ({ page }) => {
   const external = [];
   page.on("request", (request) => { if (!new URL(request.url()).hostname.match(/^(127\.0\.0\.1|localhost)$/)) external.push(request.url()); });
   await page.reload();
@@ -68,7 +68,7 @@ test("local workers, theme switch and the existing loader run without external r
   expect(external).toEqual([]);
 });
 
-test("loading views can unmount before the wrapper resolves without retaining stale views", async ({ page }) => {
+test("loading views can unmount before the wrapper resolves without retaining stale views", { tag: "@smoke" }, async ({ page }) => {
   await page.route("**/@monaco-editor_react.js*", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await route.continue();
@@ -82,7 +82,7 @@ test("loading views can unmount before the wrapper resolves without retaining st
   expect(await page.evaluate(() => window.editorFixture.registry.viewCount(window.editorFixture.a))).toBe(2);
 });
 
-test("loading failure can be retried without discarding the registry", async ({ page }) => {
+test("loading failure can be retried without discarding the registry", { tag: "@smoke" }, async ({ page }) => {
   let rejected = false;
   await page.route("**/@monaco-editor_react.js*", async (route) => {
     if (!rejected) { rejected = true; await route.abort(); } else await route.continue();

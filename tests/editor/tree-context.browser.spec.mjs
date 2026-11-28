@@ -32,12 +32,12 @@ test("right click preserves multiselection and blank-space creation targets the 
     await expect(selected).toHaveCSS("box-shadow", "none");
     await expect(selected).toHaveCSS("border-left-width", "0px");
   }
-  await expect(menu(page).getByRole("menuitem", { name: "重命名", exact: true })).toBeDisabled();
+  await expect(menu(page).getByRole("menuitem", { name: "重命名", exact: true })).toBeHidden();
   await menu(page).getByRole("menuitem", { name: "复制相对路径", exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("a2.ts\na10.ts");
   const tree = page.getByRole("tree", { name: "文件树", exact: true }); const bounds = await tree.boundingBox();
   await tree.click({ button: "right", position: { x: 20, y: bounds.height - 12 } });
-  await expect(menu(page).getByRole("menuitem", { name: "删除…", exact: true })).toBeDisabled();
+  await expect(menu(page).getByRole("menuitem", { name: "删除…", exact: true })).toBeHidden();
   await menu(page).getByRole("menuitem", { name: "新建文件", exact: true }).click(); await name(page, "root-created.txt");
   await expect(row(page, "/root/root-created.txt")).toBeVisible();
   await expect(page.getByRole("tab", { name: /root-created.txt/ })).toHaveAttribute("aria-selected", "true");
@@ -47,7 +47,7 @@ test("keyboard context restores focus, closes on handoff and preserves dirty fil
   await ready(page);
   const root = page.getByRole("group", { name: "项目根目录", exact: true });
   await root.focus(); await page.keyboard.press("Shift+F10"); await expect(menu(page)).toBeVisible();
-  await expect(menu(page).getByRole("menuitem", { name: "删除…", exact: true })).toBeDisabled();
+  await expect(menu(page).getByRole("menuitem", { name: "删除…", exact: true })).toBeHidden();
   await page.keyboard.press("Escape"); await expect(root).toBeFocused();
   const file = row(page, "/root/a2.ts"); await file.focus(); await page.keyboard.press("Shift+F10");
   await expect(menu(page)).toBeVisible(); await page.keyboard.press("Escape"); await expect(file).toBeFocused();

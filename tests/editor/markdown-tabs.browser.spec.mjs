@@ -62,6 +62,9 @@ test("multiple preview tabs survive source group removal and support keyboard se
   await open(page, "two"); await expect(tabs(page).getByRole("tab")).toHaveCount(2);
   await page.locator(".editor-group").last().getByRole("button", { name: "关闭编辑分组", exact: true }).click();
   await expect(page.locator(".editor-group")).toHaveCount(1);
+  // Removing the split remounts the remaining Monaco view. Wait for its focus
+  // restoration before deliberately moving keyboard context to the preview.
+  await expect.poll(() => page.evaluate(() => window.workbenchFixture.monaco.editor.getEditors().some(editor => editor.hasTextFocus()))).toBe(true);
   await expect(preview(page).getByRole("heading", { name: "Preview two" })).toBeVisible();
   await tabs(page).getByRole("tab", { name: "预览 two.md", exact: true }).focus();
   await page.keyboard.press("ArrowLeft"); await expect(preview(page).getByRole("heading", { name: "Preview one" })).toBeVisible();

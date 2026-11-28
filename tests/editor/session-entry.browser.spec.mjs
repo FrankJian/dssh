@@ -19,7 +19,7 @@ for (const local of [false, true]) {
   });
 }
 
-test("folder layout restoration keeps cached files and activates the file explicitly opened from the session", async ({ page }) => {
+test("folder layout restoration keeps cached files and activates the file explicitly opened from the session", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/tests/editor/session-entry.html?cached=1");
   await page.getByText("nested", { exact: true }).click(); await page.getByText(".settings.txt", { exact: true }).click();
   await expect(page.getByRole("tab").filter({ hasText: ".settings.txt" })).toHaveAttribute("aria-selected", "true");
@@ -27,7 +27,7 @@ test("folder layout restoration keeps cached files and activates the file explic
   await expect(page.getByRole("treeitem").filter({ hasText: ".settings.txt" })).toBeVisible();
 });
 
-test("three legacy rootless remote references restore without home-directory type errors", async ({ page }) => {
+test("three legacy rootless remote references restore without home-directory type errors", { tag: "@smoke" }, async ({ page }) => {
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/tests/editor/session-entry.html?startup=1");
   await expect(page.getByRole("tab").filter({ hasText: "three.txt" })).toBeVisible();

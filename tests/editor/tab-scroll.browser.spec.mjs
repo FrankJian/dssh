@@ -9,7 +9,7 @@ async function ready(page, markdown = false) {
 const list = page => page.getByRole('tablist', { name: '文件标签', exact: true }).first();
 async function visibleSelected(tabs) { await expect.poll(() => tabs.evaluate(el => { const a = el.querySelector('[aria-selected="true"]')?.getBoundingClientRect(), b = el.getBoundingClientRect(); return !!a && a.left >= b.left - 1 && a.right <= b.right + 1; })).toBe(true); }
 
-test('overflow file tabs retain widths, scroll both ways and reveal keyboard selections', async ({ page }) => {
+test('overflow file tabs retain widths, scroll both ways and reveal keyboard selections', { tag: "@smoke" }, async ({ page }) => {
   await ready(page); const tabs = list(page); await visibleSelected(tabs);
   expect(await tabs.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
   const originalWidth = await tabs.getByRole('tab').first().evaluate(el => el.getBoundingClientRect().width); expect(originalWidth).toBeGreaterThan(150);

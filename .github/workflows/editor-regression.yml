@@ -1,0 +1,44 @@
+name: Editor full regression
+
+# Resource limits, large files and the full layout/palette matrix run on demand.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  editor:
+    name: Editor full regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install editor browser test runtime
+        uses: ./.github/actions/editor-browser-runtime
+      - name: Test full editor workbench
+        timeout-minutes: 16
+        run: pnpm test:editor-browser
+      - name: Upload editor results and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: editor-full-${{ matrix.os }}
+          path: test-results/editor*
+          if-no-files-found: ignore
+          retention-days: 7

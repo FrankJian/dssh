@@ -26,7 +26,7 @@ async function uniqueDraft(page) {
   await edit(page, "/root/a10.ts", "unique draft");
 }
 
-test("direct group close preserves shared dirty document and undo, and last-tab close collapses only extra groups", async ({ page }) => {
+test("direct group close preserves shared dirty document and undo, and last-tab close collapses only extra groups", { tag: "@smoke" }, async ({ page }) => {
   await ready(page); await open(page); await edit(page, "/root/a2.ts", "shared draft"); await split(page);
   await expect(groups(page)).toHaveCount(2);
   await close(groups(page).last()).click();
@@ -41,7 +41,7 @@ test("direct group close preserves shared dirty document and undo, and last-tab 
   await expect(groups(page)).toHaveCount(1); await expect(page.getByRole("tab")).toHaveCount(0);
 });
 
-test("unique dirty group supports cancel, failed save, then successful save without losing its group", async ({ page }) => {
+test("unique dirty group supports cancel, failed save, then successful save without losing its group", { tag: "@smoke" }, async ({ page }) => {
   await uniqueDraft(page);
   await close(groups(page).last()).click(); await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   await expect(groups(page)).toHaveCount(2); await expect(page.getByRole("tab").filter({ hasText: "a10.ts" })).toBeVisible();
@@ -76,9 +76,9 @@ test("empty and nested vertical groups close by keyboard and return focus to the
   await expect(groups(page)).toHaveCount(3);
   await close(groups(page).last()).focus(); await page.keyboard.press("Enter");
   await expect(groups(page)).toHaveCount(2); await expect(groups(page).last()).toHaveClass(/is-focused/);
-  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(close(groups(page).last())).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.lock(true)); await expect(close(groups(page).last())).toBeHidden();
   await page.evaluate(() => window.workbenchFixture.lock(false));
-  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(close(groups(page).last())).toBeDisabled();
+  await page.evaluate(() => window.workbenchFixture.handoff(true)); await expect(close(groups(page).last())).toBeHidden();
   await page.evaluate(() => window.workbenchFixture.handoff(false));
   await close(groups(page).last()).click(); await expect(groups(page)).toHaveCount(1);
   await open(page); await split(page);

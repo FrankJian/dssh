@@ -153,10 +153,15 @@ pnpm tauri build
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在 PR 与 `main` 推送时于 macOS 和 Windows 上运行：
+`.github/workflows/ci.yml` 在 PR 与各分支推送时于 macOS 和 Windows 上运行：
 
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`
 - `pnpm exec tsc --noEmit`、`pnpm build`
+- 编辑器、快捷键、SFTP 等模块逻辑回归，以及 `pnpm test:editor-browser:smoke` 的 21 项关键浏览器流程。浏览器测试使用 2 个 worker、3 分钟全局预算，累计 3 项失败即提前结束并返回失败；Actions 步骤上限为 4 分钟，留出结果和 trace 写入时间。
+
+耗时较长的大文件、万级目录和多尺寸/配色矩阵保留在 `pnpm test:editor-browser` 全量入口，日常 CI 不执行这些矩阵。需要完整回归时，在 Actions 的 **Editor full regression → Run workflow** 选择分支，运行 macOS/Windows 全量浏览器测试。两套测试共用已有用例；`@smoke` 标记关键流程，不复制用例，也不跳过全量失败项。
+
+首次本地运行前执行 `pnpm exec playwright install chromium --only-shell`。CI 按操作系统、架构和 Playwright 精确版本缓存无头浏览器，逐项打印结果并生成 `test-results/editor*-results.json`；失败时上传截图与 trace，手动全量运行无论成功失败均上传结果，保留 7 天。CI 的 Chromium 隔离宿主测试不能代替 Tauri/WebView2 或真实 SSH 验收。
 
 提交前建议本地跑一遍相同命令（见上方「常用命令」），避免 CI 红灯。
 

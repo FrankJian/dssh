@@ -85,7 +85,7 @@ test("a pending PNG is not saved after lock and unlock or document replacement",
   await diagram(page).getByRole("button", { name: "导出 PNG" }).click(); await expect(diagram(page).getByRole("status")).toHaveText("PNG 已保存");
 });
 
-test("PNG JPEG WebP GIF BMP and SVG files decode read-only and corrupted images can be retried", async ({ page }) => {
+test("PNG JPEG WebP GIF BMP and SVG files decode read-only and corrupted images can be retried", { tag: "@smoke" }, async ({ page }) => {
   await ready(page);
   const external = []; page.on("request", request => { if (request.url().includes("untrusted.example")) external.push(request.url()); });
   await page.evaluate(() => {

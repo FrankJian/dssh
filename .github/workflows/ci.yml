@@ -70,18 +70,18 @@ jobs:
           pnpm test:sftp
 
       - name: Install editor browser test runtime
-        run: pnpm exec playwright install chromium
+        uses: ./.github/actions/editor-browser-runtime
 
-      - name: Test editor workbench
-        timeout-minutes: 10
-        run: pnpm test:editor-browser
+      - name: Test editor workbench critical paths
+        timeout-minutes: 4
+        run: pnpm test:editor-browser:smoke
 
       - name: Upload editor failure evidence
         if: failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: editor-failure-${{ matrix.os }}
-          path: test-results/editor/
+          path: test-results/editor*
           if-no-files-found: ignore
           retention-days: 7
 
