@@ -645,3 +645,13 @@ Markdown 预览改为右侧独立文件标签，不再由来源文件的活动�
 日常 macOS/Windows CI 移除浏览器安装、21 项 smoke 点击测试和相关证据上传步骤；删除 smoke 脚本、配置和全部标记。Rust、编辑器/快捷键/SFTP 等纯逻辑、类型、生产构建及安装包任务保留。剩余 109 项界面测试仅通过本地 `pnpm test:editor-browser` 或手动 `Editor UI regression` 工作流执行，浏览器安装 action 只服务该手动入口。已删除的视觉、性能与故障注入覆盖不再声称自动验证，按需人工验收；此前通过记录保持历史时点事实。
 
 保留用例收集成功（109 项、18 文件）；定向运行模型、富文本、关闭分组、保存失败和目录更新回归 31/31 通过（约 40.1 秒）。编辑器/快捷键/SFTP 纯逻辑 130/130 通过（约 0.3 秒），类型检查、生产构建通过；工作流 YAML、手动触发器、日常无浏览器入口和保留质量门已检查，OpenSpec 严格校验 27/27 通过，`git diff --check` 无误。本轮未运行全部 109 项，也未提交/推送或触发远程 CI。Windows Rust 程序加载错误未由此次测试精简修复，Rust 检查仍保留。
+
+### Windows Rust 测试程序启动前崩溃修复（2026-11-28）
+
+读取用户指定的 [Windows quality 作业 140904652713](https://github.com/FrankJian/dssh/actions/runs/46120773859/job/140904652713)：`cargo test` 编译约 2 分 37 秒后成功，启动 `dssh_lib-*.exe` 时立即以 `0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND` 退出，没有任何 Rust 用例实际开始。现有 Cargo.lock 锁定 tauri-build 2.6.3；检查该版本源码可见 Windows 资源通过 bin-only 路径链接，默认清单只声明 Common Controls v6。这与 [Tauri #13419](https://github.com/tauri-apps/tauri/issues/13419) 和 [上游修复 #16320](https://github.com/tauri-apps/tauri/pull/16320) 描述的测试宿主缺失清单、无法解析 `TaskDialogIndirect` 入口问题一致；本轮未从 Windows loader 弹窗或失败 EXE 的导入表额外确认具体缺失符号。
+
+在 build.rs 中仅对目标 Windows/MSVC 启用 `/MANIFEST:EMBED` 和指向仓库 `windows-app-manifest.xml` 的 `/MANIFESTINPUT`，使主程序、库测试和其他最终链接目标均包含同一依赖声明。此分支使用 `WindowsAttributes::new_without_app_manifest()` 关闭 Tauri RC 中的原清单，避免重复 RT_MANIFEST，图标/版本资源仍由 Tauri 构建。非 Windows/MSVC 保留原构建路径，判断使用 Cargo 目标变量，兼容 host/target 不同的场景；XML 纳入 rerun-if-changed。没有通过跳过 Rust 测试或改 CI 退出码规避故障，也没有引入浏览器/模拟点击测试或升级整套 Tauri 依赖。
+
+已比较仓库 XML 与本机锁定 tauri-build 2.6.3 默认清单，逐字节一致，并解析确认 Common Controls 6.0.0.0、相同公钥/架构声明，无额外提权或 DPI 配置。macOS 上 `cargo fmt --check`、严格 `cargo clippy --all-targets -- -D warnings` 通过；初次沙箱运行因 14 个本机 HTTP 测试无法监听端口而失败，允许本机端口后完整 `cargo test` 通过：302 通过、0 失败、6 项原有忽略，main/doc-tests 通过。本轮未修改业务 Rust 源码、依赖清单/锁文件及 Actions 检查步骤。
+
+本机只有 macOS 工具链，未实际链接或运行 Windows EXE，未提交/推送和重新触发远程 CI；因此仅确认实现、清单一致性及 macOS 回归，不声称用户指定的 Windows 作业已变绿。后续 Windows quality 必须真正进入并完成 Rust 测试，Windows 安装包也需确认正常启动，现有实机验收未完成范围保留。

@@ -276,3 +276,7 @@ Monaco 0.56 的独立版 HoverService 默认选择活动编辑器作为容器，
 从浏览器套件实际删除 49 项压力、冷启动延迟/慢 CPU 故障注入和重复布局/配色/截图点击测试，保留 109 项核心功能界面用例。保留本地 `test:editor-browser` 和手动双平台 `Editor UI regression`，共享浏览器安装 action 只在该手动工作流使用。保留用例继续验证模型共享、保存失败/取消、只读、未保存保护与窗口归属，失败仍返回失败；不以 skip 或 continue-on-error 伪装通过。已删除测试的布局/配色/资源压力覆盖改为按需人工验收。
 
 可选界面测试继续使用 editor-qa 的 HTML 入口扫描、Monaco canonical 预构建和宿主预热，以及独立 15 秒初始化等待预算；不再包含 6.5 秒网络延迟或慢 CPU 故障注入。历史运行证据保持原时点事实，新策略及删除范围另记在验证文档。
+
+### Windows Rust 测试宿主清单
+
+指定 Windows CI 的 Rust 测试编译成功，库测试 EXE 在执行测试前以 0xc0000139 退出。锁定的 tauri-build 2.6.3 只为 bin 链接包含 Common Controls v6 的资源清单，符合 Tauri 上游 #13419/#16320 的测试宿主入口缺失问题。Windows/MSVC 改用链接器为所有最终目标嵌入相同清单，并只关闭 Tauri RC 中的清单部分，保留图标和版本资源，避免 RT_MANIFEST 重复；其他 target 仍走原 tauri_build::build。不升级整套依赖，不跳过 Rust 测试，不改变进程权限或 DPI 声明。

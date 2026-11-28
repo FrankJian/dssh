@@ -495,3 +495,7 @@ Monaco 主题 SHALL 将应用语义 CSS 颜色转换为有效十六进制值并�
 #### Scenario: 可选界面宿主冷启动
 - **WHEN** 手动界面测试的 HTML 已载入而 Monaco 动态模块尚未完成下载或求值
 - **THEN** 沿用预构建/预热与独立初始化预算；普通功能断言不因此放宽，不恢复已删除的延迟/慢 CPU 故障注入测试。
+
+#### Scenario: Windows Rust 测试宿主可加载
+- **WHEN** Windows/MSVC 构建应用和 Rust 库测试程序
+- **THEN** 两者均包含相同的 Common Controls v6 应用清单，测试程序可进入测试入口；主程序继续保留图标和版本资源，不因测试宿主修复跳过任何 Rust 检查。
