@@ -280,3 +280,7 @@ Monaco 0.56 的独立版 HoverService 默认选择活动编辑器作为容器，
 ### Windows Rust 测试宿主清单
 
 指定 Windows CI 的 Rust 测试编译成功，库测试 EXE 在执行测试前以 0xc0000139 退出。锁定的 tauri-build 2.6.3 只为 bin 链接包含 Common Controls v6 的资源清单，符合 Tauri 上游 #13419/#16320 的测试宿主入口缺失问题。Windows/MSVC 改用链接器为所有最终目标嵌入相同清单，并只关闭 Tauri RC 中的清单部分，保留图标和版本资源，避免 RT_MANIFEST 重复；其他 target 仍走原 tauri_build::build。不升级整套依赖，不跳过 Rust 测试，不改变进程权限或 DPI 声明。
+
+### Windows 本地保存提交的句柄生命周期
+
+Windows CI 已进入 Rust 测试，普通覆盖保存与跨窗口串行保存均失败。ReplaceFileW 文档要求替换文件以不共享方式打开，原提交实现仍持有 NamedTempFile 的文件句柄，造成 API 打开冲突。提交前转换为 TempPath 关闭句柄，保留 RAII 清理；将自建临时文件属性归一为 NORMAL 后再调用 ReplaceFileW，继续保留目标 ACL 等元数据，不回退为先删原文件再写。失败沿用清理/残留路径报告，成功后禁用旧临时路径清理，避免误删随后复用旧路径的新文件；版本、授权和互斥锁检查不变。Windows 专用回归通过拒绝删除共享的目标句柄验证失败保护和释放后重试，不启动界面或进行性能测试。

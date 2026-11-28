@@ -655,3 +655,13 @@ Markdown 预览改为右侧独立文件标签，不再由来源文件的活动�
 已比较仓库 XML 与本机锁定 tauri-build 2.6.3 默认清单，逐字节一致，并解析确认 Common Controls 6.0.0.0、相同公钥/架构声明，无额外提权或 DPI 配置。macOS 上 `cargo fmt --check`、严格 `cargo clippy --all-targets -- -D warnings` 通过；初次沙箱运行因 14 个本机 HTTP 测试无法监听端口而失败，允许本机端口后完整 `cargo test` 通过：302 通过、0 失败、6 项原有忽略，main/doc-tests 通过。本轮未修改业务 Rust 源码、依赖清单/锁文件及 Actions 检查步骤。
 
 本机只有 macOS 工具链，未实际链接或运行 Windows EXE，未提交/推送和重新触发远程 CI；因此仅确认实现、清单一致性及 macOS 回归，不声称用户指定的 Windows 作业已变绿。后续 Windows quality 必须真正进入并完成 Rust 测试，Windows 安装包也需确认正常启动，现有实机验收未完成范围保留。
+
+### Windows 本地覆盖保存共享冲突修复（2026-11-28）
+
+[Windows quality 作业 140909158264](https://github.com/FrankJian/dssh/actions/runs/46122272684/job/140909158264) 已成功启动 Rust 测试，原清单修复生效；结果为 290 通过、2 失败、1 忽略，约 26 秒。失败项是本地版本化覆盖保存和跨窗口同版本串行保存，首个提交均返回 editor_file_io。检查提交实现发现 ReplaceFileW 调用时仍保留 NamedTempFile 文件句柄；[Microsoft 文档](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 明确该 API 对 replacement 采用无共享打开，与现有句柄冲突，这也解释了新建文件测试通过而普通替换失败。
+
+Windows 提交分支现先用 into_temp_path 关闭文件句柄并保留 TempPath 清理所有权；与 tempfile 自带持久化流程一致，将自建暂存文件属性归一为 NORMAL、清除 TEMPORARY 后再 ReplaceFileW。原目标的 ACL/其他元数据仍由 ReplaceFileW 保留，原文件句柄/版本检查、授权检查和保存锁不变，没有退化为先删原文件再写。失败使用共享的路径清理/残留路径报告，成功后禁用已消失旧路径的清理，避免误删随后复用该路径的新文件。原有两项失败测试未删除或跳过。
+
+新增 Windows 专用纯文件系统回归：Unicode/emoji 文件名、外部句柄拒绝删除共享时保存失败且原文不变/无暂存残留，关闭外部句柄后使用原版本重试成功、无暂存属性，旧版本再次保存被拒绝。该用例无需 UI 或性能压力。通用 cleanup_error 也改为先关闭句柄再委托 TempPath 清理，已有部分写入/授权撤销/外部修改/清理失败保护继续验证。
+
+本机 macOS 上格式检查、严格 Clippy 通过；完整 Rust 回归 302 通过、0 失败、6 项原有忽略（约 10.8 秒），main/doc-tests 通过。OpenSpec 严格校验 27/27 通过，git diff --check 无误。未修改测试跳过条件、Actions 步骤或依赖，未提交/推送或重新触发远程 CI。本机没有 Windows 环境，新增 Windows 专用用例及真实 ReplaceFileW 结果仍需下一次 Windows quality 验证，不把 macOS 回归当作 Windows 已通过。

@@ -5,7 +5,7 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 
 use super::text::{self, TextEncoding, TextMetadata};
 use crate::error::{AppError, AppResult};
@@ -342,8 +342,12 @@ fn preserve_metadata(source: &File, destination: &File) -> AppResult<()> {
         .map_err(io_error)
 }
 
-fn cleanup_error(mut error: AppError, temp: NamedTempFile) -> AppError {
-    let path = temp.path().to_path_buf();
+fn cleanup_error(error: AppError, temp: NamedTempFile) -> AppError {
+    cleanup_path_error(error, temp.into_temp_path())
+}
+
+fn cleanup_path_error(mut error: AppError, temp: TempPath) -> AppError {
+    let path = temp.to_path_buf();
     if temp.close().is_err() {
         error
             .message
@@ -367,8 +371,12 @@ fn commit(temp: NamedTempFile, path: &Path, replacing: bool) -> AppResult<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
+        // ReplaceFileW opens the replacement without sharing. Drop our file
+        // handle first, but keep path ownership for cleanup if replacement fails.
+        let mut temp = temp.into_temp_path();
         #[link(name = "kernel32")]
         unsafe extern "system" {
+            fn SetFileAttributesW(path: *const u16, attributes: u32) -> i32;
             fn ReplaceFileW(
                 replaced: *const u16,
                 replacement: *const u16,
@@ -379,12 +387,17 @@ fn commit(temp: NamedTempFile, path: &Path, replacing: bool) -> AppResult<()> {
             ) -> i32;
         }
         let original: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        let replacement: Vec<u16> = temp
-            .path()
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+        let replacement: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+        // Like tempfile's normal persist path, clear FILE_ATTRIBUTE_TEMPORARY
+        // on our newly created staging file before it becomes the user's file.
+        // SAFETY: The UTF-16 path is terminated and alive for this call.
+        const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+        if unsafe { SetFileAttributesW(replacement.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
+            return Err(cleanup_path_error(
+                io_error(std::io::Error::last_os_error()),
+                temp,
+            ));
+        }
         // ReplaceFileW preserves the replaced file's ACL and other Windows metadata.
         // SAFETY: All strings are terminated and alive; optional arguments are null.
         if unsafe {
@@ -398,11 +411,14 @@ fn commit(temp: NamedTempFile, path: &Path, replacing: bool) -> AppResult<()> {
             )
         } == 0
         {
-            return Err(cleanup_error(
+            return Err(cleanup_path_error(
                 io_error(std::io::Error::last_os_error()),
                 temp,
             ));
         }
+        // The old temporary pathname is gone. Do not try to delete a new file
+        // another process might subsequently create at that now-vacant path.
+        temp.disable_cleanup(true);
         Ok(())
     }
     #[cfg(not(windows))]
@@ -619,6 +635,45 @@ mod tests {
             "editor_conflict"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_locked_target_preserves_original_cleans_staging_and_can_retry() {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("保存-😀.txt");
+        fs::write(&path, "original").unwrap();
+        let token = current_version(&path).unwrap();
+        // Permit reads/writes, but deliberately deny delete sharing so the
+        // target cannot be replaced while this external handle is open.
+        let blocker = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&path)
+            .unwrap();
+        let error = save(&path, "changed", &metadata(), Some(&token)).unwrap_err();
+        assert!(matches!(
+            error.code.as_str(),
+            "editor_file_io" | "editor_permission"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        drop(blocker);
+
+        let saved = save(&path, "changed", &metadata(), Some(&token)).unwrap();
+        assert_ne!(saved, token);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(fs::metadata(&path).unwrap().file_attributes() & 0x100, 0);
+        assert_eq!(
+            save(&path, "stale", &metadata(), Some(&token))
+                .unwrap_err()
+                .code,
+            "editor_conflict"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
     }
 
     #[test]
