@@ -11,7 +11,13 @@ export default defineConfig(async ({ mode }) => ({
   plugins: [react()],
   // Dependencies reached from toolbox workers are discovered only on first run
   // unless they are pre-bundled. Avoid reloading the workbench mid-conversion.
-  optimizeDeps: { include: ["saxes", "smol-toml", "toml-eslint-parser", "sql-formatter", "bcryptjs", "node-forge", "zxcvbn"] },
+  optimizeDeps: {
+    ...(mode === "editor-qa" ? { entries: ["tests/editor/*.html"] } : {}),
+    include: ["saxes", "smol-toml", "toml-eslint-parser", "sql-formatter", "bcryptjs", "node-forge", "zxcvbn",
+      ...(mode === "editor-qa" ? ["monaco-editor", "@monaco-editor/react",
+        "monaco-editor/editor/standalone/browser/standaloneServices.js",
+        "monaco-editor/platform/hover/browser/hover.js"] : [])],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -19,6 +25,8 @@ export default defineConfig(async ({ mode }) => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
+    // Prepare the QA entry graphs before the first two browser workers race to load them.
+    ...(mode === "editor-qa" ? { warmup: { clientFiles: ["./tests/editor/fixture.tsx", "./tests/editor/workbench.tsx"] } } : {}),
     port: 1420,
     strictPort: true,
     host: host || false,

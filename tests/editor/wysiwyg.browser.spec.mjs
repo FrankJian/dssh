@@ -1,11 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { editorArtifact } from "./artifacts.mjs";
+import { expectEditorHost } from "./readiness.mjs";
 const rich = page => page.getByRole("textbox", { name: "Markdown 所见即所得编辑器", exact: true });
 const modelText = page => page.evaluate(() => window.workbenchFixture.monaco.editor.getModels().find(m => m.uri.scheme === "dssh-editor").getValue());
 const shortcut = key => `${process.platform === "darwin" ? "Meta" : "Control"}+${key}`;
 async function ready(page, content = "# Title\n\nA **bold** paragraph.\n", readOnly = false) {
   await page.goto("/tests/editor/workbench.html?local&nativeMenu&wysiwyg");
-  await expect(page.locator('[data-path="/root/a2.ts"]')).toBeVisible();
+  await expectEditorHost(page.locator('[data-path="/root/a2.ts"]'));
   await page.evaluate(async ({ content, readOnly }) => { const f = window.workbenchFixture; f.files.set("/root/readme.md", { ...f.files.get("/root/a2.ts"), path: "/root/readme.md", content, readOnly }); await f.handle.open("/root/readme.md"); }, { content, readOnly });
   await page.getByRole("radio", { name: "所见即所得", exact: true }).check();
   await expect(rich(page)).toBeVisible();
@@ -129,7 +130,7 @@ test("find opens the existing source search and lazy loading failure keeps raw e
   await expect(page.locator(".monaco-editor .find-widget")).toBeVisible();
   expect(await modelText(page)).toBe("# Title\n\nA **bold** paragraph.\n");
   await page.route("**/RichMarkdownView.tsx*", route => route.abort());
-  await page.reload(); await expect(page.locator('[data-path="/root/a2.ts"]')).toBeVisible();
+  await page.reload(); await expectEditorHost(page.locator('[data-path="/root/a2.ts"]'));
   await page.evaluate(async () => { localStorage.setItem("dssh.editor.markdownMode", "rich"); const f = window.workbenchFixture; f.files.set("/root/failure.md", { ...f.files.get("/root/a2.ts"), path: "/root/failure.md", content: "# Kept\n" }); await f.handle.open("/root/failure.md"); });
   await page.getByRole("radio", { name: "所见即所得", exact: true }).check();
   await expect(page.getByRole("alert").filter({ hasText: "Markdown 编辑器加载失败" })).toBeVisible();

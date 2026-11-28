@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { expectEditorHost } from "./readiness.mjs";
 
 test.beforeEach(async ({ page }, info) => {
   if (info.title.startsWith("loading ")) return;
   await page.goto("/tests/editor/index.html");
-  await expect(page.getByTestId("left").locator(".monaco-editor")).toBeVisible();
-  await expect(page.getByTestId("right").locator(".monaco-editor")).toBeVisible();
+  await expectEditorHost(page.getByTestId("left").locator(".monaco-editor"));
+  await expectEditorHost(page.getByTestId("right").locator(".monaco-editor"));
 });
 
 test("real Monaco shares models, preserves undo and independent group positions", { tag: "@smoke" }, async ({ page }) => {
@@ -54,7 +55,7 @@ test("local workers, theme switch and the existing loader run without external r
   const external = [];
   page.on("request", (request) => { if (!new URL(request.url()).hostname.match(/^(127\.0\.0\.1|localhost)$/)) external.push(request.url()); });
   await page.reload();
-  await expect(page.getByTestId("left").locator(".monaco-editor")).toBeVisible();
+  await expectEditorHost(page.getByTestId("left").locator(".monaco-editor"));
   await page.evaluate(async () => {
     const f = window.editorFixture;
     const getWorker = await f.monaco.typescript.getTypeScriptWorker();
@@ -75,10 +76,10 @@ test("loading views can unmount before the wrapper resolves without retaining st
   });
   await page.goto("/tests/editor/index.html");
   await page.getByRole("button", { name: "切换右组" }).click();
-  await expect(page.getByTestId("left").locator(".monaco-editor")).toBeVisible();
+  await expectEditorHost(page.getByTestId("left").locator(".monaco-editor"));
   expect(await page.evaluate(() => window.editorFixture.registry.viewCount(window.editorFixture.a))).toBe(1);
   await page.getByRole("button", { name: "切换右组" }).click();
-  await expect(page.getByTestId("right").locator(".monaco-editor")).toBeVisible();
+  await expectEditorHost(page.getByTestId("right").locator(".monaco-editor"));
   expect(await page.evaluate(() => window.editorFixture.registry.viewCount(window.editorFixture.a))).toBe(2);
 });
 
@@ -90,6 +91,6 @@ test("loading failure can be retried without discarding the registry", { tag: "@
   await page.goto("/tests/editor/index.html");
   await expect(page.getByTestId("left").getByRole("button", { name: "重试" })).toBeVisible();
   await page.getByTestId("left").getByRole("button", { name: "重试" }).click();
-  await expect(page.getByTestId("left").locator(".monaco-editor")).toBeVisible();
+  await expectEditorHost(page.getByTestId("left").locator(".monaco-editor"));
   expect(await page.evaluate(() => window.editorFixture.registry.list().length)).toBe(2);
 });
