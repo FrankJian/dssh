@@ -12,10 +12,11 @@ function accelerator(id: string): string | undefined {
 }
 export function nativeMenuModel(groups: NativeEditorMenuGroup[], blocked: boolean) {
   const actions = new Map<string, EditorMenuItem>();
-  const menus: NativeEditorMenuItem[] = groups.map(group => {
+  const menus: NativeEditorMenuItem[] = (blocked ? [] : groups).map(group => {
     const children: NativeEditorMenuItem[] = [];
     let section: NativeEditorMenuItem | undefined;
     group.items.forEach((item, index) => {
+      if (item.disabled) return;
       if (/clipboard(?:Cut|Copy|Paste)Action/.test(item.id) || item.id === 'editor.action.selectAll') return;
       const id = `${group.id}/${index}/${item.id}`;
       actions.set(id, item);
@@ -26,6 +27,6 @@ export function nativeMenuModel(groups: NativeEditorMenuGroup[], blocked: boolea
       } else { section = undefined; children.push(entry); }
     });
     return { id: group.id, label: group.label, enabled: true, children };
-  });
+  }).filter(group => group.children.length > 0);
   return { menus, actions };
 }

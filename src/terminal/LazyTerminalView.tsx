@@ -1,11 +1,8 @@
-import { lazy } from "react";
+import { lazyFeature } from "../ui/lazyFeature";
+import { loadTerminalAddons } from "./terminalAddonLoader";
 
-/**
- * Keep the xterm implementation behind one lazy boundary.  TerminalView is
- * used by both the regular workspace and the pane grid; defining the loader
- * once prevents one consumer from turning the module back into a static
- * dependency and triggering Vite's ineffective-dynamic-import warning.
- */
-export const LazyTerminalView = lazy(() =>
-  import("./TerminalView").then((module) => ({ default: module.TerminalView })),
-);
+/** Engine and view load once, in parallel, before any instance is acquired. */
+export const LazyTerminalView = lazyFeature("终端", async () => {
+  const [module] = await Promise.all([import("./TerminalView"), loadTerminalAddons()]);
+  return { default: module.TerminalView };
+});

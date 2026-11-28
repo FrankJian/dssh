@@ -25,6 +25,8 @@
 [返回文档导航](../README.md)
 
 - [工具箱模块加载恢复](tool-module-loading.md)
+- [启动按需加载](startup-loading.md)
+- [控件反馈与可执行菜单](interaction-affordances.md)
 - [统一侧栏详情](sidebar-details.md)
 - [AI 助手停靠布局](assistant-docking.md)
 - [AI 助手的 JumpServer 交互](assistant-jumpserver.md)

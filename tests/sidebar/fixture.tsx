@@ -18,6 +18,7 @@ window.addEventListener("error", e => issue(e.message));
 window.addEventListener("unhandledrejection", e => issue(String(e.reason)));
 mockWindows("main");
 mockIPC((command, args) => {
+  if (command === "list_system_font_families") return ["Fixture Mono"];
   if (command === "list_jumpserver_profiles") return [{ id: "fixture-jms", name: "JumpServer 验收", coreUrl: "https://fixture.invalid", keyId: "", orgId: "fixture", hasCredential: false, authKind: "password", username: "fixture", sshProfileId: null }];
   if (command === "jumpserver_identity") return { userId: "fixture", username: "fixture", orgId: "fixture", generation: "fixture-generation" };
   if (command === "jumpserver_list_nodes") return { results: [{ id: "fixture-node", name: "验收目录", key: "1" }], count: 1, hasMore: false };

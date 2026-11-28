@@ -2,11 +2,8 @@ import { RESTORE_CURSOR } from "./terminalRecovery";
 import { getTerminalScrollback, subscribeTerminalScrollback } from "../settings/terminalScrollbackStore";
 import { openTerminalLink } from "../services/terminalLinkService";
 import { toast } from "../ui/ToastHost";
-import { FitAddon } from "@xterm/addon-fit";
-import { SerializeAddon } from "@xterm/addon-serialize";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import type { WebglAddon } from "@xterm/addon-webgl";
+import type { Terminal } from "@xterm/xterm";
 import { isAppShortcut, matchesShortcut, matchesWheelShortcut } from "../app/shortcuts";
 import type { TerminalSize, TerminalSnapshot } from "../models";
 import {
@@ -29,7 +26,7 @@ import { getTerminalCursorOptions, getTerminalCursorPreferences, subscribeTermin
 import type { TerminalOutputListener } from "./useTerminalSessions";
 import { CommandInputTracker, commandCompletionEnabled, commandHistoryClearedEvent, matchingCommands, recordCommand } from "./commandCompletion";
 import { completionAreaBounds, placeCompletionMenu, type CompletionBounds } from "./completionPosition";
-import "@xterm/xterm/css/xterm.css";
+import { getTerminalAddons } from "./terminalAddonLoader";
 
 /**
  * Live terminal instances, keyed by session.
@@ -232,6 +229,7 @@ export function pruneTerminals(liveSessionIds: Iterable<string>) {
 }
 
 function createInstance(key: string, setup: TerminalSetup): RegistryEntry {
+  const { Terminal, FitAddon, SerializeAddon, WebLinksAddon, WebglAddon } = getTerminalAddons();
   const { sessionId, transparent, isLocalShell } = setup;
   const restoredSnapshot = sessionId ? pendingSnapshots.get(sessionId) ?? null : null;
   if (sessionId) {

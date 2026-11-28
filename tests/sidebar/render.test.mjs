@@ -5,12 +5,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "vite";
+import react from "@vitejs/plugin-react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 const store = new Map();
 globalThis.localStorage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
 const cacheDir = await mkdtemp(join(tmpdir(), "dssh-sidebar-ssr-"));
-const server = await createServer({ cacheDir, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom", logLevel: "error" });
+const server = await createServer({ configFile: false, plugins: [react()], optimizeDeps: { noDiscovery: true, include: [] }, cacheDir, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom", logLevel: "error" });
 const load = path => server.ssrLoadModule(`/src/${path}`);
 try {
   const { AppLayout } = await load("app/AppLayout.tsx");

@@ -8,7 +8,7 @@ import { useApplicationExit } from "../editor/useApplicationExit";
 import { prepareEditorWindowClose, coordinateEditorWindowClose } from "../editor/closeWorkspace";
 import { isEditorImage } from "../editor/fileTypes";
 import { transferEditorWorkspace } from "../editor/transferWorkspace";
-import { EditorWorkbench, type EditorWorkbenchHandle } from "../editor/EditorWorkbench";
+import type { EditorWorkbenchHandle } from "../editor/EditorWorkbench";
 import { openEditorWorkspace, closeEditorWorkspace, detachEditorWorkspace, editorHandoffReady, waitEditorHandoff, finishEditorHandoff } from "../services/editorService";
 import type { FileSource } from "../models/editor";
 import { chooseLocalEditorPath } from "../editor/localEntry";
@@ -19,11 +19,9 @@ import { ToolsWorkspace } from "../tools/ToolsWorkspace";
 import { navigationActivityFallback } from "./navigationPreferences";
 import { useNavigationIcons } from "./useNavigationIcons";
 import { SftpConnectionSidebar } from "../sftp/SftpConnectionSidebar";
-import { ArtifactoryWorkspace } from "../artifactory/ArtifactoryWorkspace";
 import { connectionActionPaletteItems, connectionGroupPaletteItems, connectionSearchKeywords, type ConnectionGroupRequest } from "./connectionPalette";
 import { renameConnectionFolder } from "../services/sshProfileService";
 import { findSftpTerminal, isOpenSshTerminal } from "./sftpTerminal";
-import { JumpServerWorkspace } from "../jumpserver/JumpServerWorkspace";
 import { isJumpServerSource, type JumpServerProfile } from "../models/jumpserver";
 import { useJumpServerProfiles } from "../jumpserver/useJumpServerProfiles";
 import { JumpServerProfileEditor } from "../jumpserver/JumpServerProfileEditor";
@@ -50,8 +48,6 @@ import { useBrowserTabs } from "../browser/useBrowserTabs";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { AiChat } from "../ai/AiChat";
-import { AiConfigModal } from "../ai/AiConfigModal";
 import { useAssistantDock } from "./useAssistantDock";
 import { useAiChat } from "../ai/useAiChat";
 import { useAiConfig } from "../ai/useAiConfig";
@@ -68,23 +64,16 @@ import {
   type HostKeyChangedEvent,
   type SshAuthPromptEvent,
 } from "../services/sshSessionService";
-import { HostToolsPanel } from "../hosttools/HostToolsPanel";
 import type { S3Profile, SshProfile, TerminalSession, TerminalSize } from "../models";
 import { DeleteS3ProfileDialog } from "../s3/DeleteS3ProfileDialog";
 import { S3ProfileEditor } from "../s3/S3ProfileEditor";
 import { S3ProfileSidebar } from "../s3/S3ProfileSidebar";
-import { S3Workspace } from "../s3/S3Workspace";
 import type { S3ProfileDraft, S3ProfileEditorMode } from "../s3/profileTypes";
 import { useS3Profiles } from "../s3/useS3Profiles";
-import { SETTINGS_CATEGORIES, SettingsDialog, type SettingsCategory } from "../settings/SettingsDialog";
+import { SETTINGS_CATEGORIES, type SettingsCategory } from "../settings/settingsCategories";
 import { useEditorSettings } from "../settings/useEditorSettings";
 import { useTerminalSettings } from "../settings/useTerminalSettings";
 import { checkForStartupUpdate } from "../services/appUpdateService";
-import { FileBrowser } from "../sftp/FileBrowser";
-import { RemoteFileEditor } from "../sftp/RemoteFileEditor";
-import { RemoteFileTree } from "../sftp/RemoteFileTree";
-import { LocalFileTree } from "../sftp/LocalFileTree";
-import { ProfileEditor } from "../ssh/ProfileEditor";
 import { profileIconName, sftpConnectionIconName } from "../ssh/profileIcons";
 import { DeleteSshProfileDialog } from "../ssh/DeleteSshProfileDialog";
 import { SessionManager } from "../ssh/SessionManager";
@@ -150,6 +139,22 @@ import {
   openDetachedSftpWorkspace,
   openDetachedTerminalWorkspace,
 } from "../services/workspaceService";
+
+import { lazyFeature } from "../ui/lazyFeature";
+
+const EditorWorkbench = lazyFeature("编辑器", async () => ({ default: (await import("../editor/EditorWorkbench")).EditorWorkbench }));
+const SettingsDialog = lazyFeature("设置", async () => ({ default: (await import("../settings/SettingsDialog")).SettingsDialog }));
+const FileBrowser = lazyFeature("文件管理", async () => ({ default: (await import("../sftp/FileBrowser")).FileBrowser }));
+const RemoteFileEditor = lazyFeature("文件编辑器", async () => ({ default: (await import("../sftp/RemoteFileEditor")).RemoteFileEditor }));
+const RemoteFileTree = lazyFeature("远程文件列表", async () => ({ default: (await import("../sftp/RemoteFileTree")).RemoteFileTree }));
+const LocalFileTree = lazyFeature("本地文件列表", async () => ({ default: (await import("../sftp/LocalFileTree")).LocalFileTree }));
+const AiChat = lazyFeature("AI 助手", async () => ({ default: (await import("../ai/AiChat")).AiChat }));
+const AiConfigModal = lazyFeature("AI 配置", async () => ({ default: (await import("../ai/AiConfigModal")).AiConfigModal }));
+const HostToolsPanel = lazyFeature("主机工具", async () => ({ default: (await import("../hosttools/HostToolsPanel")).HostToolsPanel }));
+const S3Workspace = lazyFeature("对象存储", async () => ({ default: (await import("../s3/S3Workspace")).S3Workspace }));
+const ArtifactoryWorkspace = lazyFeature("Artifactory", async () => ({ default: (await import("../artifactory/ArtifactoryWorkspace")).ArtifactoryWorkspace }));
+const JumpServerWorkspace = lazyFeature("JumpServer", async () => ({ default: (await import("../jumpserver/JumpServerWorkspace")).JumpServerWorkspace }));
+const ProfileEditor = lazyFeature("连接配置", async () => ({ default: (await import("../ssh/ProfileEditor")).ProfileEditor }));
 
 interface EditorState {
   mode: ProfileEditorMode;

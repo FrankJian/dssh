@@ -115,6 +115,7 @@
   --radius-pill: 999px;
   --connection-type-select-width: 128px;
   --shadow-soft: 0 18px 48px rgb(0 0 0 / 26%);
+  --shadow-control-hover: 0 2px 6px color-mix(in srgb, var(--text-strong) 12%, transparent);
   --shadow-popover: 0 16px 38px rgb(0 0 0 / 25%);
   --shadow-menu: 0 8px 24px rgb(0 0 0 / 18%);
 
@@ -368,6 +369,12 @@ input {
 button {
   color: inherit;
 }
+
+/* Semantic actions share an affordance without changing text/drag/resize cursors. */
+:where(button:enabled, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="switch"]):not([disabled], [aria-disabled="true"], [draggable="true"], [data-tauri-drag-region]) {
+  cursor: pointer;
+}
+:where(button:disabled, [aria-disabled="true"]) { cursor: default; }
 
 * {
   scrollbar-width: thin;
@@ -3183,7 +3190,8 @@ button {
   transition:
     border-color 150ms ease,
     background-color 150ms ease,
-    color 150ms ease;
+    color 150ms ease,
+    box-shadow var(--motion-fast) ease;
 }
 .button:disabled { opacity: 0.45; cursor: default; }
 .button:disabled:hover { background: transparent; border-color: var(--border-subtle); }
@@ -3360,7 +3368,8 @@ button {
   transition:
     border-color 120ms ease,
     background-color 120ms ease,
-    color 120ms ease;
+    color 120ms ease,
+    box-shadow var(--motion-fast) ease;
 }
 
 .icon-button:hover {
@@ -12226,4 +12235,25 @@ button.ai-settings__provider:disabled { opacity: 0.65; cursor: default; }
 
 @container (max-width: 560px) {
   .session-manager__nav { width: auto; max-height: calc(200px * var(--sidebar-details-progress)); padding-block: calc(8px * var(--sidebar-details-progress)); border-bottom-width: calc(1px * var(--sidebar-details-progress)); }
+}
+
+.feature-load-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); min-height: 96px; padding: var(--space-4); color: var(--text-muted); }
+.feature-load-state > p { margin: 0; }
+
+/* Action surfaces advertise only commands that can currently execute.
+   Forms, listbox choices, file rows and pending dialog buttons stay visible. */
+:is([role="menu"], [role="menubar"], [role="toolbar"], .workspace-toolbar, .remote-file-tree__toolbar, .remote-file-tree__selection-toolbar, .remote-file-editor__toolbar, .session-manager__toolbar, .jumpserver__toolbar, .ai-chat__header-actions) button:is(:disabled, [aria-disabled="true"], .is-disabled) {
+  display: none;
+}
+:is([role="toolbar"], .workspace-toolbar) [role="group"]:has(button):not(:has(button:enabled:not([aria-disabled="true"]))) {
+  display: none;
+}
+
+@media (hover: hover) {
+  :is(.button, .icon-button):not(:disabled, [aria-disabled="true"], .is-disabled):hover {
+    box-shadow: var(--shadow-control-hover);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button, .icon-button { transition: none; }
 }

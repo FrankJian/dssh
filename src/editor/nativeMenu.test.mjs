@@ -11,9 +11,19 @@ test('native menus group existing commands, remove duplicate clipboard and guard
   ] }];
   const { menus, actions } = nativeMenuModel(groups, false);
   assert.equal(menus[0].children.length, 2);
-  assert.equal(menus[0].children[1].children.length, 2);
-  assert.equal(menus[0].children[1].children[1].enabled, false);
-  assert.equal(actions.size, 3); actions.get('edit/0/undo').run(); assert.equal(calls, 1);
-  const blocked = nativeMenuModel(groups, true).menus[0].children;
-  assert.equal(blocked[0].enabled, false); assert.ok(blocked[1].children.every(item => !item.enabled));
+  assert.equal(menus[0].children[1].children.length, 1);
+  assert.equal(actions.size, 2); actions.get('edit/0/undo').run(); assert.equal(calls, 1);
+  assert.equal(actions.has('edit/3/formatB'), false);
+  const blocked = nativeMenuModel(groups, true);
+  assert.deepEqual(blocked.menus, []); assert.equal(blocked.actions.size, 0);
+});
+
+test('native menus omit empty groups and sections, restoring original action ids when available', () => {
+  const action = { id: 'format', label: '格式化', section: '行内格式', disabled: true, run() {} };
+  const groups = [{ id: 'edit', label: '编辑', items: [action] }];
+  assert.deepEqual(nativeMenuModel(groups, false).menus, []);
+  action.disabled = false;
+  const restored = nativeMenuModel(groups, false);
+  assert.equal(restored.menus[0].children[0].children[0].id, 'edit/0/format');
+  assert.equal(restored.actions.get('edit/0/format'), action);
 });

@@ -159,7 +159,7 @@ fn regular_file(path: &Path) -> AppResult<File> {
 }
 
 fn fingerprint(metadata: &Metadata) -> String {
-    let mut value = format!(
+    let value = format!(
         "{:?}:{:?}:{}:{}",
         metadata.modified(),
         metadata.created(),
@@ -167,10 +167,10 @@ fn fingerprint(metadata: &Metadata) -> String {
         metadata.permissions().readonly()
     );
     #[cfg(unix)]
-    {
+    let value = {
         use std::os::unix::fs::MetadataExt;
-        value.push_str(&format!(
-            ":{}:{}:{}:{}:{}:{}:{}",
+        format!(
+            "{value}:{}:{}:{}:{}:{}:{}:{}",
             metadata.dev(),
             metadata.ino(),
             metadata.mode(),
@@ -178,8 +178,8 @@ fn fingerprint(metadata: &Metadata) -> String {
             metadata.gid(),
             metadata.ctime(),
             metadata.ctime_nsec()
-        ));
-    }
+        )
+    };
     value
 }
 

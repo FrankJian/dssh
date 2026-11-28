@@ -84,22 +84,22 @@ export function AiToolbarMenu({
               ))}
             </>
           ) : null}
-          <div className="ai-toolbar-menu__separator" role="separator" />
-          <button type="button" role="menuitem" tabIndex={-1} disabled={renameDisabled}
+          {!renameDisabled || !sessionActionsDisabled ? <div className="ai-toolbar-menu__separator" role="separator" /> : null}
+          {!renameDisabled ? <button type="button" role="menuitem" tabIndex={-1}
             onClick={() => run(onRename)}>
             <Icon name="edit" height="16" width="16" />
             <span>重命名会话</span>
-          </button>
-          <button type="button" role="menuitem" tabIndex={-1} disabled={sessionActionsDisabled}
+          </button> : null}
+          {!sessionActionsDisabled ? <><button type="button" role="menuitem" tabIndex={-1}
             onClick={() => run(onClear)}>
             <Icon name="refresh" height="16" width="16" />
             <span>清空当前会话</span>
           </button>
-          <button type="button" role="menuitem" tabIndex={-1} disabled={sessionActionsDisabled}
+          <button type="button" role="menuitem" tabIndex={-1}
             className="ai-toolbar-menu__danger" onClick={() => run(onDelete)}>
             <Icon name="trash" height="16" width="16" />
             <span>删除当前会话</span>
-          </button>
+          </button></> : null}
         </div>
       ) : null}
     </div>

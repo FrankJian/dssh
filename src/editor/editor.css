@@ -19,7 +19,7 @@
 .editor-explorer__header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .editor-explorer__header .icon-button { width: 25px; height: 25px; padding: var(--space-1); }
 .editor-explorer__tree { flex: 1; min-height: 0; overflow: auto; padding-block: var(--space-1); font-size: 12px; }
-.editor-tree-row { display: flex; align-items: center; gap: var(--space-1); min-height: 28px; padding-right: var(--space-2); cursor: default; border-radius: var(--radius-xs); outline-offset: -2px; white-space: nowrap; }
+.editor-tree-row { display: flex; align-items: center; gap: var(--space-1); min-height: 28px; padding-right: var(--space-2); cursor: pointer; border-radius: var(--radius-xs); outline-offset: -2px; white-space: nowrap; }
 .editor-tree-row > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .editor-tree-row svg { flex-shrink: 0; }
 .editor-tree-row:hover { background: var(--bg-hover); }
@@ -34,7 +34,7 @@
 .editor-split__divider:hover, .editor-split__divider:focus-visible { background: var(--accent-border); }
 .editor-group { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .editor-file-tabs { display: flex; flex-shrink: 0; overflow: auto; min-height: 36px; padding-inline: var(--space-1); background: var(--bg-app); border-bottom: 1px solid var(--border-subtle); }
-.editor-file-tab { border-right: 1px solid var(--border-subtle); display: flex; align-items: center; gap: var(--space-2); min-width: 110px; max-width: 240px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-muted); cursor: default; font-size: 12px; }
+.editor-file-tab { border-right: 1px solid var(--border-subtle); display: flex; align-items: center; gap: var(--space-2); min-width: 110px; max-width: 240px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: var(--text-muted); cursor: pointer; font-size: 12px; }
 .editor-file-tab__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-file-tab.is-active { background: var(--bg-sunken); color: var(--text-strong); box-shadow: none; }
 .editor-group.is-focused .editor-file-tab.is-active { box-shadow: none; }

@@ -14,6 +14,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:ai-config": "node --experimental-strip-types --test src/ai/aiConfig.test.mjs src/ai/aiSettingsValidation.test.mjs",
+    "test:startup": "node --experimental-strip-types --test src/ui/lazyResource.test.mjs && node scripts/check-startup-bundle.mjs",
     "test:sidebar": "node --experimental-strip-types --test src/app/sidebarDetails.test.mjs && node --test tests/sidebar/render.test.mjs",
     "test:shortcuts": "node --experimental-strip-types --test src/app/shortcuts.test.mjs",
     "test:assistant-dock": "node --experimental-strip-types --test src/app/assistantDock.test.mjs",
