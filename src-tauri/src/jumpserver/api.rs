@@ -4,7 +4,7 @@ use crate::{
     models::jumpserver::*,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
     Client, Method, Url,
     header::{AUTHORIZATION, HeaderValue},

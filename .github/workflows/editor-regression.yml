@@ -36,7 +36,7 @@ jobs:
         run: pnpm test:editor-browser
       - name: Upload editor results and failure evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: editor-full-${{ matrix.os }}
           path: test-results/editor*

@@ -59,7 +59,8 @@ pub fn build_client(provider: &AiProviderConfig) -> AppResult<AiClient> {
         genai: Client::builder()
             .with_service_target_resolver(resolver)
             .with_reqwest(http_client)
-            .build(),
+            .build()
+            .map_err(|_| AppError::new("ai_request_error", "无法创建模型连接。"))?,
         native,
         provider: provider.clone(),
         extra_headers: super::headers::request_headers(&provider.extra_headers)?,

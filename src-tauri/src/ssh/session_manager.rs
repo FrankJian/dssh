@@ -434,9 +434,12 @@ impl Handler for SshClient {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // Continue pinning the exact host key, including when transported in a
+        // certificate. A certificate never implicitly trusts its issuing CA.
         let fingerprint = server_public_key
+            .public_key()
             .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
             .to_string();
         Ok(self

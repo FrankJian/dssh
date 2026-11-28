@@ -10,9 +10,9 @@ import { chromeThemeHeader } from "./rdp-chrome-theme.mjs";
 import { adaptClipboard } from "./rdp-clipboard.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const version = "3.33.0";
+const version = "3.33.1";
 const windows = process.platform === "win32";
-const checksum = "3b5e7733e667ad66f54e0db51d952268c9d08b2e71a4fade44c716ab29dd5657";
+const checksum = "6b6da1e7217f924b033da6896e70eb4c4a447c3900d03c0d10179062f0a7d495";
 const cache = join(root, ".cache", "rdp");
 const archive = process.env.DSSH_RDP_ARCHIVE || join(cache, `FreeRDP-${version}.tar.gz`);
 const source = join(cache, `FreeRDP-${version}`);
@@ -64,9 +64,9 @@ adapt(window, "\tstd::ignore = SDL_SetWindowFullscreen(_window, enter);\n\tstd::
 // Initial window and fallback/recreated window must both retain the icon.
 adapt(window, "\t_window = SDL_CreateWindowWithProperties(props);", "\tif (dssh_desktop_locked()) SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);\n\t_window = SDL_CreateWindowWithProperties(props);\n\tdssh_visibility_created(_window);\n\tdssh_set_window_icon(_window);", 2);
 adapt(window, '#include "dssh_chrome.h"', '#include "dssh_chrome.h"\n#include "dssh_visibility.h"');
-// SDL 3.4.20 no longer implies all four diagnostic event enums exist. Probe
+// SDL's version alone does not guarantee all four diagnostic event enums exist. Probe
 // the installed headers, rather than assuming an SDK feature from its number.
-adapt(join(sdl, "sdl_utils.cpp"), "#if SDL_VERSION_ATLEAST(3, 4, 20)", "#if defined(DSSH_SDL_EXTENDED_EVENTS)");
+adapt(join(sdl, "sdl_utils.cpp"), "#if SDL_VERSION_ATLEAST(3, 4, 22)", "#if defined(DSSH_SDL_EXTENDED_EVENTS)");
 const clientCmake = join(sdl, "CMakeLists.txt");
 // Enable at the common root so sibling macOS targets share Objective-C rules.
 adapt(join(source, "CMakeLists.txt"), "project(FreeRDP LANGUAGES C)", "project(FreeRDP LANGUAGES C)\nif(APPLE)\n  enable_language(OBJC)\nendif()");
@@ -255,7 +255,7 @@ bool sdlInput::keyboard_sync_state()
 {`);
 adapt(main, '#include "dssh_worker.hpp"', '#include "dssh_worker.hpp"\n#include "sdl_input.hpp"');
 adapt(main, 'dssh_visibility_tick();', 'if (dssh_input_lock_entered() && sdl->isConnected()) sdl->getInputChannelContext().suspendForLock(); dssh_visibility_tick();', 4);
-adapt(input, '\t\t\t\tfreerdp_abort_connect_context(_sdl->context());', '\t\t\t\tdssh_status("user-close");\n\t\t\t\tfreerdp_abort_connect_context(_sdl->context());');
+adapt(input, '\t\t\t\tstd::ignore = _sdl->abortConnect();', '\t\t\t\tdssh_status("user-close");\n\t\t\t\tstd::ignore = _sdl->abortConnect();');
 adapt(context, "\tsdl->setConnected(true);", '\tsdl->setConnected(true);\n\tdssh_status("connected");');
 // Credentials are already supplied. Never open a retry/credential dialog or retry a bad password.
 adapt(context, "\tinstance->AuthenticateEx = sdl_authenticate_ex;", "\tinstance->AuthenticateEx = [](freerdp*, char**, char**, char**, rdp_auth_reason) -> BOOL { return FALSE; };");

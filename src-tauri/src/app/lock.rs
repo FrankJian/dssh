@@ -3,7 +3,7 @@ use std::{
     time::Instant,
 };
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::RngExt;
 use tauri::{AppHandle, Emitter};
 
@@ -209,10 +209,8 @@ fn hash_password(password: &str) -> AppResult<String> {
     }
     let mut salt_bytes = [0u8; 16];
     rand::rng().fill(&mut salt_bytes);
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|error| AppError::new("app_lock_error", error.to_string()))?;
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password_with_salt(password.as_bytes(), &salt_bytes)
         .map(|hash| hash.to_string())
         .map_err(|error| AppError::new("app_lock_error", format!("无法设置锁屏密码：{error}")))
 }
@@ -272,6 +270,15 @@ mod tests {
         assert!(!hash.contains("secret-123"));
         assert!(verify_password(&hash, Some("secret-123")).is_ok());
         assert!(verify_password(&hash, Some("wrong-password")).is_err());
+    }
+
+    #[test]
+    fn legacy_argon2_phc_hash_remains_verifiable() {
+        // Public Argon2 0.5.3 reference vector, not a stored user credential.
+        let hash =
+            "$argon2id$v=19$m=256,t=2,p=1$c29tZXNhbHQ$nf65EOgLrQMR/uIPnA4rEsF5h7TKyQwu9U1bMCHGi/4";
+        assert!(verify_password(hash, Some("password")).is_ok());
+        assert!(verify_password(hash, Some("incorrect")).is_err());
     }
 
     #[test]

@@ -33,7 +33,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@1.100.1
         with:
           components: rustfmt, clippy
 
@@ -113,7 +113,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@1.100.1
         with:
           targets: ${{ matrix.rust_target }}
 
@@ -143,7 +143,7 @@ jobs:
 
       - name: Upload macOS test installer
         if: matrix.name == 'macOS'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           path: ${{ matrix.installer }}
           archive: false
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload Windows NSIS test installer
         if: matrix.name == 'Windows'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/**/*.exe
           archive: false
@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload Windows raw executable
         if: matrix.name == 'Windows'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           path: src-tauri/target/x86_64-pc-windows-msvc/release/dssh.exe
           archive: false
@@ -170,7 +170,7 @@ jobs:
 
       - name: Upload Windows MSI test installer
         if: matrix.name == 'Windows'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/**/*.msi
           archive: false

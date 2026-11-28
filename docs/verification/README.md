@@ -22,6 +22,8 @@
 
 ## 验收记录
 
+- [外部依赖更新（2026-11-28）](dependency-refresh-2026-11.md)
+
 [返回文档导航](../README.md)
 
 - [工具箱模块加载恢复](tool-module-loading.md)

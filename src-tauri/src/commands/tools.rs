@@ -71,7 +71,10 @@ pub fn hash_tool_text(text: &str) -> AppResult<String> {
             "文本过长，无法计算 SHA-256。",
         ));
     }
-    Ok(format!("{:x}", Sha256::digest(text.as_bytes())))
+    Ok(Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 #[cfg(test)]

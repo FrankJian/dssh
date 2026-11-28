@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor::workspaces::{EditorManager, FileSource};
 use russh_sftp::{
-    protocol::{Attrs, Data, File as ProtocolFile, Handle, Name, Status, Version},
+    protocol::{Attrs, Data, File as ProtocolFile, Handle, Name, SftpHandle, Status, Version},
     server::Handler,
 };
 use std::{
@@ -17,9 +17,9 @@ struct Node {
 #[derive(Default)]
 struct Files {
     directories: HashMap<String, Vec<ProtocolFile>>,
-    directory_reads: std::collections::HashSet<String>,
+    directory_reads: std::collections::HashSet<SftpHandle>,
     nodes: HashMap<String, Node>,
-    handles: HashMap<String, String>,
+    handles: HashMap<SftpHandle, String>,
     opens: Vec<(String, OpenFlags)>,
     fail_write: bool,
     fail_permissions: bool,
@@ -81,7 +81,7 @@ impl Handler for Server {
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, StatusCode> {
         self.lstat(id, path).await
     }
-    async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, StatusCode> {
+    async fn fstat(&mut self, id: u32, handle: SftpHandle) -> Result<Attrs, StatusCode> {
         let path = self
             .files
             .lock()
@@ -114,11 +114,11 @@ impl Handler for Server {
         if flags.contains(OpenFlags::TRUNCATE) {
             node.data.clear();
         }
-        let handle = format!("h-{id}");
+        let handle = SftpHandle::from(format!("h-{id}"));
         files.handles.insert(handle.clone(), path);
         Ok(Handle { id, handle })
     }
-    async fn close(&mut self, id: u32, handle: String) -> Result<Status, StatusCode> {
+    async fn close(&mut self, id: u32, handle: SftpHandle) -> Result<Status, StatusCode> {
         let mut files = self.files.lock().unwrap();
         files.handles.remove(&handle);
         files.directory_reads.remove(&handle);
@@ -129,11 +129,11 @@ impl Handler for Server {
         if !files.directories.contains_key(&path) {
             return Err(StatusCode::PermissionDenied);
         }
-        let handle = format!("dir-{id}");
+        let handle = SftpHandle::from(format!("dir-{id}"));
         files.handles.insert(handle.clone(), path);
         Ok(Handle { id, handle })
     }
-    async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, StatusCode> {
+    async fn readdir(&mut self, id: u32, handle: SftpHandle) -> Result<Name, StatusCode> {
         let mut files = self.files.lock().unwrap();
         if !files.directory_reads.insert(handle.clone()) {
             return Err(StatusCode::Eof);
@@ -151,7 +151,7 @@ impl Handler for Server {
     async fn read(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
         offset: u64,
         len: u32,
     ) -> Result<Data, StatusCode> {
@@ -170,7 +170,7 @@ impl Handler for Server {
     async fn write(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
         offset: u64,
         bytes: Vec<u8>,
     ) -> Result<Status, StatusCode> {

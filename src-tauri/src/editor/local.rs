@@ -194,7 +194,10 @@ pub fn version_token(source: &str, path: &str, identity: &str, data: &[u8]) -> S
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value);
     }
-    format!("{:x}", hash.finalize())
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn read_bytes(path: &Path, allow_large: bool) -> AppResult<(Vec<u8>, File, Metadata)> {
@@ -521,6 +524,14 @@ mod tests {
             bom: false,
             line_ending: LineEnding::Lf,
         }
+    }
+
+    #[test]
+    fn version_token_keeps_the_existing_sha256_encoding() {
+        assert_eq!(
+            version_token("local", "/fixture.txt", "metadata", b"content"),
+            "05742f98c334b3865467b1f9d73cfde5abb24ad7e28c5dc3d720cd43909d7070"
+        );
     }
 
     #[test]

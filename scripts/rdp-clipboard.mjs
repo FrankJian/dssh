@@ -110,9 +110,9 @@ export function adaptClipboard(source, sdl, adapt) {
     }
     numFormats = kept;
 \tformatList.numFormats = numFormats;`);
-  adapt(win, '\t\tformat = &(formatList->formats[i]);\n\t\tmapping = &(clipboard->format_mappings[i]);', `\t\tformat = &(formatList->formats[i]);
+  adapt(win, '\t\tCLIPRDR_FORMAT* format = &(formatList->formats[i]);\n\t\tformatMapping* mapping = &(clipboard->format_mappings[i]);', `\t\tCLIPRDR_FORMAT* format = &(formatList->formats[i]);
         if (!dssh_clipboard_format(clipboard->rdp->settings, format->formatId, format->formatName)) continue;
-\t\tmapping = &(clipboard->format_mappings[clipboard->map_size]);`);
+\t\tformatMapping* mapping = &(clipboard->format_mappings[clipboard->map_size]);`);
   adapt(win, '\tconst UINT32 requestedFormatId = formatDataRequest->requestedFormatId;', `\tconst UINT32 requestedFormatId = formatDataRequest->requestedFormatId;
     char requestedName[256] = {0};
     GetClipboardFormatNameA(requestedFormatId, requestedName, sizeof(requestedName));
